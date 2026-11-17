@@ -89,6 +89,7 @@ class TerminalView(context: Context) : View(context) {
     var onWheel: (Int,Int,Int,Int,Int) -> Unit = {lines,_,_,_,_->onScroll(lines)}
     var onActivate: () -> Unit = {}
     var onMouseClick: (Int,Int,Int,Int) -> Unit = {_,_,_,_->}
+    internal var onFrameDrawn: ((String)->Unit)?=null
     internal var onSemanticCopy: ((TerminalScreen,Int,Int,Boolean)->Boolean)?=null
     internal var onCursorTap: ()->Unit = {}
     var mouseTarget: ()->String={""}
@@ -336,6 +337,7 @@ class TerminalView(context: Context) : View(context) {
         canvas.restoreToCount(saved)
         if(token!=null) android.os.Trace.endSection()
         android.os.Trace.endSection()
+        if(token!=null) onFrameDrawn?.invoke(token)
     }
     /** Rows compare by content only; a row that moved is the same drawing. */
     private fun sameCells(a: List<TerminalCell>,b: List<TerminalCell>): Boolean {
