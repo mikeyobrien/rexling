@@ -125,12 +125,17 @@ fn encode_row(out: &mut Vec<u8>, row: &[Cell]) {
             text(out, uri);
         }
 }
+/// Cursor flag bit: x/y is a hidden cursor's caret position, not a cursor to draw.
+const CURSOR_HIDDEN: u8 = 8;
 fn encode_frame(out: &mut Vec<u8>, frame: &Frame, previous: Option<&Frame>) {
     out.push(if previous.is_some() { 2 } else { 3 });
     u16le(out, frame.columns);
     u16le(out, frame.rows);
+    // A hidden cursor still carries its caret position, flagged with CURSOR_HIDDEN.
+    let hidden = frame.cursor.is_none() && frame.caret.is_some();
     let (x, y) = frame
         .cursor
+        .or(frame.caret)
         .map_or((-1, -1), |(x, y)| (i32::from(x), i32::from(y)));
     out.extend(x.to_le_bytes());
     out.extend(y.to_le_bytes());
@@ -144,7 +149,7 @@ fn encode_frame(out: &mut Vec<u8>, frame: &Frame, previous: Option<&Frame>) {
         u64le(out, v);
     }
     out.push(frame.input_flags);
-    out.push(frame.cursor_style | ((frame.cursor_blinking as u8) << 2));
+    out.push(frame.cursor_style | ((frame.cursor_blinking as u8) << 2) | if hidden { CURSOR_HIDDEN } else { 0 });
     let next = rows(frame);
     let old = previous.map(|old| rows(old));
     // RXT5 shift: content moved by `shift` rows (positive: up). The decoder
@@ -292,6 +297,7 @@ mod wire_tests {
             columns: 100,
             rows: 50,
             cursor: Some((0, 0)),
+            caret: Some((0, 0)),
             cursor_style: 1,
             cursor_blinking: false,
             foreground: [255; 3],
@@ -329,6 +335,20 @@ mod wire_tests {
         // Geometry 4, cursor 8, colors 8, scroll 24, input 1, cursor flags 1.
         assert_eq!(bytes[46],4);
         assert_eq!(u16::from_le_bytes(bytes[49..51].try_into().unwrap()),0);
+    }
+    #[test]
+    fn a_hidden_cursor_sends_its_caret_with_the_hidden_flag() {
+        let mut hidden=frame();hidden.cursor=None;hidden.caret=Some((3,2));
+        let mut bytes=Vec::new();encode_frame(&mut bytes,&hidden,None);
+        assert_eq!(i32::from_le_bytes(bytes[5..9].try_into().unwrap()),3);
+        assert_eq!(i32::from_le_bytes(bytes[9..13].try_into().unwrap()),2);
+        assert_eq!(bytes[46]&CURSOR_HIDDEN,CURSOR_HIDDEN);
+        let mut gone=frame();gone.cursor=None;gone.caret=None;
+        let mut bytes=Vec::new();encode_frame(&mut bytes,&gone,None);
+        assert_eq!(i32::from_le_bytes(bytes[5..9].try_into().unwrap()),-1);
+        assert_eq!(bytes[46]&CURSOR_HIDDEN,0);
+        let mut bytes=Vec::new();encode_frame(&mut bytes,&frame(),None);
+        assert_eq!(bytes[46]&CURSOR_HIDDEN,0,"a visible cursor is not flagged");
     }
     #[test]
     fn packets_diff_against_delivered_frame_and_reset_on_unknown_base() {

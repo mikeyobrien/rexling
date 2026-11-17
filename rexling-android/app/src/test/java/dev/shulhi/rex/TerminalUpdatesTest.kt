@@ -124,7 +124,22 @@ class TerminalUpdatesTest {
         val steady=decoder.decode(packet(2,2,2)).screen!!
         assertEquals(2,steady.cursorStyle);assertFalse(steady.cursorBlinking)
         assertEquals(first.lines,steady.lines)
-        assertTrue(runCatching {TerminalUpdates().decode(packet(1,3,8))}.isFailure)
+        assertTrue(runCatching {TerminalUpdates().decode(packet(1,3,16))}.isFailure)
+    }
+    @Test fun aHiddenCursorIsNotDrawnButKeepsItsCaretRow() {
+        fun packet(revision: Long,flags: Int,x: Int,y: Int): ByteArray {
+            val old=rxt5(revision,3,2,0,mapOf(0 to "a",1 to "> input"))
+            val at=16+1+4+8+8+24+1
+            val bytes=(old.take(at)+listOf(flags.toByte())+old.drop(at)).toByteArray().also {it[3]='6'.code.toByte()}
+            java.nio.ByteBuffer.wrap(bytes,21,8).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(x).putInt(y)
+            return bytes
+        }
+        val hidden=TerminalUpdates().decode(packet(1,8,1,1)).screen!!
+        assertNull(hidden.cursorX);assertNull(hidden.cursorY);assertEquals(1,hidden.caretY)
+        val shown=TerminalUpdates().decode(packet(1,0,1,1)).screen!!
+        assertEquals(1,shown.cursorX);assertEquals(1,shown.cursorY);assertEquals(1,shown.caretY)
+        val none=TerminalUpdates().decode(packet(1,8,-1,-1)).screen!!
+        assertNull(none.cursorY);assertNull(none.caretY)
     }
     /** RXT5 packet: [shift], changed rows (each one cell of [text]) and overscan rows. */
     private fun rxt5(revision: Long,flag: Int,rows: Int,shift: Int,changed: Map<Int,String>,above: List<String> = emptyList(),below: List<String> = emptyList(),reuseOverscan: Boolean=false): ByteArray {
