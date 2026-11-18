@@ -600,6 +600,9 @@ class TerminalView(context: Context) : View(context) {
             onMouseClick(col,row,cellWidth.roundToInt().coerceAtLeast(1),cellHeight.roundToInt().coerceAtLeast(1))
             if(frame.isSemanticInputRow(row)) keyboard()
             else if(frame.cursorX!=null && row==frame.cursorY) onCursorTap()
+            // The key toolbar (and its keyboard button) only shows once the keyboard is open, so a tap
+            // must open it in mouse-reporting apps too (pi's fullscreen mode). A no-op when it is open.
+            keyboard()
         } else if(controlled && frame?.hasSemanticPrompt==true) {
             val row=floor((y-insetTop)/cellHeight).toInt()
             if(pressedMouseTarget!=mouseTarget() || pressedMouseGrid!=(frame.columns to frame.rows) ||
