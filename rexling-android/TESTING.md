@@ -20,6 +20,10 @@ While controlling a mouse-enabled terminal application (such as Neovim or Lazygi
 
 The key row keeps its contrast while pane navigation temporarily disables input. The header control circle is 32dp with a 16dp pointer.
 
+A connected hardware keyboard adds navigation that cannot be mistaken for terminal input: Ctrl+Alt with the left/right arrows or Tab moves between panes (Shift+Tab backwards), Ctrl+Alt with up/down moves between sessions, Ctrl+Alt+N opens a new tab, Ctrl+Alt+P and Ctrl+Alt+S open the pane and session pickers, and Ctrl+Alt+K opens the keyboard. Rexling consumes those combinations rather than sending them to the program, so nothing leaks into the PTY. Plain keys, Ctrl+letter and Alt+letter (Meta) still go to the application untouched.
+
+A mouse or trackpad click runs the same gesture checks as a finger tap: press and release in one cell, on the same pane and grid, so a pointer drag still scrolls or switches panes, a link under the pointer opens, and a click in a mouse-reporting application sends its press and release pair. Pointer button events arrive as generic motion events, which is why they arm and release separately.
+
 Long-press a web link for Open link, Copy link address and Share link (some actions may be in the floating toolbar overflow). Copy and Select all still operate on terminal text. Link actions use the frozen destination even if live output changes. Share opens Android's chooser; you select the recipient/app.
 
 While controlling the terminal, quickly tap Ctrl to toggle it for the next key. Hold Ctrl to show the nine label-only shortcuts (^C, ^D, ^Z, ^R, ^L, ^A, ^E, ^W, ^J), slide onto one and release to send it once. Releasing outside cancels. The popup shows no shortcut descriptions.

@@ -13,6 +13,7 @@ import android.text.InputType
 import android.view.ActionMode
 import android.view.Menu
 import android.view.MenuItem
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -97,6 +98,8 @@ class TerminalView(context: Context) : View(context) {
     // A long press on a picture holds the pointer: moving drags with the left button, lifting in place right-clicks.
     private var pointerHeld=false
     private var pointerDragging=false
+    /** Hardware-keyboard navigation; consumed, not passed on, even when nothing acts on it. */
+    internal var onShortcut: (TerminalShortcut) -> Boolean = {false}
     internal var onFrameDrawn: ((String)->Unit)?=null
     internal var onSemanticCopy: ((TerminalScreen,Int,Int,Boolean)->Boolean)?=null
     internal var onCursorTap: ()->Unit = {}
@@ -486,6 +489,22 @@ class TerminalView(context: Context) : View(context) {
     }
     override fun onDetachedFromWindow() {removeCallbacks(cursorTick);awake.detach();clearRows();clearSelection();scrollFling.abortAnimation();touchVelocity?.recycle();touchVelocity=null;super.onDetachedFromWindow()}
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (interactive && event.isFromSource(InputDevice.SOURCE_MOUSE)) when (event.actionMasked) {
+            // A mouse button is the same gesture as a tap: arm on press, act on release.
+            MotionEvent.ACTION_BUTTON_PRESS -> if (event.buttonState and MotionEvent.BUTTON_PRIMARY != 0) {
+                armPointerPress(event.x,event.y);return true
+            }
+            MotionEvent.ACTION_BUTTON_RELEASE -> if (pointerArmed) {
+                pointerArmed=false
+                val slop=ViewConfiguration.get(context).scaledTouchSlop
+                if (kotlin.math.abs(event.x-pointerPressX)<=slop && kotlin.math.abs(event.y-pointerPressY)<=slop) {
+                    val link=pressedLink
+                    if(link==null) terminalTap(event.x,event.y) else if(link==linkAt(event.x,event.y)) onOpenLink(link.url)
+                }
+                pressedLink=null
+                return true
+            }
+        }
         if(selection!=null && event.actionMasked==MotionEvent.ACTION_SCROLL) return true
         if(interactive && event.actionMasked==MotionEvent.ACTION_SCROLL) {
             val lines=(-event.getAxisValue(MotionEvent.AXIS_VSCROLL)*3).roundToInt()
@@ -629,6 +648,15 @@ class TerminalView(context: Context) : View(context) {
             MotionEvent.ACTION_CANCEL -> {if(pointerDragging) pointer("release",1,event.x,event.y);pointerHeld=false;pointerDragging=false}
         }
         return true
+    }
+    private var pointerArmed=false
+    private var pointerPressX=0f
+    private var pointerPressY=0f
+    /** Arm the checks a touch tap uses: target, grid size, ownership and the link under the pointer. */
+    private fun armPointerPress(x: Float,y: Float) {
+        pointerArmed=true;pointerPressX=x;pointerPressY=y
+        pressedMouseTarget=mouseTarget();pressedMouseGrid=screen?.let {it.columns to it.rows}
+        pressedMouse=screen?.mouseTracking==true;pressedControlled=controlled;pressedLink=linkAt(x,y)
     }
     private fun terminalTap(x: Float,y: Float) {
         val frame=screen
@@ -948,6 +976,10 @@ class TerminalView(context: Context) : View(context) {
     }
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         awake.activity();refreshCursorBlink()
+        TerminalShortcuts.resolve(keyCode,event.isCtrlPressed,event.isAltPressed,event.isShiftPressed,event.isMetaPressed)?.let {
+            if(event.repeatCount==0) onShortcut(it)
+            return true
+        }
         if(event.isShiftPressed && keyCode in listOf(KeyEvent.KEYCODE_PAGE_UP,KeyEvent.KEYCODE_PAGE_DOWN)) {
             onScroll((if(keyCode==KeyEvent.KEYCODE_PAGE_UP) -1 else 1)*(screen?.rows ?: 24));return true
         }

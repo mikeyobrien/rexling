@@ -107,6 +107,11 @@ Studio to work on the app.
 - **Touch terminal controls** — arrow joystick, precise navigation popup,
   Ctrl shortcuts, function keys and customizable Neovim shortcuts in a wheel
   or grid.
+- **Hardware keyboard and mouse** — with a keyboard attached, Ctrl+Alt+←/→ or Tab
+  move between panes, Ctrl+Alt+↑/↓ between sessions, Ctrl+Alt+N opens a new tab,
+  Ctrl+Alt+P and Ctrl+Alt+S open the pane and session pickers, and Ctrl+Alt+K opens
+  the on-screen keyboard. Ctrl+Alt combinations never reach the running program.
+  A mouse or trackpad clicks, scrolls and opens links exactly as a finger does.
 - **Image uploads** — paste or attach images to supported Rex servers, with
   upload progress and cancellation. Rex inserts the uploaded file’s path into
   the destination terminal. Requires Rex API revision 11 or newer.

@@ -37,7 +37,7 @@ import dev.chrisbanes.haze.hazeSource
     liveScreen: TerminalScreen?,frames: Map<String,TerminalScreen>,programs: Map<String,ProgramIdentity>,controlled: Boolean,fontSize: Float,
     onInput: (String)->Unit,onScroll: (Int)->Unit,onWheel: (Int,Int,Int,Int,Int)->Unit,onActivate: ()->Unit,onBottom: ()->Unit,onDimensions: (Int,Int)->Unit,onSelect: (String)->Unit,onPanes: ()->Unit,
     onView: (TerminalView)->Unit,modifier: Modifier=Modifier,bindLiveView: ((String,TerminalView)->Boolean)?=null,
-    onMouseClick: (Int,Int,Int,Int)->Unit={_,_,_,_->},mouseTarget: ()->String={""},onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},imageTarget: ()->String=mouseTarget,bottomControlsInset: androidx.compose.ui.unit.Dp=0.dp,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,
+    onMouseClick: (Int,Int,Int,Int)->Unit={_,_,_,_->},mouseTarget: ()->String={""},onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},imageTarget: ()->String=mouseTarget,bottomControlsInset: androidx.compose.ui.unit.Dp=0.dp,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onShortcut: (TerminalShortcut)->Boolean={false},
     /** False when the header shows the pane dots, so nothing covers the last terminal row. */
     paneIndicator: Boolean=true) {
     val switchLayout=remember(paneLayout,blocks) {paneLayout.filter {p->blocks.any {it.id==p.id}}.sortedBy {it.layer}}
@@ -148,6 +148,7 @@ import dev.chrisbanes.haze.hazeSource
                                 view.onPaste=if(center && block.id==liveBlock) onPaste else ({false})
                                 view.onInput=onInput
                                 view.onMouseClick=if(center && block.id==liveBlock) onMouseClick else ({_,_,_,_->})
+                                view.onShortcut=if(center && block.id==liveBlock) onShortcut else ({false})
                                 view.mouseTarget=mouseTarget
                                 view.onActivate=if(center && block.id==liveBlock) onActivate else ({})
                                 view.onWheel=if(center && block.id==liveBlock) onWheel else ({_,_,_,_,_->})
