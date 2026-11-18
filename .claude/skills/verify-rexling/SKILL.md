@@ -76,6 +76,8 @@ To see the gestures by hand, run `adb shell setprop log.tag.RexlingScroll DEBUG`
 
 This needs an emulator with no hardware keyboard. `rexling_api36` (Pixel 6 profile, `hw.keyboard=no`) is `emu.sh`'s default for that reason; on an AVD with a hardware keyboard the on-screen keyboard never takes space. Don't tap the terminal output to take control: a tap on a link opens the browser. Opening a session already takes control.
 
+**Animations are off on the emulator** (`emu.sh` sets the animation scales to 0 for faster, steadier UI driving). That hides the cost of anything that animates continuously. For a performance or battery check, turn them on first (`adb shell settings put global animator_duration_scale 1`), then count frames over a few idle seconds: `adb shell dumpsys gfxinfo dev.shulhi.rex reset`, wait, then read `Total frames rendered`. An idle screen should draw about 10 frames in 5 s; 300 means something redraws every frame.
+
 Proof standards:
 - Use the real user path: taps and typing in the app.
 - Verify the side effect on the server (`$S/scratch-session.sh capture LABEL`), not just the screen.
