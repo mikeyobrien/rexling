@@ -120,8 +120,10 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
     val navigation=client.navigationRequest
     val displayedSession=navigation.session ?: state.selectedSession
     val currentSessionKey=sessionKey(model.activeServerId,displayedSession)
+    // With one server, naming it on every session line is noise; it shows once a second server exists.
     val sessionStrip=SessionCatalog.strip(model.sessionTargets,SessionTarget(model.activeServer,
         SessionItem(displayedSession,state.sessions.firstOrNull {it.id==displayedSession}?.label ?: if(state.connected) "No session" else state.phase)))
+        .let {items->if(model.servers.size>1) items else items.map {it.copy(label=it.label.removeSuffix(" · ${model.activeServer.label}"))}}
     val displayedBlock=navigation.block ?: state.selectedBlock
     val changingSession=navigation.session!=null && navigation.session!=state.selectedSession
     val windows=if(changingSession) emptyList() else client.orderedWindows(state)
@@ -270,17 +272,18 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
             Box(Modifier.onGloballyPositioned {headerTop=it.positionInRoot().y;headerHeight=it.size.height}) {
             SessionHeader(sessionStrip,currentSessionKey,state.connected,model.sessionTargets.isNotEmpty(),
                 blocks.map {state.programs[it.id] ?: ProgramIdentity.Loading},blocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0),state.directories[displayedBlock].orEmpty(),{picker="sessions"},model::selectSessionTarget,model::jumpLastSession,
-                serverIcons=model.sessionTargets.associate {it.key to it.server.icon}+(currentSessionKey to model.activeServer.icon),
+                serverIcons=if(model.servers.size>1) model.sessionTargets.associate {it.key to it.server.icon}+(currentSessionKey to model.activeServer.icon) else emptyMap(),
                 working=chosen in state.workingBlocks,title=if(model.servers.isEmpty()) stringResource(R.string.app_name) else (state.programs[chosen] ?: ProgramIdentity.Loading).paneTitle(blocks.firstOrNull {it.id==chosen}?.label.orEmpty(),state.titles[chosen].orEmpty()),
                 onTitleTap=if(tabsReady && windows.isNotEmpty()) {{picker="tabpicker"}} else null,
                 onTitleHold=if(tabsReady && windows.size>1) titleHold else null,
+                titleDetail=if(windows.size>1) "${windows.indexOfFirst {it.id==window?.id}+1}/${windows.size}" else "",
                 onTitleSwipe=if(tabsReady && carouselBlocks.size>1) {{step->
                     val index=carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0)
                     openPane(carouselBlocks[Math.floorMod(index+step,carouselBlocks.size)].id)
                 }} else null,menu={
                     Row(verticalAlignment=Alignment.CenterVertically) {
                     if(chromeVisible) TerminalActions(state.connected && state.selectedSession.isNotBlank(),model.connectedCount>0,
-                        {model.showActivity(true)},{picker="tabs"},attentionCount=activityBadges.elsewhere,tabCount=windows.size)
+                        {model.showActivity(true)},null,attentionCount=activityBadges.elsewhere)
                     Box {
                         ChromeButton(ChromeIcon.MORE,"Terminal menu"){menu=true}
                         DropdownMenu(menu,{menu=false},modifier=Modifier.drawerFrost(workspaceHaze,RoundedCornerShape(16.dp),workspaceBackdrop),shape=RoundedCornerShape(16.dp),containerColor=Color.Transparent,tonalElevation=0.dp) {
@@ -393,7 +396,7 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
 if(picker=="tabpicker") TabPickerCard(model.activeServer.label,
         sessionStrip.firstOrNull {it.id==currentSessionKey}?.label.orEmpty().removeSuffix(" · ${model.activeServer.label}"),
         tabEntries,window?.id.orEmpty(),ready,ready && state.selectedSession.isNotBlank(),
-        onSelect={picker="";client.selectWindow(it)},onNewTab={picker="";client.createTab()},onSessions={picker="sessions"},onClose={picker=""},hazeState=workspaceHaze)
+        onSelect={picker="";client.selectWindow(it)},onNewTab={picker="";client.createTab()},onSessions={picker="sessions"},onClose={picker=""},onManage={picker="tabs"},hazeState=workspaceHaze)
     if(picker=="sessions") SessionSwitcher(model.sessionTargets,currentSessionKey,model.lastSessionKey,ready,model.closingSessionKey.ifBlank {model.renamingSessionKey},model.sessionActionError,model::closeSession,model::renameSession,
                     onSelect={picker="";model.selectSessionTarget(it)},onClose={picker=""},onNew={picker="";newSession=true},hazeState=workspaceHaze)
     if(model.activityVisible) ActivitySheet(model.activitySources,model::refreshActivity,model::openActivity,onClose={model.showActivity(false)},onSeen=model::markActivitySeen,onMarkAll=model::markAllActivitySeen,hazeState=workspaceHaze)

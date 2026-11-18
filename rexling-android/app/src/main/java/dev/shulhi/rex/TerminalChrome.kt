@@ -210,7 +210,9 @@ internal interface TitleHold {
     programs: List<ProgramIdentity>, paneIndex: Int, directory: String,
     onSessions: ()->Unit, onSelect: (String)->Unit, onLast: ()->Unit, title: String="", working: Boolean=false, expanded: Boolean=false, serverIcons: Map<String,ServerIcon> = emptyMap(),
     /** Tap the title to choose a tab, swipe it for the next (-1: previous) pane, hold and slide for the quick tab list. */
-    onTitleTap: (()->Unit)?=null, onTitleSwipe: ((Int)->Unit)?=null, onTitleHold: TitleHold?=null, menu: @Composable ()->Unit) {
+    onTitleTap: (()->Unit)?=null, onTitleSwipe: ((Int)->Unit)?=null, onTitleHold: TitleHold?=null,
+    /** Dim text after the title, such as the tab position "1/2". */
+    titleDetail: String="", menu: @Composable ()->Unit) {
     val program=programs.getOrNull(paneIndex) ?: ProgramIdentity.Terminal
     val titleHeight=with(LocalDensity.current) {16.sp.toDp()}
     val directoryHeight=with(LocalDensity.current) {12.sp.toDp()}
@@ -266,9 +268,9 @@ internal interface TitleHold {
             if(enabled && sessions.getOrNull(index)?.id!=latestSelected) sessions.getOrNull(index)?.let {latestSelect(it.id)}
         }
     }
-    Row(Modifier.fillMaxWidth().heightIn(min=50.dp).padding(horizontal=9.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().heightIn(min=40.dp).padding(horizontal=9.dp,vertical=2.dp),verticalAlignment=Alignment.CenterVertically) {
         if(!expanded) {
-            Box(Modifier.height(45.dp).clipToBounds().semantics(mergeDescendants=true) {
+            Box(Modifier.height(38.dp).clipToBounds().semantics(mergeDescendants=true) {
                 contentDescription="Session program icon";stateDescription=if(working) "Working" else "Idle"
                 if(enabled && looping) customActions=listOf(CustomAccessibilityAction("Next session") {selectNeighbour(1)},CustomAccessibilityAction("Previous session") {selectNeighbour(-1)})
             }
@@ -351,7 +353,11 @@ internal interface TitleHold {
                             onTitleSwipe?.let {swipe->CustomAccessibilityAction("Next pane") {swipe(1);true}},
                             onTitleSwipe?.let {swipe->CustomAccessibilityAction("Previous pane") {swipe(-1);true}})
                     }) {
-                    Text(title.ifBlank {program.title},fontWeight=FontWeight.Bold,fontSize=13.sp,lineHeight=16.sp,style=lineStyle,letterSpacing=0.sp,maxLines=1,
+                    val dim=MaterialTheme.colorScheme.onSurfaceVariant
+                    Text(androidx.compose.ui.text.buildAnnotatedString {
+                        append(title.ifBlank {program.title})
+                        if(titleDetail.isNotBlank()) {append("  ");pushStyle(androidx.compose.ui.text.SpanStyle(color=dim,fontWeight=FontWeight.Normal));append(titleDetail);pop()}
+                    },fontWeight=FontWeight.Bold,fontSize=13.sp,lineHeight=16.sp,style=lineStyle,letterSpacing=0.sp,maxLines=1,
                         overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth().height(titleHeight).layout {measurable,constraints->
                             // Fallback/emoji metrics must not move the ordinary title text.
                             val text=measurable.measure(constraints.copy(minHeight=0,maxHeight=Constraints.Infinity))
@@ -359,9 +365,6 @@ internal interface TitleHold {
                                 text.placeRelative(0,titleBaseline-text[FirstBaseline])
                             }
                         })
-                    Text(directory,Modifier.fillMaxWidth().height(directoryHeight),
-                        fontFamily=MonoUi,fontSize=9.sp,lineHeight=12.sp,style=lineStyle,letterSpacing=0.sp,maxLines=1,overflow=TextOverflow.Ellipsis,
-                        color=MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             BoxWithConstraints(Modifier.fillMaxWidth().height(if(expanded) 42.dp else sessionHeight)) {
@@ -380,12 +383,12 @@ internal interface TitleHold {
                             verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(if(expanded) 6.dp else 4.dp)) {
                             Box(Modifier.size(if(expanded) 7.dp else 5.dp).background(if(connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,RoundedCornerShape(4.dp)))
                             serverIcons[item?.id]?.let {ServerGlyph(it,Modifier.size(if(expanded) 13.dp else 11.dp))}
-                            Text(item?.label ?: if(connected) "Sessions" else "Connect",fontFamily=MonoUi,fontWeight=if(expanded) FontWeight.Bold else FontWeight.Normal,
+                            Text((item?.label ?: if(connected) "Sessions" else "Connect")+if(active && !expanded && directory.isNotBlank()) " · $directory" else "",fontFamily=MonoUi,fontWeight=if(expanded) FontWeight.Bold else FontWeight.Normal,
                                 fontSize=if(expanded) 12.sp else 9.sp,lineHeight=if(expanded) 16.sp else 12.sp,
                                 style=androidx.compose.ui.text.TextStyle(platformStyle=androidx.compose.ui.text.PlatformTextStyle(includeFontPadding=false)),letterSpacing=0.sp,maxLines=1,overflow=TextOverflow.Ellipsis,
                                 color=if(expanded) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier=Modifier.widthIn(max=(pageWidth-(if(expanded) 50.dp else 24.dp)-(if(serverIcons[item?.id]!=null) 15.dp else 0.dp)).coerceAtLeast(10.dp)))
-                            ChromeSymbol(ChromeIcon.CHEVRON,Modifier.size(if(expanded) 13.dp else 11.dp),MaterialTheme.colorScheme.onSurfaceVariant)
+                            if(expanded) ChromeSymbol(ChromeIcon.CHEVRON,Modifier.size(13.dp),MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     if(expanded && sessions.size>1) PositionDots(logicalPage(pager.currentPage),sessions.size,Modifier.height(5.dp))
@@ -610,9 +613,9 @@ internal interface TitleHold {
 }
 
 @Composable internal fun TerminalActions(enabled: Boolean,activityEnabled: Boolean,
-    onActivity: ()->Unit,onSwitcher: ()->Unit,attentionCount: Int=0,tabCount: Int=0) {
+    onActivity: ()->Unit,onSwitcher: (()->Unit)?,attentionCount: Int=0,tabCount: Int=0) {
     Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-        Box(contentAlignment=Alignment.Center) {
+        if(onSwitcher!=null) Box(contentAlignment=Alignment.Center) {
             ChromeButton(ChromeIcon.SPLIT,"Tabs and panes",enabled,readable=activityEnabled,onClick=onSwitcher)
             // With the tab bar gone, the count is how you know other tabs exist.
             if(tabCount>1) Box(Modifier.align(Alignment.TopEnd).offset(x=(-2).dp,y=2.dp).size(15.dp)
@@ -621,7 +624,7 @@ internal interface TitleHold {
                     style=androidx.compose.ui.text.TextStyle(platformStyle=androidx.compose.ui.text.PlatformTextStyle(includeFontPadding=false)))
             }
         }
-        Box(Modifier.size(41.dp),contentAlignment=Alignment.Center) {
+        Box(Modifier.size(38.dp),contentAlignment=Alignment.Center) {
             Box(Modifier.matchParentSize().clip(RoundedCornerShape(23.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
             Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).clickable(enabled=activityEnabled,role=Role.Button,onClick=onActivity)
                 .semantics {contentDescription="Activity";stateDescription=if(attentionCount>0) "$attentionCount new activity items" else "All activity seen"},contentAlignment=Alignment.Center) {

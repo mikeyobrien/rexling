@@ -45,7 +45,7 @@ internal data class TabEntry(val id: String,val title: String,val detail: String
 /** Tap the header title: the session's tabs in one card, then New tab and Switch session. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun TabPickerCard(server: String,session: String,tabs: List<TabEntry>,current: String,enabled: Boolean,canCreate: Boolean,
-    onSelect: (String)->Unit,onNewTab: ()->Unit,onSessions: ()->Unit,onClose: ()->Unit,hazeState: dev.chrisbanes.haze.HazeState?=null) {
+    onSelect: (String)->Unit,onNewTab: ()->Unit,onSessions: ()->Unit,onClose: ()->Unit,onManage: ()->Unit,hazeState: dev.chrisbanes.haze.HazeState?=null) {
     val card=RoundedCornerShape(30.dp)
     ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Color.Transparent,
         contentColor=MaterialTheme.colorScheme.onSurface,tonalElevation=0.dp,dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
@@ -56,6 +56,12 @@ internal data class TabEntry(val id: String,val title: String,val detail: String
                     Text(server,fontSize=12.sp,fontWeight=FontWeight.Medium,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
                     Text(session,fontSize=20.sp,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)
                 }
+                // Reorder, rename, close and split live in the full switcher.
+                Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.6f))
+                    .clickable(enabled=enabled,role=Role.Button,onClick=onManage).semantics {contentDescription="Tabs and panes"},contentAlignment=Alignment.Center) {
+                    ChromeSymbol(ChromeIcon.SPLIT,Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(8.dp))
                 Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.6f))
                     .clickable(role=Role.Button,onClick=onClose).semantics {contentDescription="Close tabs"},contentAlignment=Alignment.Center) {
                     ChromeSymbol(ChromeIcon.CLOSE,Modifier.size(18.dp))
