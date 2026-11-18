@@ -496,9 +496,10 @@ class TerminalView(context: Context) : View(context) {
     // ignored by the IME; open it when focus returns instead.
     private var keyboardPending=false
     fun keyboard() {
-        if (!controlled) return
+        if (!controlled) {tapLog {"keyboard: not controlled"};return}
         requestFocus()
-        if(!hasWindowFocus()) {keyboardPending=true;return}
+        if(!hasWindowFocus()) {tapLog {"keyboard: deferred, window not focused"};keyboardPending=true;return}
+        tapLog {"keyboard: showSoftInput"}
         (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(this, 0)
     }
     private fun linkAt(x: Float,y: Float): TerminalLink? {
@@ -577,7 +578,9 @@ class TerminalView(context: Context) : View(context) {
                 touchVelocity?.computeCurrentVelocity(1000)
                 onPaneDragEnd?.invoke(event.rawX-startX,touchVelocity?.xVelocity ?: 0f);dragging=false;paneGesture.cancel()
             } else when (paneGesture.finish(event.x, event.y)) {
-                PaneGesture.Result.TAP -> {val link=pressedLink;if(suppressScrollTap) Unit else if(link==null) terminalTap(event.x,event.y) else if(link==linkAt(event.x,event.y)) onOpenLink(link.url)}
+                PaneGesture.Result.TAP -> {val link=pressedLink
+                    tapLog {"tap suppressed=$suppressScrollTap link=${link!=null} controlled=$controlled interactive=$interactive mouse=${screen?.mouseTracking} pressedMouse=$pressedMouse semantic=${screen?.hasSemanticPrompt} below=${screen?.scroll?.below}"}
+                    if(suppressScrollTap) Unit else if(link==null) terminalTap(event.x,event.y) else if(link==linkAt(event.x,event.y)) onOpenLink(link.url)}
                 PaneGesture.Result.NEXT -> onPaneSwipe(1)
                 PaneGesture.Result.PREVIOUS -> onPaneSwipe(-1)
                 PaneGesture.Result.NONE -> Unit
@@ -586,12 +589,15 @@ class TerminalView(context: Context) : View(context) {
         if(event.actionMasked==MotionEvent.ACTION_UP || event.actionMasked==MotionEvent.ACTION_CANCEL) {pressedLink=null;removeCallbacks(longPress);touchVelocity?.recycle();touchVelocity=null}
         return true
     }
+    /** Why a tap did or didn't open the keyboard. Off unless: adb shell setprop log.tag.RexlingTap DEBUG */
+    private inline fun tapLog(message: ()->String) {if(android.util.Log.isLoggable("RexlingTap",android.util.Log.DEBUG)) android.util.Log.d("RexlingTap",message())}
     private fun terminalTap(x: Float,y: Float) {
         val frame=screen
-        if(pressedMouse && pressedControlled && !controlled) return
+        if(pressedMouse && pressedControlled && !controlled) {tapLog {"tap: lost control since press"};return}
         if(controlled && (pressedMouse || frame?.mouseTracking==true)) {
             if(frame?.mouseTracking!=true || !pressedMouse || !pressedControlled || frame.scroll.below>0 ||
-                pressedMouseTarget!=mouseTarget() || pressedMouseGrid!=(frame.columns to frame.rows)) return
+                pressedMouseTarget!=mouseTarget() || pressedMouseGrid!=(frame.columns to frame.rows)) {
+                tapLog {"tap: mouse branch bailed tracking=${frame?.mouseTracking} pressedMouse=$pressedMouse pressedControlled=$pressedControlled below=${frame?.scroll?.below} target=${pressedMouseTarget==mouseTarget()} grid=${pressedMouseGrid==(frame?.columns to frame?.rows)}"};return}
             val col=floor((x-insetHorizontal)/cellWidth).toInt()
             val row=floor((y-insetTop)/cellHeight).toInt()
             if(x<insetHorizontal || x>=width-insetHorizontal || y<insetTop || y>=height-insetBottom ||
@@ -606,14 +612,15 @@ class TerminalView(context: Context) : View(context) {
         } else if(controlled && frame?.hasSemanticPrompt==true) {
             val row=floor((y-insetTop)/cellHeight).toInt()
             if(pressedMouseTarget!=mouseTarget() || pressedMouseGrid!=(frame.columns to frame.rows) ||
-                x<insetHorizontal || x>=width-insetHorizontal || y<insetTop || y>=height-insetBottom) return
+                x<insetHorizontal || x>=width-insetHorizontal || y<insetTop || y>=height-insetBottom) {tapLog {"tap: semantic branch bailed"};return}
+            tapLog {"tap: semantic branch -> keyboard"}
             super.performClick()
             if(frame.isSemanticInputRow(row)) keyboard()
             else if(frame.scroll.below==0L && frame.cursorX!=null && row==frame.cursorY) onCursorTap()
             // Shells with prompt marks (OSC 133) opened the keyboard only from the prompt line; with the key
             // toolbar shown only alongside the keyboard, a tap anywhere must be able to open it.
             keyboard()
-        } else performClick()
+        } else {tapLog {"tap: plain -> ${if(controlled) "keyboard" else "take control"}"};performClick()}
     }
     internal fun copySemanticSelection(output: Boolean): Boolean {
         val selected=selection ?: return false
