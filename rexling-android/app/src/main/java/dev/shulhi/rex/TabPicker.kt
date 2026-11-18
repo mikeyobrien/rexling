@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
@@ -33,19 +34,38 @@ import androidx.compose.ui.window.PopupProperties
 internal data class TabEntry(val id: String,val title: String,val detail: String,val programs: List<ProgramIdentity>,
     val selectedPane: Int,val attention: Boolean,val working: Boolean)
 
-/** Tab status where the tab bar used to show it: a dot when it needs you, a spinner while it works. */
-@Composable internal fun TabStatus(tab: TabEntry) {
+/** The Activity sheet's "blocked" amber: the one warm color, reserved for what needs you. */
+@Composable internal fun attentionColor()=if(LocalTerminalPalette.current.dark) Color(0xffe6a947) else Color(0xffb77710)
+
+/**
+ * A tab's status, ranked like the Activity sheet: needs you is warm and labelled (you must act);
+ * working is a quiet pulsing dot (nothing to do); idle shows nothing. The pulse is read only while
+ * drawing, so it never recomposes the row.
+ */
+@Composable internal fun TabStatus(tab: TabEntry,label: Boolean=false) {
     when {
-        tab.attention -> Box(Modifier.size(9.dp).background(MaterialTheme.colorScheme.primary,CircleShape).semantics {contentDescription="Needs you"})
-        tab.working -> CircularProgressIndicator(Modifier.size(13.dp).semantics {contentDescription="Working"},strokeWidth=2.dp,
-            color=MaterialTheme.colorScheme.tertiary)
+        tab.attention -> Row(Modifier.semantics(mergeDescendants=true) {contentDescription="Needs you"},
+            verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+            val amber=attentionColor()
+            Box(Modifier.size(8.dp).background(amber,CircleShape))
+            if(label) Text("Needs you",fontSize=11.sp,fontWeight=FontWeight.Medium,color=amber,maxLines=1)
+        }
+        tab.working -> {
+            val phase=rememberWorkingPhase(true)
+            val color=MaterialTheme.colorScheme.primary
+            Box(Modifier.size(8.dp).semantics {contentDescription="Working"}.drawBehind {
+                // Same pulse as the Activity sheet's working bars (45–100%), so it never fades out.
+                val brightness=(.725-.275*kotlin.math.cos(phase.value*2*Math.PI)).toFloat()
+                drawCircle(color.copy(alpha=brightness))
+            })
+        }
     }
 }
 
-/** Tap the header title: the session's tabs in one card, then New tab and Switch session. */
+/** Tap the header title: the session's tabs in one card, then New tab beside the two splits, and Switch session. */
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable internal fun TabPickerCard(server: String,session: String,tabs: List<TabEntry>,current: String,enabled: Boolean,canCreate: Boolean,
-    onSelect: (String)->Unit,onNewTab: ()->Unit,onSessions: ()->Unit,onClose: ()->Unit,onManage: ()->Unit,hazeState: dev.chrisbanes.haze.HazeState?=null) {
+@Composable internal fun TabPickerCard(server: String,session: String,tabs: List<TabEntry>,current: String,enabled: Boolean,canCreate: Boolean,canSplit: Boolean,
+    onSelect: (String)->Unit,onNewTab: ()->Unit,onSplit: (PaneSplit)->Unit,onSessions: ()->Unit,onClose: ()->Unit,onManage: ()->Unit,hazeState: dev.chrisbanes.haze.HazeState?=null) {
     val card=RoundedCornerShape(30.dp)
     ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Color.Transparent,
         contentColor=MaterialTheme.colorScheme.onSurface,tonalElevation=0.dp,dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
@@ -79,20 +99,31 @@ internal data class TabEntry(val id: String,val title: String,val detail: String
                             Text(tab.title,fontSize=16.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
                             if(tab.detail.isNotBlank()) Text(tab.detail,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis,fontFamily=MonoUi)
                         }
-                        TabStatus(tab)
+                        TabStatus(tab,label=true)
                         Box(Modifier.size(22.dp),contentAlignment=Alignment.Center) {if(active) ChromeSymbol(ChromeIcon.CHECK,Modifier.size(20.dp),MaterialTheme.colorScheme.primary)}
                     }
                     if(index<tabs.lastIndex) HorizontalDivider(Modifier.padding(start=74.dp,end=14.dp),color=MaterialTheme.colorScheme.outline.copy(alpha=.25f))
                 }
             }
-            PickerPill(ChromeIcon.ADD,"New tab",canCreate,onClick=onNewTab)
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                PickerPill(ChromeIcon.ADD,"New tab",canCreate,Modifier.weight(1f),onClick=onNewTab)
+                PaneSplit.entries.forEach {split->SplitButton(split,canSplit,54.dp,RoundedCornerShape(27.dp)) {onSplit(split)}}
+            }
             PickerPill(ChromeIcon.SESSIONS,"Switch session",enabled,chevron=true,onClick=onSessions)
         }
     }
 }
 
-@Composable private fun PickerPill(icon: ChromeIcon,label: String,enabled: Boolean,chevron: Boolean=false,onClick: ()->Unit) {
-    Row(Modifier.fillMaxWidth().height(54.dp).clip(RoundedCornerShape(27.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.55f))
+/** Split the current tab's shown pane; the drawing is the label. */
+@Composable internal fun SplitButton(split: PaneSplit,enabled: Boolean,size: androidx.compose.ui.unit.Dp,shape: androidx.compose.ui.graphics.Shape,onClick: ()->Unit) {
+    Box(Modifier.size(size).clip(shape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.55f))
+        .clickable(enabled=enabled,role=Role.Button,onClick=onClick).semantics {contentDescription=split.label},contentAlignment=Alignment.Center) {
+        SplitDiagram(split,Modifier.size(22.dp),MaterialTheme.colorScheme.onSurface.copy(alpha=if(enabled) 1f else .38f))
+    }
+}
+
+@Composable private fun PickerPill(icon: ChromeIcon,label: String,enabled: Boolean,modifier: Modifier=Modifier.fillMaxWidth(),chevron: Boolean=false,onClick: ()->Unit) {
+    Row(modifier.height(54.dp).clip(RoundedCornerShape(27.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.55f))
         .clickable(enabled=enabled,role=Role.Button,onClick=onClick).padding(horizontal=18.dp),
         verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)) {
         val color=MaterialTheme.colorScheme.onSurface.copy(alpha=if(enabled) 1f else .38f)

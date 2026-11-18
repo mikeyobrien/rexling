@@ -278,8 +278,9 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
         if(wide && !listHidden && chromeVisible) TabListPanel(listWidth,
             sessionStrip.firstOrNull {it.id==currentSessionKey}?.label.orEmpty().removeSuffix(" · ${model.activeServer.label}"),model.activeServer.label,
             tabEntries,window?.id.orEmpty(),sessionStrip.filter {it.id!=currentSessionKey},tabsReady,ready && state.selectedSession.isNotBlank(),
+            ready && state.selectedSession.isNotBlank() && chosen.isNotBlank(),
             onTab=client::selectWindow,onSession=model::selectSessionTarget,onSessions={picker="sessions"},
-            onSettings={preferencesOpen=true},onNewTab=client::createTab,onCollapse={listHidden=true})
+            onSettings={preferencesOpen=true},onNewTab=client::createTab,onSplit={client.createPane(it,chosen)},onCollapse={listHidden=true})
         // Wide: the terminal side is a card like the list, with its header inside, both starting at the same height.
         Column(Modifier.weight(1f).fillMaxHeight().then(if(wide && chromeVisible) Modifier.padding(start=4.dp,end=8.dp,bottom=8.dp)
             .clip(WideCardShape).background(MaterialTheme.colorScheme.surface) else Modifier)) {
@@ -417,8 +418,8 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
     }
 if(picker=="tabpicker") TabPickerCard(model.activeServer.label,
         sessionStrip.firstOrNull {it.id==currentSessionKey}?.label.orEmpty().removeSuffix(" · ${model.activeServer.label}"),
-        tabEntries,window?.id.orEmpty(),ready,ready && state.selectedSession.isNotBlank(),
-        onSelect={picker="";client.selectWindow(it)},onNewTab={picker="";client.createTab()},onSessions={picker="sessions"},onClose={picker=""},onManage={picker="tabs"},hazeState=workspaceHaze)
+        tabEntries,window?.id.orEmpty(),ready,ready && state.selectedSession.isNotBlank(),ready && state.selectedSession.isNotBlank() && chosen.isNotBlank(),
+        onSelect={picker="";client.selectWindow(it)},onNewTab={picker="";client.createTab()},onSplit={picker="";client.createPane(it,chosen)},onSessions={picker="sessions"},onClose={picker=""},onManage={picker="tabs"},hazeState=workspaceHaze)
     if(picker=="sessions") SessionSwitcher(model.sessionTargets,currentSessionKey,model.lastSessionKey,ready,model.closingSessionKey.ifBlank {model.renamingSessionKey},model.sessionActionError,model::closeSession,model::renameSession,
                     onSelect={picker="";model.selectSessionTarget(it)},onClose={picker=""},onNew={picker="";newSession=true},hazeState=workspaceHaze)
     if(model.activityVisible) ActivitySheet(model.activitySources,model::refreshActivity,model::openActivity,onClose={model.showActivity(false)},onSeen=model::markActivitySeen,onMarkAll=model::markAllActivitySeen,hazeState=workspaceHaze)

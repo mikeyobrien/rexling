@@ -42,22 +42,10 @@ internal fun wideListWidth(width: Dp,height: Dp): Dp {
 /** "~" alone or a blank folder says nothing; show the detail line only when it does. */
 private fun informative(detail: String)=detail.isNotBlank() && detail.trim()!="~"
 
-/** Status beside a tab title: a tinted "Needs you" chip, or a spinner while it works. */
-@Composable private fun TabStatusChip(tab: TabEntry) {
-    when {
-        tab.attention -> Text("Needs you",Modifier.clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha=.18f))
-            .padding(horizontal=8.dp,vertical=3.dp),fontSize=11.sp,fontWeight=FontWeight.Medium,color=MaterialTheme.colorScheme.primary)
-        tab.working -> Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)) {
-            CircularProgressIndicator(Modifier.size(11.dp),strokeWidth=1.5.dp,color=MaterialTheme.colorScheme.tertiary)
-            Text("Working",fontSize=11.sp,fontWeight=FontWeight.Medium,color=MaterialTheme.colorScheme.tertiary)
-        }
-    }
-}
-
 /** List-detail on wide screens: the session's tabs, the other sessions, and quick actions. */
 @Composable internal fun TabListPanel(width: Dp,session: String,server: String,tabs: List<TabEntry>,current: String,otherSessions: List<SessionItem>,
-    enabled: Boolean,canCreate: Boolean,
-    onTab: (String)->Unit,onSession: (String)->Unit,onSessions: ()->Unit,onSettings: ()->Unit,onNewTab: ()->Unit,onCollapse: ()->Unit) {
+    enabled: Boolean,canCreate: Boolean,canSplit: Boolean,
+    onTab: (String)->Unit,onSession: (String)->Unit,onSessions: ()->Unit,onSettings: ()->Unit,onNewTab: ()->Unit,onSplit: (PaneSplit)->Unit,onCollapse: ()->Unit) {
     val dim=MaterialTheme.colorScheme.onSurfaceVariant
     Box(Modifier.width(width).fillMaxHeight().padding(start=8.dp,end=4.dp,bottom=8.dp)) {
         Column(Modifier.fillMaxSize().clip(WideCardShape).background(MaterialTheme.colorScheme.surface)) {
@@ -90,7 +78,7 @@ private fun informative(detail: String)=detail.isNotBlank() && detail.trim()!="~
                             Column(Modifier.weight(1f)) {
                                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                                     Text(tab.title,Modifier.weight(1f),fontSize=15.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
-                                    TabStatusChip(tab)
+                                    TabStatus(tab,label=true)
                                 }
                                 if(informative(tab.detail)) Text(tab.detail,fontSize=12.sp,fontFamily=MonoUi,color=dim,maxLines=1,overflow=TextOverflow.Ellipsis)
                             }
@@ -112,7 +100,7 @@ private fun informative(detail: String)=detail.isNotBlank() && detail.trim()!="~
                 }
             }
         }
-        // Light navigation pill (Activity lives in the terminal header) and a New tab button.
+        // Light navigation pill (Activity lives in the terminal header), the two splits, and a New tab button.
         Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(12.dp),verticalAlignment=Alignment.CenterVertically) {
             Row(Modifier.clip(RoundedCornerShape(24.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.55f)).padding(3.dp),
                 horizontalArrangement=Arrangement.spacedBy(2.dp)) {
@@ -120,6 +108,7 @@ private fun informative(detail: String)=detail.isNotBlank() && detail.trim()!="~
                 NavButton(ChromeIcon.SETTINGS,"Preferences",true,onClick=onSettings)
             }
             Spacer(Modifier.weight(1f))
+            PaneSplit.entries.forEach {split->SplitButton(split,canSplit,42.dp,CircleShape) {onSplit(split)};Spacer(Modifier.width(6.dp))}
             Box(Modifier.size(48.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.primary)
                 .clickable(enabled=canCreate,role=Role.Button,onClick=onNewTab).semantics {contentDescription="New tab"},contentAlignment=Alignment.Center) {
                 ChromeSymbol(ChromeIcon.ADD,Modifier.size(22.dp),MaterialTheme.colorScheme.onPrimary)

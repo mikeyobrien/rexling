@@ -233,18 +233,6 @@ import kotlinx.coroutines.launch
     }
 }
 
-@Composable private fun SplitDiagram(split: PaneSplit,modifier: Modifier,color: Color) {
-    Canvas(modifier) {
-        val u=size.minDimension/24f
-        val right=split==PaneSplit.RIGHT
-        drawRoundRect(color.copy(alpha=.22f),Offset((if(right) 12f else 2f)*u,(if(right) 4f else 12f)*u),
-            Size((if(right) 10f else 20f)*u,(if(right) 16f else 8f)*u),CornerRadius(1.5f*u))
-        drawRoundRect(color,Offset(2f*u,4f*u),Size(20f*u,16f*u),CornerRadius(2f*u),style=Stroke(1.5f*u))
-        drawLine(color,Offset((if(right) 12f else 2f)*u,(if(right) 4f else 12f)*u),
-            Offset((if(right) 12f else 22f)*u,(if(right) 20f else 12f)*u),1.5f*u,StrokeCap.Round)
-    }
-}
-
 @Composable private fun SwitcherEmpty(title: String,description: String) {
     Column(Modifier.fillMaxWidth().padding(vertical=24.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
         Text(title,style=SettingsType.row)
