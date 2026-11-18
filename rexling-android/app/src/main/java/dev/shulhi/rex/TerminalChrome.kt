@@ -271,7 +271,10 @@ internal interface TitleHold {
             Box(Modifier.height(45.dp).clipToBounds().semantics(mergeDescendants=true) {
                 contentDescription="Session program icon";stateDescription=if(working) "Working" else "Idle"
                 if(enabled && looping) customActions=listOf(CustomAccessibilityAction("Next session") {selectNeighbour(1)},CustomAccessibilityAction("Previous session") {selectNeighbour(-1)})
-            }.pointerInput(enabled,sessionIds,selectedId) {
+            }
+            // Tap opens the tab picker like the title; the vertical swipe below still switches sessions.
+            .clickable(enabled=onTitleTap!=null,onClickLabel="Choose tab",role=Role.Button) {onTitleTap?.invoke()}
+            .pointerInput(enabled,sessionIds,selectedId) {
                 if(enabled && looping) {
                     var distance=Offset.Zero
                     detectDragGestures(onDragStart={distance=Offset.Zero;iconAnimation?.cancel();iconDragY=iconSettle.value;iconDragging=true},
