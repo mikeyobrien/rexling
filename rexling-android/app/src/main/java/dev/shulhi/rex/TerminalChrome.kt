@@ -11,8 +11,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -45,6 +43,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
@@ -197,12 +198,19 @@ internal enum class ChromeIcon { SPLIT, SEARCH, CHEVRON, SESSIONS, COPY, MORE, A
 internal val MonoUi = FontFamily(Font(R.font.jetbrains_mono_regular),Font(R.font.jetbrains_mono_bold,FontWeight.Bold))
 
 @OptIn(ExperimentalFoundationApi::class)
+/** Press-and-hold on the header title, in root pixels: start, slide, release. */
+internal interface TitleHold {
+    fun start(y: Float)
+    fun move(y: Float)
+    fun end()
+}
+
 @Composable internal fun SessionHeader(sessions: List<SessionItem>, selectedId: String,
     connected: Boolean, enabled: Boolean,
     programs: List<ProgramIdentity>, paneIndex: Int, directory: String,
     onSessions: ()->Unit, onSelect: (String)->Unit, onLast: ()->Unit, title: String="", working: Boolean=false, expanded: Boolean=false, serverIcons: Map<String,ServerIcon> = emptyMap(),
-    /** Tap the title for the next tab; swipe it sideways for the next (-1: previous) pane. */
-    onTitleTap: (()->Unit)?=null, onTitleSwipe: ((Int)->Unit)?=null, menu: @Composable ()->Unit) {
+    /** Tap the title to choose a tab, swipe it for the next (-1: previous) pane, hold and slide for the quick tab list. */
+    onTitleTap: (()->Unit)?=null, onTitleSwipe: ((Int)->Unit)?=null, onTitleHold: TitleHold?=null, menu: @Composable ()->Unit) {
     val program=programs.getOrNull(paneIndex) ?: ProgramIdentity.Terminal
     val titleHeight=with(LocalDensity.current) {16.sp.toDp()}
     val directoryHeight=with(LocalDensity.current) {12.sp.toDp()}
@@ -284,19 +292,59 @@ internal val MonoUi = FontFamily(Font(R.font.jetbrains_mono_regular),Font(R.font
             if(!expanded) {
                 val latestTap by rememberUpdatedState(onTitleTap)
                 val latestSwipe by rememberUpdatedState(onTitleSwipe)
+                val latestHold by rememberUpdatedState(onTitleHold)
                 val swipeDistance=with(LocalDensity.current) {32.dp.toPx()}
-                Column(Modifier.fillMaxWidth()
-                    .pointerInput(onTitleTap!=null) {if(onTitleTap!=null) detectTapGestures(onTap={latestTap?.invoke()})}
-                    .pointerInput(onTitleSwipe!=null) {
-                        if(onTitleSwipe!=null) {
-                            var dx=0f
-                            detectHorizontalDragGestures(onDragStart={dx=0f},onDragCancel={dx=0f},
-                                onDragEnd={if(abs(dx)>=swipeDistance) latestSwipe?.invoke(if(dx<0) 1 else -1)}) {change,amount->change.consume();dx+=amount}
+                var titleCoordinates by remember {mutableStateOf<LayoutCoordinates?>(null)}
+                Column(Modifier.fillMaxWidth().onGloballyPositioned {titleCoordinates=it}
+                    // One gesture decides between tap, sideways swipe and hold-then-slide, so detectors never race.
+                    .pointerInput(onTitleTap!=null,onTitleSwipe!=null,onTitleHold!=null) {
+                        awaitEachGesture {
+                            val down=awaitFirstDown()
+                            val slop=viewConfiguration.touchSlop
+                            val early=withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                var result=""
+                                while(result.isEmpty()) {
+                                    val change=awaitPointerEvent().changes.firstOrNull {it.id==down.id}
+                                    val moved=change?.let {it.position-down.position}
+                                    result=when {
+                                        change==null -> "cancel"
+                                        change.changedToUpIgnoreConsumed() -> "tap"
+                                        abs(moved!!.x)>slop && abs(moved.x)>abs(moved.y) -> "swipe"
+                                        abs(moved.y)>slop -> "cancel"
+                                        else -> ""
+                                    }
+                                }
+                                result
+                            }
+                            when(early) {
+                                "tap" -> latestTap?.invoke()
+                                "swipe" -> {
+                                    var last=down.position
+                                    while(true) {
+                                        val change=awaitPointerEvent().changes.firstOrNull {it.id==down.id} ?: break
+                                        change.consume();last=change.position
+                                        if(change.changedToUpIgnoreConsumed()) break
+                                    }
+                                    val dx=last.x-down.position.x
+                                    if(abs(dx)>=swipeDistance) latestSwipe?.invoke(if(dx<0) 1 else -1)
+                                }
+                                null -> latestHold?.let {hold->
+                                    fun rootY(position: Offset)=titleCoordinates?.takeIf {it.isAttached}?.localToRoot(position)?.y ?: position.y
+                                    hold.start(rootY(down.position))
+                                    while(true) {
+                                        val change=awaitPointerEvent().changes.firstOrNull {it.id==down.id} ?: break
+                                        change.consume()
+                                        if(change.changedToUpIgnoreConsumed()) break
+                                        hold.move(rootY(change.position))
+                                    }
+                                    hold.end()
+                                }
+                            }
                         }
                     }
                     .semantics {
                         customActions=listOfNotNull(
-                            onTitleTap?.let {tap->CustomAccessibilityAction("Next tab") {tap();true}},
+                            onTitleTap?.let {tap->CustomAccessibilityAction("Choose tab") {tap();true}},
                             onTitleSwipe?.let {swipe->CustomAccessibilityAction("Next pane") {swipe(1);true}},
                             onTitleSwipe?.let {swipe->CustomAccessibilityAction("Previous pane") {swipe(-1);true}})
                     }) {

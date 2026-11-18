@@ -34,6 +34,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -200,6 +202,27 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
     // Same enabling as the former tab bar: tabs and panes switch only once navigation settles.
     val tabsReady=state.connected && !state.creating && !changingSession
     val chromeVisible=state.connected || state.phase=="preview" || client.hasScreen
+    val tabEntries=windows.mapIndexed {index,w->
+        val pane=client.tabPaneIndex(w)
+        val block=w.blocks.getOrNull(pane)
+        val program=state.programs[block?.id] ?: ProgramIdentity.Loading
+        TabEntry(w.id,program.tabTitle(w.label,block?.label.orEmpty(),index+1,state.titles[block?.id].orEmpty()),
+            listOfNotNull(if(w.blocks.size>1) "${w.blocks.size} panes" else null,state.directories[block?.id]?.takeIf {it.isNotBlank()}).joinToString(" · "),
+            client.tabPrograms(w),pane,(activityBadges.tabs[w.id] ?: 0)>0,w.blocks.any {it.id in state.workingBlocks})
+    }
+    val tabHold=remember {TabHoldState()}
+    var headerTop by remember {mutableFloatStateOf(0f)}
+    var headerHeight by remember {mutableIntStateOf(0)}
+    val latestTabs by rememberUpdatedState(tabEntries)
+    val titleHold=remember(client) {object: TitleHold {
+        override fun start(y: Float)=tabHold.start(y)
+        override fun move(y: Float)=tabHold.move(y)
+        override fun end() {
+            val index=tabHold.index(latestTabs.size)
+            tabHold.finish()
+            latestTabs.getOrNull(index)?.let {client.selectWindow(it.id)}
+        }
+    }}
     val floatingActive=floating.any {it.id==chosen}
     var hiddenFloating by rememberSaveable(displayedSession,window?.id) {mutableStateOf("")}
     val controlled=state.controlled && ready && client.hasScreen && (!floatingActive || hiddenFloating!=chosen)
@@ -241,17 +264,16 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
         }
     }
     LaunchedEffect(picker) {if(picker=="sessions") model.refreshSessionDetails()}
-    val workspaceBackdrop=rememberBackdropCapture(menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || fontPicker || alerts || picker in setOf("tabs","panes","sessions") || model.activityVisible)
+    val workspaceBackdrop=rememberBackdropCapture(menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || fontPicker || alerts || picker in setOf("tabs","panes","sessions","tabpicker") || model.activityVisible)
     Surface(Modifier.fillMaxSize().then(if(workspaceBackdrop) Modifier.hazeSource(workspaceHaze) else Modifier),color=MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
+            Box(Modifier.onGloballyPositioned {headerTop=it.positionInRoot().y;headerHeight=it.size.height}) {
             SessionHeader(sessionStrip,currentSessionKey,state.connected,model.sessionTargets.isNotEmpty(),
                 blocks.map {state.programs[it.id] ?: ProgramIdentity.Loading},blocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0),state.directories[displayedBlock].orEmpty(),{picker="sessions"},model::selectSessionTarget,model::jumpLastSession,
                 serverIcons=model.sessionTargets.associate {it.key to it.server.icon}+(currentSessionKey to model.activeServer.icon),
                 working=chosen in state.workingBlocks,title=if(model.servers.isEmpty()) stringResource(R.string.app_name) else (state.programs[chosen] ?: ProgramIdentity.Loading).paneTitle(blocks.firstOrNull {it.id==chosen}?.label.orEmpty(),state.titles[chosen].orEmpty()),
-                onTitleTap=if(tabsReady && windows.size>1) {{
-                    val index=windows.indexOfFirst {it.id==window?.id}
-                    client.selectWindow(windows[Math.floorMod(index+1,windows.size)].id)
-                }} else null,
+                onTitleTap=if(tabsReady && windows.isNotEmpty()) {{picker="tabpicker"}} else null,
+                onTitleHold=if(tabsReady && windows.size>1) titleHold else null,
                 onTitleSwipe=if(tabsReady && carouselBlocks.size>1) {{step->
                     val index=carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0)
                     openPane(carouselBlocks[Math.floorMod(index+step,carouselBlocks.size)].id)
@@ -288,6 +310,8 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                     }
                     }
                 })
+            }
+            if(tabHold.open) TabHoldList(tabHold,tabEntries,window?.id.orEmpty(),headerHeight,headerTop+headerHeight,hazeState=workspaceHaze)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 Column(Modifier.fillMaxSize()) {
                     if(showServer || (state.phase=="disconnected"&&!client.hasScreen)) {
@@ -366,7 +390,11 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
             }
         }
     }
-if(picker=="sessions") SessionSwitcher(model.sessionTargets,currentSessionKey,model.lastSessionKey,ready,model.closingSessionKey.ifBlank {model.renamingSessionKey},model.sessionActionError,model::closeSession,model::renameSession,
+if(picker=="tabpicker") TabPickerCard(model.activeServer.label,
+        sessionStrip.firstOrNull {it.id==currentSessionKey}?.label.orEmpty().removeSuffix(" · ${model.activeServer.label}"),
+        tabEntries,window?.id.orEmpty(),ready,ready && state.selectedSession.isNotBlank(),
+        onSelect={picker="";client.selectWindow(it)},onNewTab={picker="";client.createTab()},onSessions={picker="sessions"},onClose={picker=""},hazeState=workspaceHaze)
+    if(picker=="sessions") SessionSwitcher(model.sessionTargets,currentSessionKey,model.lastSessionKey,ready,model.closingSessionKey.ifBlank {model.renamingSessionKey},model.sessionActionError,model::closeSession,model::renameSession,
                     onSelect={picker="";model.selectSessionTarget(it)},onClose={picker=""},onNew={picker="";newSession=true},hazeState=workspaceHaze)
     if(model.activityVisible) ActivitySheet(model.activitySources,model::refreshActivity,model::openActivity,onClose={model.showActivity(false)},onSeen=model::markActivitySeen,onMarkAll=model::markAllActivitySeen,hazeState=workspaceHaze)
     NetworkPrompts()
