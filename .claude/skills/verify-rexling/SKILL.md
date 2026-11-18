@@ -56,7 +56,7 @@ Feature recipes are in `features/` (index: `features/README.md`). A proof that c
 - **draw:** `TerminalView.onDraw`.
 - **total:** key press to drawn. It excludes RenderThread and compositor time (about one more frame).
 
-Baseline on 2026-11-17, emulator plus local server: total p50 29 ms and p95 35 ms; echo about 18 ms, present about 10 ms, draw about 1 ms.
+Baseline on 2026-11-17 (build from `reconnect-session-fallback`, 60 Hz emulator, local server, 60 keys): total p50 13.3 ms and p95 21.0 ms; send 0.2, echo 2.9, present 9.0, draw 1.1 ms. `present` (waiting for the next vsync) is most of the total, so input is scheduling-bound, not I/O-bound. Evidence: `latency-20261117-213921`.
 
 To see the same samples by hand, run `adb shell setprop log.tag.RexlingLatency DEBUG` and `adb logcat -s RexlingLatency`. In Perfetto, each keystroke is an async slice named `Rexling.keystroke` (API 29+).
 
@@ -64,12 +64,14 @@ To see the same samples by hand, run `adb shell setprop log.tag.RexlingLatency D
 - **touch → drawn:** how fast the local slide follows the finger.
 - **catch-up:** a whole-line scroll request until a native frame at that offset is drawn.
 - **fling frame intervals:** with frames over 1.5 refresh intervals counted as janky.
-- **clamped:** frames where the slide outran the 4 overscan rows (`RP_OVERSCAN` in `rexling-core/native/ghostty_shim.c`), so content stuck at the edge.
+- **clamped:** frames where the slide outran the overscan rows (`RP_OVERSCAN`, 16 in `rexling-core/native/ghostty_shim.c`), so content stuck at the edge.
 - **lines per second.**
 
-Baseline on 2026-11-17, emulator at 60 Hz:
-- Drags: touch p50 7.5 ms, catch-up p50 18 ms, no clamping, 42 lines/s.
-- Flings: frames p50 16.7 ms, 0.5% janky, catch-up p95 34 ms, **45% of frames clamped**, 210 lines/s.
+Baseline on 2026-11-17 (same build, 60 Hz emulator, rounds=4). Evidence: `scroll-20261117-214004`.
+- Drags: touch p50 7.9 ms / p95 37.2 ms, catch-up p50 18.1 ms / p95 53.8 ms, no clamping, 40 lines/s (peak 42).
+- Flings: frames p50 16.6 ms / p95 19.7 ms, 0.2% janky (2 of 1176), catch-up p95 37.8 ms, 1 clamped frame, 208 lines/s (peak 210).
+
+Fling clamping is gone since overscan went from 4 rows to 16; treat any clamped-frame count above single digits as a regression. These are emulator figures — no physical-device frame-pacing profile has been recorded.
 
 To see the gestures by hand, run `adb shell setprop log.tag.RexlingScroll DEBUG`. In Perfetto, each gesture is an async slice named `Rexling.scroll`.
 
