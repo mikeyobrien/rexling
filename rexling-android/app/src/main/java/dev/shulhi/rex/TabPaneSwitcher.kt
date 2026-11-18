@@ -59,7 +59,7 @@ import kotlinx.coroutines.launch
     var splitMenu by remember(targetWindow,targetPane,canSplit,enabled,pager.currentPage) {mutableStateOf(false)}
     val hasLayout=panes.isNotEmpty() && current!=null && panes.all {pane->current.layout.any {it.id==pane.id}}
     val layoutAllowance=if(current?.layout?.any {it.floating}==true) 128 else 104
-    val panelHeight=(128+maxOf(windows.size,panes.size,1).coerceAtMost(7)*60+if(hasLayout) layoutAllowance else 0).dp.coerceAtMost(620.dp)
+    val panelHeight=(128+maxOf(windows.size,panes.size,1).coerceAtMost(7)*60+if(hasLayout) layoutAllowance else 0).dp.coerceAtMost(sheetBodyMax(620.dp,chrome=40.dp))
     fun tabTitle(tab: WindowItem): String {
         val block=tab.blocks.getOrNull(selectedPane(tab))
         val program=programs[block?.id] ?: ProgramIdentity.Loading

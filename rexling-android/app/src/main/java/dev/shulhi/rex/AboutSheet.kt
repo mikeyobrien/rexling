@@ -47,7 +47,7 @@ internal data class AppBuildInfo(val version: String,val number: Int,val type: S
 }
 
 @Composable internal fun AboutContent(info: AppBuildInfo,onClose: ()->Unit,onCopy: (String)->Unit,onOpen: (String)->Unit,showHeader: Boolean=true) {
-    Column(Modifier.fillMaxWidth().heightIn(max=600.dp).verticalScroll(rememberScrollState()).padding(horizontal=16.dp).padding(top=8.dp,bottom=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxWidth().heightIn(max=sheetBodyMax(600.dp)).verticalScroll(rememberScrollState()).padding(horizontal=16.dp).padding(top=8.dp,bottom=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
         if(showHeader) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
             Text("About",Modifier.weight(1f),style=SettingsType.row,fontWeight=FontWeight.Bold)
             ChromeButton(ChromeIcon.CLOSE,"Close about",onClick=onClose)

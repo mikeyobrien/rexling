@@ -77,7 +77,7 @@ import dev.chrisbanes.haze.HazeState
                     dragged=null
                 },cancel={dragged=null})
             }) {
-            Column(Modifier.fillMaxWidth().heightIn(max=640.dp).padding(horizontal=16.dp).padding(top=8.dp,bottom=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.fillMaxWidth().heightIn(max=sheetBodyMax(640.dp)).padding(horizontal=16.dp).padding(top=8.dp,bottom=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 Text("Hold and drag buttons between the two areas. Up to seven buttons; the keyboard stays on the right.",style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Your toolbar · ${draft.size}/7",style=SettingsType.section,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(Modifier.fillMaxWidth().height(48.dp).onGloballyPositioned {toolbarBounds=it.boundsInRoot()}

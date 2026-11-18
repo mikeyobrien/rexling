@@ -31,7 +31,7 @@ import kotlin.math.roundToInt
     BackHandler(editing!=null) {editing=null}
     SettingsDrawer(if(editing==null) "Appearance" else if(editing==true) "Dark theme" else "Light theme",
         "Close appearance",onClose,hazeState,onBack=if(editing!=null) ({editing=null}) else null) {
-        Column(Modifier.fillMaxWidth().heightIn(max=600.dp).padding(bottom=12.dp)) {
+        Column(Modifier.fillMaxWidth().heightIn(max=sheetBodyMax(600.dp)).padding(bottom=12.dp)) {
             if(editing==null) {
                 Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=12.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     Appearance.entries.forEach {mode->FilterChip(selected=appearance==mode,onClick={onAppearance(mode)},

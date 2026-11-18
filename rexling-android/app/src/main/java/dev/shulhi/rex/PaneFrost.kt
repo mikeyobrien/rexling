@@ -75,7 +75,8 @@ private class PopupFrostNode(haze: HazeState,style: HazeStyle,var invalidator: P
         onDispose {invalidator.stop()}
     }
     return testTag("Frosted overlay")
-        .paneFrost(hazeState ?: localHaze,shape,edge=false,invalidator=invalidator,opacity=.72f,blur=24.dp)
+        // Opaque enough that saturated content behind (program icons, the New tab button) can't tint the sheet.
+        .paneFrost(hazeState ?: localHaze,shape,edge=false,invalidator=invalidator,opacity=.86f,blur=24.dp)
 }
 
 /** Retain the captured backdrop through sheet/menu exit animations. */
@@ -93,4 +94,17 @@ private class PopupFrostNode(haze: HazeState,style: HazeStyle,var invalidator: P
         androidx.compose.foundation.layout.Box(Modifier.width(28.dp).height(3.dp)
             .background(MaterialTheme.colorScheme.outlineVariant,androidx.compose.foundation.shape.RoundedCornerShape(3.dp)))
     }
+}
+
+/**
+ * Max height for a sheet's scrolling body: [preferred], but never more than fits between the
+ * status bar and the bottom insets after [chrome] (handle, title, actions). Short windows (an
+ * unfolded foldable in landscape, a taskbar) otherwise push the sheet's title under the status bar.
+ */
+@Composable internal fun sheetBodyMax(preferred: androidx.compose.ui.unit.Dp,chrome: androidx.compose.ui.unit.Dp=96.dp): androidx.compose.ui.unit.Dp {
+    val density=androidx.compose.ui.platform.LocalDensity.current
+    val screen=androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+    val insets=with(density) {(androidx.compose.foundation.layout.WindowInsets.safeDrawing.getTop(this)+
+        androidx.compose.foundation.layout.WindowInsets.safeDrawing.getBottom(this)).toDp()}
+    return minOf(preferred,(screen-insets-chrome).coerceAtLeast(160.dp))
 }

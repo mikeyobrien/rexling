@@ -49,7 +49,7 @@ import dev.chrisbanes.haze.HazeState
                 Text("Tap a localhost link in a terminal, or add a forward.",Modifier.padding(16.dp),style=SettingsType.detail)
                 TextButton(onClick={editing=true},enabled=canAdd,modifier=Modifier.padding(horizontal=8.dp)) {Text("Add port forward")}
             }
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max=440.dp),contentPadding=PaddingValues(horizontal=16.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max=sheetBodyMax(440.dp,chrome=200.dp)),contentPadding=PaddingValues(horizontal=16.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                 PortForwards.items.groupBy {it.serverId.ifBlank {it.endpoint}}.forEach {(serverId,entries)->
                     item(key="server:$serverId") {
                         val profile=servers.firstOrNull {it.profile.id==serverId}?.profile

@@ -175,7 +175,7 @@ import kotlin.math.roundToInt
     var draft by rememberSaveable {mutableStateOf(NeovimShortcuts.editorText(items))}
     var error by remember {mutableStateOf<String?>(null)}
     SettingsDrawer("Neovim shortcuts","Close Neovim shortcuts",onClose,hazeState) {
-        Column(Modifier.fillMaxWidth().heightIn(max=600.dp).verticalScroll(rememberScrollState()).padding(horizontal=16.dp).padding(top=8.dp,bottom=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.fillMaxWidth().heightIn(max=sheetBodyMax(600.dp)).verticalScroll(rememberScrollState()).padding(horizontal=16.dp).padding(top=8.dp,bottom=12.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth().toggleable(enabled,role=Role.Switch,onValueChange=onEnabled).padding(vertical=8.dp),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically) {
                 Text("Enable Neovim shortcuts",Modifier.weight(1f),style=SettingsType.row)
                 Switch(checked=enabled,onCheckedChange=null)

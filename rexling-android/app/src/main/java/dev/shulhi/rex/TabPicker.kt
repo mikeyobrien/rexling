@@ -67,7 +67,7 @@ internal data class TabEntry(val id: String,val title: String,val detail: String
                     ChromeSymbol(ChromeIcon.CLOSE,Modifier.size(18.dp))
                 }
             }
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max=420.dp).clip(RoundedCornerShape(22.dp))
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max=sheetBodyMax(420.dp,chrome=300.dp)).clip(RoundedCornerShape(22.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.55f)).semantics {contentDescription="Tabs"}) {
                 itemsIndexed(tabs,key={_,tab->tab.id}) {index,tab->
                     val active=tab.id==current
