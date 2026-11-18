@@ -40,6 +40,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -275,11 +276,13 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
         val listWidth=wideListWidth(maxWidth,maxHeight)
         Row(Modifier.fillMaxSize()) {
         if(wide && !listHidden && chromeVisible) TabListPanel(listWidth,
-            sessionStrip.firstOrNull {it.id==currentSessionKey}?.label.orEmpty(),tabEntries,window?.id.orEmpty(),
-            sessionStrip.filter {it.id!=currentSessionKey},tabsReady,ready && state.selectedSession.isNotBlank(),activityBadges.elsewhere>0,
-            onTab=client::selectWindow,onSession=model::selectSessionTarget,onSessions={picker="sessions"},onActivity={model.showActivity(true)},
-            onSettings={preferencesOpen=true},onNewTab=client::createTab)
-        Column(Modifier.weight(1f).fillMaxHeight()) {
+            sessionStrip.firstOrNull {it.id==currentSessionKey}?.label.orEmpty().removeSuffix(" · ${model.activeServer.label}"),model.activeServer.label,
+            tabEntries,window?.id.orEmpty(),sessionStrip.filter {it.id!=currentSessionKey},tabsReady,ready && state.selectedSession.isNotBlank(),
+            onTab=client::selectWindow,onSession=model::selectSessionTarget,onSessions={picker="sessions"},
+            onSettings={preferencesOpen=true},onNewTab=client::createTab,onCollapse={listHidden=true})
+        // Wide: the terminal side is a card like the list, with its header inside, both starting at the same height.
+        Column(Modifier.weight(1f).fillMaxHeight().then(if(wide && chromeVisible) Modifier.padding(start=4.dp,end=8.dp,bottom=8.dp)
+            .clip(WideCardShape).background(MaterialTheme.colorScheme.surface) else Modifier)) {
             Box(Modifier.onGloballyPositioned {headerTop=it.positionInRoot().y;headerHeight=it.size.height}) {
             SessionHeader(sessionStrip,currentSessionKey,state.connected,model.sessionTargets.isNotEmpty(),
                 blocks.map {state.programs[it.id] ?: ProgramIdentity.Loading},blocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0),state.directories[displayedBlock].orEmpty(),{picker="sessions"},model::selectSessionTarget,model::jumpLastSession,
@@ -287,9 +290,12 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                 working=chosen in state.workingBlocks,title=if(model.servers.isEmpty()) stringResource(R.string.app_name) else (state.programs[chosen] ?: ProgramIdentity.Loading).paneTitle(blocks.firstOrNull {it.id==chosen}?.label.orEmpty(),state.titles[chosen].orEmpty()),
                 onTitleTap=if(tabsReady && windows.isNotEmpty()) {{picker="tabpicker"}} else null,
                 onTitleHold=if(tabsReady && windows.size>1) titleHold else null,
-                titleDetail=if(windows.size>1) "${windows.indexOfFirst {it.id==window?.id}+1}/${windows.size}" else "",
-                leading=if(wide && chromeVisible) {{
-                    ChromeButton(if(listHidden) ChromeIcon.COLLAPSE else ChromeIcon.EXPAND,if(listHidden) "Show tab list" else "Maximize terminal") {listHidden=!listHidden}
+                // Wide: the list shows tabs, so the header names the pane; phones keep the tab position.
+                titleDetail=if(wide && chromeVisible) {if(carouselBlocks.size>1) "pane ${carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0)+1}/${carouselBlocks.size}" else ""}
+                    else if(windows.size>1) "${windows.indexOfFirst {it.id==window?.id}+1}/${windows.size}" else "",
+                subtitle=if(wide && chromeVisible) state.directories[displayedBlock].orEmpty() else null,
+                leading=if(wide && chromeVisible && listHidden) {{
+                    ChromeButton(ChromeIcon.CHEVRON,"Show tab list",modifier=Modifier.graphicsLayer {rotationZ=-90f}) {listHidden=false}
                 }} else null,
                 onTitleSwipe=if(tabsReady && carouselBlocks.size>1) {{step->
                     val index=carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0)
@@ -297,7 +303,7 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                 }} else null,menu={
                     Row(verticalAlignment=Alignment.CenterVertically) {
                     if(chromeVisible) TerminalActions(state.connected && state.selectedSession.isNotBlank(),model.connectedCount>0,
-                        {model.showActivity(true)},null,attentionCount=activityBadges.elsewhere)
+                        {model.showActivity(true)},null,attentionCount=activityBadges.elsewhere,quiet=wide)
                     Box {
                         ChromeButton(ChromeIcon.MORE,"Terminal menu"){menu=true}
                         DropdownMenu(menu,{menu=false},modifier=Modifier.drawerFrost(workspaceHaze,RoundedCornerShape(16.dp),workspaceBackdrop),shape=RoundedCornerShape(16.dp),containerColor=Color.Transparent,tonalElevation=0.dp) {

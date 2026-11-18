@@ -215,7 +215,9 @@ internal interface TitleHold {
     /** Tap the title to choose a tab, swipe it for the next (-1: previous) pane, hold and slide for the quick tab list. */
     onTitleTap: (()->Unit)?=null, onTitleSwipe: ((Int)->Unit)?=null, onTitleHold: TitleHold?=null,
     /** Dim text after the title, such as the tab position "1/2". */
-    titleDetail: String="", leading: (@Composable ()->Unit)?=null, menu: @Composable ()->Unit) {
+    titleDetail: String="", leading: (@Composable ()->Unit)?=null,
+    /** Replaces the session line with plain text (wide layout, where the list shows the session). */
+    subtitle: String?=null, menu: @Composable ()->Unit) {
     val program=programs.getOrNull(paneIndex) ?: ProgramIdentity.Terminal
     val titleHeight=with(LocalDensity.current) {16.sp.toDp()}
     val directoryHeight=with(LocalDensity.current) {12.sp.toDp()}
@@ -371,7 +373,9 @@ internal interface TitleHold {
                         })
                 }
             }
-            BoxWithConstraints(Modifier.fillMaxWidth().height(if(expanded) 42.dp else sessionHeight)) {
+            if(subtitle!=null && !expanded) Text(subtitle,Modifier.fillMaxWidth().height(sessionHeight),fontFamily=MonoUi,fontSize=9.sp,lineHeight=12.sp,
+                style=lineStyle,letterSpacing=0.sp,maxLines=1,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            else             BoxWithConstraints(Modifier.fillMaxWidth().height(if(expanded) 42.dp else sessionHeight)) {
                 val pageWidth=if(expanded) 160.dp else maxWidth.coerceAtLeast(40.dp)
                 val pagePadding=if(expanded) ((maxWidth-pageWidth)/2).coerceAtLeast(0.dp) else 0.dp
                 Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) {
@@ -617,7 +621,9 @@ internal interface TitleHold {
 }
 
 @Composable internal fun TerminalActions(enabled: Boolean,activityEnabled: Boolean,
-    onActivity: ()->Unit,onSwitcher: (()->Unit)?,attentionCount: Int=0,tabCount: Int=0) {
+    onActivity: ()->Unit,onSwitcher: (()->Unit)?,attentionCount: Int=0,tabCount: Int=0,
+    /** Quiet: no filled circle, matching the bare menu button (wide layout). */
+    quiet: Boolean=false) {
     Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
         if(onSwitcher!=null) Box(contentAlignment=Alignment.Center) {
             ChromeButton(ChromeIcon.SPLIT,"Tabs and panes",enabled,readable=activityEnabled,onClick=onSwitcher)
@@ -629,7 +635,7 @@ internal interface TitleHold {
             }
         }
         Box(Modifier.size(38.dp),contentAlignment=Alignment.Center) {
-            Box(Modifier.matchParentSize().clip(RoundedCornerShape(23.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
+            if(!quiet) Box(Modifier.matchParentSize().clip(RoundedCornerShape(23.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
             Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).clickable(enabled=activityEnabled,role=Role.Button,onClick=onActivity)
                 .semantics {contentDescription="Activity";stateDescription=if(attentionCount>0) "$attentionCount new activity items" else "All activity seen"},contentAlignment=Alignment.Center) {
                 ChromeSymbol(ChromeIcon.EYE,color=MaterialTheme.colorScheme.onSurface.copy(alpha=if(activityEnabled) .85f else .3f))
