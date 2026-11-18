@@ -610,6 +610,9 @@ class TerminalView(context: Context) : View(context) {
             super.performClick()
             if(frame.isSemanticInputRow(row)) keyboard()
             else if(frame.scroll.below==0L && frame.cursorX!=null && row==frame.cursorY) onCursorTap()
+            // Shells with prompt marks (OSC 133) opened the keyboard only from the prompt line; with the key
+            // toolbar shown only alongside the keyboard, a tap anywhere must be able to open it.
+            keyboard()
         } else performClick()
     }
     internal fun copySemanticSelection(output: Boolean): Boolean {
