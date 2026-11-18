@@ -112,6 +112,13 @@ object TerminalInput {
     // turns this kitty sequence into a real Shift+Enter key event, which Rex
     // then encodes for whatever keyboard mode the program enabled.
     const val SHIFT_ENTER = "\u001b[13;2u"
+    /**
+     * Keys from an on-screen keyboard commit. In a multi-line field Gboard's Enter commits a lone
+     * "\n" (LF, Ctrl+J), which TUIs such as pi and Claude Code read as "insert newline" rather
+     * than submit. A lone newline is the Enter key, so send CR. Longer commits (pasted text) keep
+     * their LFs so a multi-line paste does not submit every line.
+     */
+    fun imeKeys(keys: String): String = if(keys=="\n") "\r" else keys
     private val keys=mapOf(
         "esc" to "\u001b", "tab" to "\t", "enter" to "\r", "backspace" to "\u007f",
         "pageup" to "\u001b[5~", "pagedown" to "\u001b[6~",

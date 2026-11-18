@@ -79,4 +79,12 @@ class ModelsTest {
         assertEquals(expected,controlShortcuts.map {TerminalInput.modified(it,true,false).single().code})
     }
 
+    @Test fun keyboardEnterIsARealEnterButPastedNewlinesStayLineFeeds() {
+        assertEquals("\r",TerminalInput.imeKeys("\n"))
+        assertEquals("a\nb",TerminalInput.imeKeys("a\nb"))
+        assertEquals("\n\n",TerminalInput.imeKeys("\n\n"))
+        assertEquals("x",TerminalInput.imeKeys("x"))
+        // Toolbar Shift with the keyboard's Enter is a real Shift+Enter.
+        assertEquals(TerminalInput.SHIFT_ENTER,TerminalInput.modified(TerminalInput.imeKeys("\n"),false,false,true))
+    }
 }

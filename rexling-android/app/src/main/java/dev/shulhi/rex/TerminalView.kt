@@ -758,7 +758,7 @@ class TerminalView(context: Context) : View(context) {
                     getComposingSpanStart(editor),getComposingSpanEnd(editor))
             }
             private fun submit(text: String,cursor: Int) {
-                val keys=imeLine.edit(text,cursor)
+                val keys=TerminalInput.imeKeys(imeLine.edit(text,cursor))
                 if(keys.isNotEmpty()) {
                     deliveringImeInput=true
                     try {onInput(keys)} finally {deliveringImeInput=false}

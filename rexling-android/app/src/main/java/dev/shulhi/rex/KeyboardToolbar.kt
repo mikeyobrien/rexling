@@ -18,7 +18,8 @@ internal enum class ToolbarKey(val id: String,val label: String,val icon: Chrome
 
 internal object ToolbarLayout {
     const val MAX_KEYS=7
-    val defaults=listOf(ToolbarKey.ESCAPE,ToolbarKey.CONTROL,ToolbarKey.ALT,ToolbarKey.SHIFT,ToolbarKey.TAB,ToolbarKey.ARROWS,ToolbarKey.ENTER)
+    // No Enter: the keyboard's own Enter key sends a real Enter (TerminalInput.imeKeys). Enter stays available to add.
+    val defaults=listOf(ToolbarKey.ESCAPE,ToolbarKey.CONTROL,ToolbarKey.ALT,ToolbarKey.SHIFT,ToolbarKey.TAB,ToolbarKey.ARROWS)
     fun normalize(keys: List<ToolbarKey>)=keys.distinct().take(MAX_KEYS)
     fun encode(keys: List<ToolbarKey>)=normalize(keys).joinToString(",") {it.id}
     fun decode(raw: String?): List<ToolbarKey> {
