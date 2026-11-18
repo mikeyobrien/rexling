@@ -78,7 +78,12 @@ private fun informative(detail: String)=detail.isNotBlank() && detail.trim()!="~
                             Column(Modifier.weight(1f)) {
                                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                                     Text(tab.title,Modifier.weight(1f),fontSize=15.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
-                                    TabStatus(tab,label=true)
+                                    // The list stays on screen, so a pulse here would redraw every frame while
+                                    // any tab works (battery, and the app never goes idle). Static dot instead;
+                                    // the transient pickers keep the pulse.
+                                    if(tab.working && !tab.attention) Box(Modifier.size(8.dp).background(MaterialTheme.colorScheme.primary,CircleShape)
+                                        .semantics {contentDescription="Working"})
+                                    else TabStatus(tab,label=true)
                                 }
                                 if(informative(tab.detail)) Text(tab.detail,fontSize=12.sp,fontFamily=MonoUi,color=dim,maxLines=1,overflow=TextOverflow.Ellipsis)
                             }
