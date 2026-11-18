@@ -49,7 +49,10 @@ class TerminalView(context: Context) : View(context) {
         get()=awake.mode
         set(value) {awake.mode=value}
     override fun onAttachedToWindow() {super.onAttachedToWindow();awake.update();refreshCursorBlink()}
-    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {super.onWindowFocusChanged(hasWindowFocus);awake.update();refreshCursorBlink()}
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus);awake.update();refreshCursorBlink()
+        if(hasWindowFocus && keyboardPending) {keyboardPending=false;keyboard()}
+    }
     override fun onWindowVisibilityChanged(visibility: Int) {super.onWindowVisibilityChanged(visibility);awake.update();refreshCursorBlink()}
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {if(event.actionMasked==MotionEvent.ACTION_DOWN) awake.activity();return super.dispatchTouchEvent(event)}
     var interactive = true
@@ -486,11 +489,16 @@ class TerminalView(context: Context) : View(context) {
         return super.onGenericMotionEvent(event)
     }
     fun hideKeyboard() {
+        keyboardPending=false
         (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(windowToken, 0)
     }
+    // A keyboard requested while a popup (the terminal menu) still owns window focus would be
+    // ignored by the IME; open it when focus returns instead.
+    private var keyboardPending=false
     fun keyboard() {
         if (!controlled) return
         requestFocus()
+        if(!hasWindowFocus()) {keyboardPending=true;return}
         (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(this, 0)
     }
     private fun linkAt(x: Float,y: Float): TerminalLink? {

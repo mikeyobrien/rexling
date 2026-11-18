@@ -197,6 +197,9 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
     val chosen=displayedBlock.ifBlank {blocks.firstOrNull()?.id.orEmpty()}
     val floating=if(model.minimizeFloatingPanes) window?.floatingPanes().orEmpty() else emptyList()
     val carouselBlocks=window?.carouselPanes(model.minimizeFloatingPanes,chosen) ?: blocks
+    // Same enabling as the former tab bar: tabs and panes switch only once navigation settles.
+    val tabsReady=state.connected && !state.creating && !changingSession
+    val chromeVisible=state.connected || state.phase=="preview" || client.hasScreen
     val floatingActive=floating.any {it.id==chosen}
     var hiddenFloating by rememberSaveable(displayedSession,window?.id) {mutableStateOf("")}
     val controlled=state.controlled && ready && client.hasScreen && (!floatingActive || hiddenFloating!=chosen)
@@ -244,7 +247,18 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
             SessionHeader(sessionStrip,currentSessionKey,state.connected,model.sessionTargets.isNotEmpty(),
                 blocks.map {state.programs[it.id] ?: ProgramIdentity.Loading},blocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0),state.directories[displayedBlock].orEmpty(),{picker="sessions"},model::selectSessionTarget,model::jumpLastSession,
                 serverIcons=model.sessionTargets.associate {it.key to it.server.icon}+(currentSessionKey to model.activeServer.icon),
-                working=chosen in state.workingBlocks,title=if(model.servers.isEmpty()) stringResource(R.string.app_name) else (state.programs[chosen] ?: ProgramIdentity.Loading).paneTitle(blocks.firstOrNull {it.id==chosen}?.label.orEmpty(),state.titles[chosen].orEmpty()),menu={
+                working=chosen in state.workingBlocks,title=if(model.servers.isEmpty()) stringResource(R.string.app_name) else (state.programs[chosen] ?: ProgramIdentity.Loading).paneTitle(blocks.firstOrNull {it.id==chosen}?.label.orEmpty(),state.titles[chosen].orEmpty()),
+                onTitleTap=if(tabsReady && windows.size>1) {{
+                    val index=windows.indexOfFirst {it.id==window?.id}
+                    client.selectWindow(windows[Math.floorMod(index+1,windows.size)].id)
+                }} else null,
+                onTitleSwipe=if(tabsReady && carouselBlocks.size>1) {{step->
+                    val index=carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0)
+                    openPane(carouselBlocks[Math.floorMod(index+step,carouselBlocks.size)].id)
+                }} else null,menu={
+                    Row(verticalAlignment=Alignment.CenterVertically) {
+                    if(chromeVisible) TerminalActions(state.connected && state.selectedSession.isNotBlank(),model.connectedCount>0,
+                        {model.showActivity(true)},{picker="tabs"},attentionCount=activityBadges.elsewhere,tabCount=windows.size)
                     Box {
                         ChromeButton(ChromeIcon.MORE,"Terminal menu"){menu=true}
                         DropdownMenu(menu,{menu=false},modifier=Modifier.drawerFrost(workspaceHaze,RoundedCornerShape(16.dp),workspaceBackdrop),shape=RoundedCornerShape(16.dp),containerColor=Color.Transparent,tonalElevation=0.dp) {
@@ -256,6 +270,9 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                             TerminalMenuItem("New session",ChromeIcon.ADD,enabled=ready,onClick={menu=false;newSession=true})
                             OwnershipMenuItem(controlled,ready&&client.hasScreen) {menu=false;if(controlled) client.releaseControl() else client.takeControl()}
                             QuickThemeMenuItem(palette.dark) {dark->menu=false;model.changeAppearance(if(dark) Appearance.DARK else Appearance.LIGHT)}
+                            // The toolbar's keyboard button only shows with the keyboard; mouse-mode apps take taps.
+                            TerminalMenuItem("Show keyboard",ChromeIcon.KEYBOARD,enabled=ready && client.hasScreen && !keyboardVisible,onClick={
+                                menu=false;client.requestKeyboard()})
                             TerminalMenuItem("Preferences",ChromeIcon.SETTINGS,onClick={menu=false;preferencesOpen=true})
                             TerminalMenuItem("Copy viewport",ChromeIcon.COPY,enabled=client.hasScreen,onClick={
                                 menu=false;client.terminal.value?.let {screen->(getClipboard(model.getApplication()) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rex terminal",screen.plainText()))}
@@ -268,6 +285,7 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                             TerminalMenuItem("Servers · ${model.connectedCount} connected",ChromeIcon.SERVER,onClick={menu=false;servers=true})
                             TerminalMenuItem("Refresh sessions",ChromeIcon.REFRESH,enabled=state.connected,onClick={menu=false;client.refresh()})
                         }
+                    }
                     }
                 })
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -329,18 +347,9 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                         Text(if(state.connected) "Choose a session, or start a new one." else "Your terminals, anywhere.",
                             fontFamily=MonoUi,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    if(state.connected || state.phase=="preview" || client.hasScreen) {
+                    // Tabs and Activity live in the header; the key toolbar appears with the keyboard.
+                    if(chromeVisible && keyboardVisible) {
                         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart=24.dp,topEnd=24.dp)).background(MaterialTheme.colorScheme.surface)) {
-                            TerminalTabs(windows,window?.id.orEmpty(),state.connected&&!state.creating&&!changingSession,client::selectWindow,panePrograms=client::tabPrograms,selectedPane=client::tabPaneIndex,paneTitle={w,pane->state.titles[w.blocks.getOrNull(pane)?.id].orEmpty()},paneWorking={w->w.blocks.any {it.id in state.workingBlocks}},onClose={closeTarget=closeTabTarget(it)},onMove=client::moveTab,reorderKey=displayedSession,animateWorking=!model.activityVisible,tabAttention={w->activityBadges.tabs[w.id] ?: 0},paneProgress={w->
-                                    state.terminalProgress[w.blocks.getOrNull(client.tabPaneIndex(w))?.id] ?: w.blocks.mapNotNull {state.terminalProgress[it.id]}.firstOrNull()
-                                },
-                                contentReady=client.hasScreen && !state.creating && !changingSession && windows.isNotEmpty() && windows.all {w->
-                                    val block=w.blocks.getOrNull(client.tabPaneIndex(w))
-                                    block!=null && state.programs[block.id]?.pending==false
-                                },actions={
-                                TerminalActions(state.connected && state.selectedSession.isNotBlank(),model.connectedCount>0,
-                                    {model.showActivity(true)},{picker="tabs"},attentionCount=activityBadges.elsewhere)
-                            })
                             KeyboardBar(controlled,ready,client.controlModifier,client.altModifier,client.shiftModifier,keyboardVisible,
                                 client::toggleControl,client::toggleAlt,client::toggleShift,client::pressShift,client::releaseShift,{client.keyForTarget(it,keyTarget)},readable=state.connected,onControlShortcut=client::controlShortcut,inputKey=keyTarget,shortcutGesture=model.shortcutGesture,arrowJoystickEnabled=model.arrowJoystickEnabled,onPaste={pasteClipboard()},onPrompt=if(client.hasSemanticPrompts && !changingSession) client::scrollPrompt else null,toolbarKeys=model.toolbarKeys) {
                                 if(!controlled) client.takeControl() else if(keyboardVisible) terminalView?.hideKeyboard() else terminalView?.keyboard()
@@ -349,7 +358,7 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                     }
                 }
                 model.images.state?.let {status->ImageUploadOverlay(status,model.images::retry,model.images::cancel,
-                    modifier=Modifier.align(Alignment.BottomEnd).padding(horizontal=16.dp).padding(bottom=if(state.connected) if(floating.isNotEmpty()) 152.dp else 112.dp else 16.dp),retryable=model.images.retryable,hazeState=terminalHaze)}
+                    modifier=Modifier.align(Alignment.BottomEnd).padding(horizontal=16.dp).padding(bottom=(if(state.connected && keyboardVisible) 66.dp else 16.dp)+(if(state.connected && floating.isNotEmpty()) 40.dp else 0.dp)),retryable=model.images.retryable,hazeState=terminalHaze)}
                 // Loading feedback must not resize the terminal grid during navigation.
                 if(state.creating || navigation.pending || state.phase=="connecting" || state.phase=="reconnecting")
                     LinearProgressIndicator(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(2.dp))

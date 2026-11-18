@@ -11,6 +11,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -198,7 +200,9 @@ internal val MonoUi = FontFamily(Font(R.font.jetbrains_mono_regular),Font(R.font
 @Composable internal fun SessionHeader(sessions: List<SessionItem>, selectedId: String,
     connected: Boolean, enabled: Boolean,
     programs: List<ProgramIdentity>, paneIndex: Int, directory: String,
-    onSessions: ()->Unit, onSelect: (String)->Unit, onLast: ()->Unit, title: String="", working: Boolean=false, expanded: Boolean=false, serverIcons: Map<String,ServerIcon> = emptyMap(), menu: @Composable ()->Unit) {
+    onSessions: ()->Unit, onSelect: (String)->Unit, onLast: ()->Unit, title: String="", working: Boolean=false, expanded: Boolean=false, serverIcons: Map<String,ServerIcon> = emptyMap(),
+    /** Tap the title for the next tab; swipe it sideways for the next (-1: previous) pane. */
+    onTitleTap: (()->Unit)?=null, onTitleSwipe: ((Int)->Unit)?=null, menu: @Composable ()->Unit) {
     val program=programs.getOrNull(paneIndex) ?: ProgramIdentity.Terminal
     val titleHeight=with(LocalDensity.current) {16.sp.toDp()}
     val directoryHeight=with(LocalDensity.current) {12.sp.toDp()}
@@ -278,17 +282,36 @@ internal val MonoUi = FontFamily(Font(R.font.jetbrains_mono_regular),Font(R.font
         }
         Column(Modifier.weight(1f),verticalArrangement=Arrangement.Center) {
             if(!expanded) {
-                Text(title.ifBlank {program.title},fontWeight=FontWeight.Bold,fontSize=13.sp,lineHeight=16.sp,style=lineStyle,letterSpacing=0.sp,maxLines=1,
-                    overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth().height(titleHeight).layout {measurable,constraints->
-                        // Fallback/emoji metrics must not move the ordinary title text.
-                        val text=measurable.measure(constraints.copy(minHeight=0,maxHeight=Constraints.Infinity))
-                        layout(text.width,constraints.maxHeight,mapOf(FirstBaseline to titleBaseline)) {
-                            text.placeRelative(0,titleBaseline-text[FirstBaseline])
+                val latestTap by rememberUpdatedState(onTitleTap)
+                val latestSwipe by rememberUpdatedState(onTitleSwipe)
+                val swipeDistance=with(LocalDensity.current) {32.dp.toPx()}
+                Column(Modifier.fillMaxWidth()
+                    .pointerInput(onTitleTap!=null) {if(onTitleTap!=null) detectTapGestures(onTap={latestTap?.invoke()})}
+                    .pointerInput(onTitleSwipe!=null) {
+                        if(onTitleSwipe!=null) {
+                            var dx=0f
+                            detectHorizontalDragGestures(onDragStart={dx=0f},onDragCancel={dx=0f},
+                                onDragEnd={if(abs(dx)>=swipeDistance) latestSwipe?.invoke(if(dx<0) 1 else -1)}) {change,amount->change.consume();dx+=amount}
                         }
-                    })
-                Text(directory,Modifier.fillMaxWidth().height(directoryHeight),
-                    fontFamily=MonoUi,fontSize=9.sp,lineHeight=12.sp,style=lineStyle,letterSpacing=0.sp,maxLines=1,overflow=TextOverflow.Ellipsis,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    .semantics {
+                        customActions=listOfNotNull(
+                            onTitleTap?.let {tap->CustomAccessibilityAction("Next tab") {tap();true}},
+                            onTitleSwipe?.let {swipe->CustomAccessibilityAction("Next pane") {swipe(1);true}},
+                            onTitleSwipe?.let {swipe->CustomAccessibilityAction("Previous pane") {swipe(-1);true}})
+                    }) {
+                    Text(title.ifBlank {program.title},fontWeight=FontWeight.Bold,fontSize=13.sp,lineHeight=16.sp,style=lineStyle,letterSpacing=0.sp,maxLines=1,
+                        overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth().height(titleHeight).layout {measurable,constraints->
+                            // Fallback/emoji metrics must not move the ordinary title text.
+                            val text=measurable.measure(constraints.copy(minHeight=0,maxHeight=Constraints.Infinity))
+                            layout(text.width,constraints.maxHeight,mapOf(FirstBaseline to titleBaseline)) {
+                                text.placeRelative(0,titleBaseline-text[FirstBaseline])
+                            }
+                        })
+                    Text(directory,Modifier.fillMaxWidth().height(directoryHeight),
+                        fontFamily=MonoUi,fontSize=9.sp,lineHeight=12.sp,style=lineStyle,letterSpacing=0.sp,maxLines=1,overflow=TextOverflow.Ellipsis,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             BoxWithConstraints(Modifier.fillMaxWidth().height(if(expanded) 42.dp else sessionHeight)) {
                 val pageWidth=if(expanded) 160.dp else maxWidth.coerceAtLeast(40.dp)
@@ -536,9 +559,17 @@ internal val MonoUi = FontFamily(Font(R.font.jetbrains_mono_regular),Font(R.font
 }
 
 @Composable internal fun TerminalActions(enabled: Boolean,activityEnabled: Boolean,
-    onActivity: ()->Unit,onSwitcher: ()->Unit,attentionCount: Int=0) {
+    onActivity: ()->Unit,onSwitcher: ()->Unit,attentionCount: Int=0,tabCount: Int=0) {
     Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-        ChromeButton(ChromeIcon.SPLIT,"Tabs and panes",enabled,readable=activityEnabled,onClick=onSwitcher)
+        Box(contentAlignment=Alignment.Center) {
+            ChromeButton(ChromeIcon.SPLIT,"Tabs and panes",enabled,readable=activityEnabled,onClick=onSwitcher)
+            // With the tab bar gone, the count is how you know other tabs exist.
+            if(tabCount>1) Box(Modifier.align(Alignment.TopEnd).offset(x=(-2).dp,y=2.dp).size(15.dp)
+                .background(MaterialTheme.colorScheme.primary,RoundedCornerShape(8.dp)).semantics {contentDescription="$tabCount tabs"},contentAlignment=Alignment.Center) {
+                Text("$tabCount",color=MaterialTheme.colorScheme.onPrimary,fontSize=9.sp,lineHeight=9.sp,fontWeight=FontWeight.Bold,
+                    style=androidx.compose.ui.text.TextStyle(platformStyle=androidx.compose.ui.text.PlatformTextStyle(includeFontPadding=false)))
+            }
+        }
         Box(Modifier.size(41.dp),contentAlignment=Alignment.Center) {
             Box(Modifier.matchParentSize().clip(RoundedCornerShape(23.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
             Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).clickable(enabled=activityEnabled,role=Role.Button,onClick=onActivity)

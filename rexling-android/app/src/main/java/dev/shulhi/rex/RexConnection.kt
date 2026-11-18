@@ -457,6 +457,12 @@ internal class RexConnection(application: Application, private val scope: Corout
         }
     }
     fun keyboardShown() {keyboardRequest=""}
+    /** Open the keyboard once the UI settles (a closing menu still holds focus), taking control first if needed. */
+    fun requestKeyboard() {
+        val current=state.value
+        if(!current.controlled) takeControl()
+        else if(visible && current.selectedBlock.isNotBlank()) keyboardRequest=current.selectedBlock
+    }
     fun click(col: Int,row: Int,cw: Int,ch: Int) {
         flushImeComposition()
         val current=state.value
