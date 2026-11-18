@@ -213,6 +213,7 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
             client.tabPrograms(w),pane,(activityBadges.tabs[w.id] ?: 0)>0,w.blocks.any {it.id in state.workingBlocks})
     }
     val tabHold=remember {TabHoldState()}
+    var listHidden by rememberSaveable {mutableStateOf(false)}
     var headerTop by remember {mutableFloatStateOf(0f)}
     var headerHeight by remember {mutableIntStateOf(0)}
     val latestTabs by rememberUpdatedState(tabEntries)
@@ -268,7 +269,17 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
     LaunchedEffect(picker) {if(picker=="sessions") model.refreshSessionDetails()}
     val workspaceBackdrop=rememberBackdropCapture(menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || fontPicker || alerts || picker in setOf("tabs","panes","sessions","tabpicker") || model.activityVisible)
     Surface(Modifier.fillMaxSize().then(if(workspaceBackdrop) Modifier.hazeSource(workspaceHaze) else Modifier),color=MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
+        // Wide screens (an unfolded Fold, tablets): the tab list sits beside the terminal; maximize hides it.
+        BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
+        val wide=maxWidth>=WideLayoutMinWidth
+        val listWidth=wideListWidth(maxWidth,maxHeight)
+        Row(Modifier.fillMaxSize()) {
+        if(wide && !listHidden && chromeVisible) TabListPanel(listWidth,
+            sessionStrip.firstOrNull {it.id==currentSessionKey}?.label.orEmpty(),tabEntries,window?.id.orEmpty(),
+            sessionStrip.filter {it.id!=currentSessionKey},tabsReady,ready && state.selectedSession.isNotBlank(),activityBadges.elsewhere>0,
+            onTab=client::selectWindow,onSession=model::selectSessionTarget,onSessions={picker="sessions"},onActivity={model.showActivity(true)},
+            onSettings={preferencesOpen=true},onNewTab=client::createTab)
+        Column(Modifier.weight(1f).fillMaxHeight()) {
             Box(Modifier.onGloballyPositioned {headerTop=it.positionInRoot().y;headerHeight=it.size.height}) {
             SessionHeader(sessionStrip,currentSessionKey,state.connected,model.sessionTargets.isNotEmpty(),
                 blocks.map {state.programs[it.id] ?: ProgramIdentity.Loading},blocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0),state.directories[displayedBlock].orEmpty(),{picker="sessions"},model::selectSessionTarget,model::jumpLastSession,
@@ -277,6 +288,9 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                 onTitleTap=if(tabsReady && windows.isNotEmpty()) {{picker="tabpicker"}} else null,
                 onTitleHold=if(tabsReady && windows.size>1) titleHold else null,
                 titleDetail=if(windows.size>1) "${windows.indexOfFirst {it.id==window?.id}+1}/${windows.size}" else "",
+                leading=if(wide && chromeVisible) {{
+                    ChromeButton(if(listHidden) ChromeIcon.COLLAPSE else ChromeIcon.EXPAND,if(listHidden) "Show tab list" else "Maximize terminal") {listHidden=!listHidden}
+                }} else null,
                 onTitleSwipe=if(tabsReady && carouselBlocks.size>1) {{step->
                     val index=carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0)
                     openPane(carouselBlocks[Math.floorMod(index+step,carouselBlocks.size)].id)
@@ -391,6 +405,8 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                     LinearProgressIndicator(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(2.dp))
 
             }
+        }
+        }
         }
     }
 if(picker=="tabpicker") TabPickerCard(model.activeServer.label,

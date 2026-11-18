@@ -34,7 +34,7 @@ internal data class TabEntry(val id: String,val title: String,val detail: String
     val selectedPane: Int,val attention: Boolean,val working: Boolean)
 
 /** Tab status where the tab bar used to show it: a dot when it needs you, a spinner while it works. */
-@Composable private fun TabStatus(tab: TabEntry) {
+@Composable internal fun TabStatus(tab: TabEntry) {
     when {
         tab.attention -> Box(Modifier.size(9.dp).background(MaterialTheme.colorScheme.primary,CircleShape).semantics {contentDescription="Needs you"})
         tab.working -> CircularProgressIndicator(Modifier.size(13.dp).semantics {contentDescription="Working"},strokeWidth=2.dp,
