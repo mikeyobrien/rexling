@@ -376,6 +376,10 @@ class MainActivity : ComponentActivity() {
                     if(blocks.isEmpty() && state.connected && !state.creating && state.sessions.isEmpty()) {
                         EmptySessionContent(model.activeServer.label,ready,{newSession=true},Modifier.weight(1f).fillMaxWidth())
                     }
+                    // A session that ended on the server leaves no pane: name it rather than show a blank screen.
+                    if(blocks.isEmpty() && state.connected && !state.creating && !navigation.pending && state.sessions.isNotEmpty()) {
+                        EndedSessionContent(model.activeServer.label,ready,{picker="sessions"},{newSession=true},Modifier.weight(1f).fillMaxWidth())
+                    }
                     if(state.error.isNotBlank() && state.phase !in listOf("connecting","reconnecting")) Text(state.error,Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(10.dp),
                         color=MaterialTheme.colorScheme.onErrorContainer,fontSize=11.sp,maxLines=3,overflow=TextOverflow.Ellipsis)
                     if(blocks.isNotEmpty()) {

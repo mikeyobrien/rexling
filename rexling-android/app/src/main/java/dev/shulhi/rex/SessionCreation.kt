@@ -32,3 +32,21 @@ import androidx.compose.ui.unit.dp
         }
     }
 }
+
+/** The viewed session ended while the phone was away: name what happened and offer a way back in. */
+@Composable internal fun EndedSessionContent(serverLabel: String,enabled: Boolean,onBrowse: ()->Unit,onNew: ()->Unit,modifier: Modifier=Modifier) {
+    Column(modifier.padding(24.dp),verticalArrangement=Arrangement.spacedBy(10.dp,Alignment.CenterVertically),horizontalAlignment=Alignment.CenterHorizontally) {
+        Text("Session ended",style=SettingsType.title)
+        Text("The session you were viewing is no longer on $serverLabel.",style=SettingsType.body,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick=onBrowse,enabled=enabled) {
+                ChromeSymbol(ChromeIcon.SESSIONS,Modifier.size(17.dp));Spacer(Modifier.width(6.dp))
+                Text("Choose session",style=SettingsType.row)
+            }
+            Button(onClick=onNew,enabled=enabled) {
+                ChromeSymbol(ChromeIcon.ADD,Modifier.size(17.dp));Spacer(Modifier.width(6.dp))
+                Text("New session",style=SettingsType.row)
+            }
+        }
+    }
+}

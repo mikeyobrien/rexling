@@ -24,4 +24,12 @@ internal class SavedWorkspace(private val preferences: SharedPreferences,endpoin
         selectSession(session)
     }
     fun target(state: AppState)=navigation.target(state,session)
+    /** Drop every saved place for a session the server destroyed, so nothing points at it. */
+    fun forget(id: String) {
+        if(id.isBlank()) return
+        val clearedNavigation=navigation.forget(id)
+        val clearedSession=session==id
+        if(clearedSession) {session="";preferences.edit {remove(sessionKey)}}
+        if(clearedNavigation) preferences.edit {putString(key,navigation.encode())}
+    }
 }

@@ -26,6 +26,7 @@ internal class RexConnection(application: Application, private val scope: Corout
         private set
     private val clipboardDelivery=TerminalClipboardDelivery {text->clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Terminal",text))}
     private var tabMoveSerial=0L
+    private var staleHandled=""
     private var pendingTabOrder by mutableStateOf<PendingTabOrder?>(null)
     private var paneMoveSerial=0L
     private var pendingPaneOrder by mutableStateOf<PendingPaneOrder?>(null)
@@ -222,6 +223,16 @@ internal class RexConnection(application: Application, private val scope: Corout
                                 clipboardDelivery.deliver(next,visible && foreground && !navigationRequest.pending)
                                 val old=state.value
                                 if(old.selectedSession!=next.selectedSession) presentation.flush()
+                                // The server dropped a session this app was holding; forget the place
+                                // it saved so the next connect starts from the live catalog instead.
+                                if(next.staleSession.isNotBlank() && next.staleSession!=staleHandled) {
+                                    staleHandled=next.staleSession
+                                    workspace.forget(next.staleSession)
+                                    if(lastSessionId==next.staleSession) {
+                                        lastSessionId=""
+                                        preferences.edit {remove("last_session:$savedEndpoint")}
+                                    }
+                                }
                                 if(old.connectionEpoch!=next.connectionEpoch) {
                                     keystrokes.reset();activation.resume();cancelKeyRepeats();resetModifiers()
                                     navigationRequest=NavigationRequest();restoreWorkspace=true

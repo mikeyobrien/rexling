@@ -228,6 +228,9 @@ struct Actor {
     screen: Option<Arc<Frame>>,
     selected_session: String,
     selected_block: String,
+    /// A session the server reported gone while this selection was held. Published so
+    /// the app can forget it; a stale ID makes every reconnect fail again.
+    stale_session: String,
     navigation_id: u64,
     tab_move_id: u64,
     pane_move_id: u64,
@@ -293,6 +296,7 @@ impl Actor {
             windows: json!([]),
             screen: None,
             selected_session: String::new(),
+            stale_session: String::new(),
             selected_block: String::new(),
             navigation_id: 0,
             tab_move_id: 0,
@@ -338,7 +342,7 @@ impl Actor {
             shared.key=format!("{}:{}",self.selected_session,self.selected_block);
             shared.json=json!({"phase":self.phase,"endpoint":self.server,
                 "terminalProgress":crate::progress::selected(&self.progress_reports,&self.selected_session),"identity":self.identity,"error":self.error,"notice":self.notice,"clipboard":self.clipboard,"sessions":self.sessions,
-                "windows":self.windows,"selectedSession":self.selected_session,
+                "windows":self.windows,"selectedSession":self.selected_session,"staleSession":self.stale_session,
                 "selectedBlock":self.selected_block,"navigationId":self.navigation_id,"tabMoveId":self.tab_move_id,"paneMoveId":self.pane_move_id,"connectionEpoch":self.connection_epoch,"otherOwner":self.other_owner,"controlled":self.controlled,"creating":self.creating,"sessionDetails":self.session_details,"programs":self.programs,"directories":self.directories,"titles":self.titles,"working":self.working,"activityError":self.activity_error,"activityPartial":self.activity_partial,"activityLoading":(self.activity_open || self.monitoring) && (self.activity_task.is_some() || self.activity_full),"attentionCount":self.attention_count}).to_string();
             shared
                 .pending_previews
@@ -579,6 +583,19 @@ impl Actor {
         }
         self.publish();
     }
+    /// Clear a selection whose session no longer exists. The connection stays up; callers
+    /// refresh the catalog and publish so the app can offer a new session.
+    fn clear_stale_selection(&mut self) {
+        self.selected_session.clear();self.selected_block.clear();self.windows = json!([]);
+        self.screen = None;self.data = None;self.data_resume = None;self.replica = None;self.controlled = false;
+        self.preview_task = None;self.program_task = None;self.summary_task = None;self.preview_updates.clear();
+        self.programs = json!({});self.directories = json!({});self.titles = json!({});self.working = json!([]);
+        self.title_owners = json!({});self.title_events.clear();self.process_events.clear();
+    }
+    async fn refresh_session_catalog(&mut self) -> Result<()> {
+        self.sessions = self.control.as_mut().context("not connected")?.call("session.list", json!({})).await?["sessions"].clone();
+        Ok(())
+    }
     async fn connected(&mut self,mut control: Control) -> Result<()> {
         let endpoint=self.endpoint.clone().context("server missing")?;
         let resumed = control.welcome()["client"]["resumed"] == true;
@@ -599,7 +616,19 @@ impl Actor {
         self.backoff = 1;
         if !self.selected_session.is_empty() {
             let session = self.selected_session.clone();
-            let attached = self.control.as_mut().unwrap().attach(&session).await?;
+            let attached = match self.control.as_mut().unwrap().attach(&session).await {
+                Ok(attached) => attached,
+                // The session ended while the phone was away. Keeping its ID would make
+                // every reconnect fail the same way, so drop it and stay connected.
+                Err(error) if missing_terminal(&error) => {
+                    self.clear_stale_selection();
+                    self.stale_session = session;
+                    self.notice = "Session ended; start or choose another".into();
+                    self.publish();
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             self.set_view(&attached["view"]);
             if !self.selected_block.is_empty() {
                 let block = self.selected_block.clone();
@@ -635,6 +664,7 @@ impl Actor {
         Ok(())
     }
     fn set_view(&mut self, view: &Value) {
+        self.stale_session.clear();
         self.other_owner=false;
         let client = self
             .control
@@ -1073,13 +1103,8 @@ impl Actor {
                 let _=closer.close().await;
                 if let Err(error)=result
                     && error.downcast_ref::<rex_core::control::RpcError>().is_none_or(|e| e.code!="session_not_found") {return Err(error);}
-                if self.selected_session==id {
-                    self.selected_session.clear();self.selected_block.clear();self.windows=json!([]);
-                    self.data=None;self.data_resume=None;self.replica=None;self.screen=None;self.controlled=false;
-                    self.preview_task=None;self.program_task=None;self.summary_task=None;
-                    self.programs=json!({});self.directories=json!({});self.titles=json!({});self.working=json!([]);self.title_owners=json!({});self.title_events.clear();self.process_events.clear();self.preview_updates.clear();
-                }
-                self.sessions=self.control.as_mut().context("not connected")?.call("session.list",json!({})).await?["sessions"].clone();
+                if self.selected_session==id {self.clear_stale_selection();}
+                self.refresh_session_catalog().await?;
                 self.creating=false;self.notice="Session closed".into();self.publish();
             }
             "new_session" => {
@@ -1527,12 +1552,8 @@ impl Actor {
         match self.refresh_view().await {
             Ok(())=>Ok(true),
             Err(error) if error.downcast_ref::<rex_core::control::RpcError>().is_some_and(|e|e.code=="session_not_found")=>{
-                self.selected_session.clear();self.selected_block.clear();self.windows=json!([]);self.screen=None;
-                self.data=None;self.data_resume=None;self.replica=None;self.controlled=false;
-                self.preview_task=None;self.program_task=None;self.summary_task=None;self.preview_updates.clear();
-                self.programs=json!({});self.directories=json!({});self.titles=json!({});self.working=json!([]);
-                self.title_owners=json!({});self.title_events.clear();self.process_events.clear();
-                self.sessions=self.control.as_mut().context("not connected")?.call("session.list",json!({})).await?["sessions"].clone();
+                self.clear_stale_selection();
+                self.refresh_session_catalog().await?;
                 Ok(false)
             }
             Err(error)=>Err(error)
@@ -3100,6 +3121,34 @@ while True:
         assert!(actor.retry.is_some());assert_eq!(actor.selected_block,"b");
     }
 
+    #[test] fn a_session_that_ended_while_away_clears_the_selection_and_reports_it() {
+        let shared=Arc::new(Mutex::new(Shared {revision:0,json:String::new(),activity:Arc::default(),pending_previews:BTreeMap::new(),frame:None,key:String::new(),wire:crate::updates::WireBase::default()}));
+        let mut actor=Actor::new(shared.clone(),Arc::new(crate::updates::Updates::default()));
+        actor.phase="connected".into();actor.selected_session="gone".into();actor.selected_block="b".into();
+        actor.windows=json!([{"id":"w","label":"Tab","blocks":[{"id":"b","label":"Terminal"}]}]);
+        actor.controlled=true;actor.titles=json!({"b":"running"});actor.working=json!(["b"]);
+        actor.stale_session="gone".into();actor.notice="Session ended; start or choose another".into();
+        actor.clear_stale_selection();
+        actor.publish();
+        let view: Value=serde_json::from_str(&shared.lock().unwrap().json).unwrap();
+        // The app only needs a connected phase with no selection to offer a new session.
+        assert_eq!(view["phase"],"connected");assert_eq!(view["selectedSession"],"");assert_eq!(view["selectedBlock"],"");
+        assert_eq!(view["windows"].as_array().unwrap().len(),0);assert_eq!(view["controlled"],false);
+        assert_eq!(view["staleSession"],"gone");
+        assert!(actor.titles.as_object().unwrap().is_empty() && actor.working.as_array().unwrap().is_empty());
+    }
+    #[test] fn only_a_missing_session_is_gone_never_a_transient_failure() {
+        for code in ["session_not_found","not_found"] {
+            let error=anyhow::Error::from(rex_core::control::RpcError{method:"session.attach".into(),code:code.into(),message:"gone".into(),status:json!({})});
+            assert!(missing_terminal(&error),"{code}");
+        }
+        for code in ["internal","unauthorized",""] {
+            let error=anyhow::Error::from(rex_core::control::RpcError{method:"session.attach".into(),code:code.into(),message:"retry".into(),status:json!({})});
+            assert!(!missing_terminal(&error),"{code}");
+        }
+        assert!(!missing_terminal(&anyhow::anyhow!("control connection closed")));
+    }
+
     #[test] fn losing_network_cancels_a_pending_handshake_and_preserves_the_target() {
         let shared=Arc::new(Mutex::new(Shared {revision:0,json:String::new(),activity:Arc::default(),pending_previews:BTreeMap::new(),frame:None,key:String::new(),wire:crate::updates::WireBase::default()}));
         let mut actor=Actor::new(shared,Arc::new(crate::updates::Updates::default()));
@@ -3240,3 +3289,6 @@ mod latency_tests;
 #[cfg(test)]
 #[path="pane_reorder_tests.rs"]
 mod pane_reorder_tests;
+#[cfg(test)]
+#[path="reconnect_tests.rs"]
+mod reconnect_tests;

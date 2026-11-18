@@ -449,6 +449,13 @@ Closing a session that disappeared is idempotent for the typed server error
 `session_not_found` from attach/destroy. The catalog refreshes and stale selection
 clears. Other errors remain errors; no uncertain destructive request is retried.
 
+A reconnect to a session that ended while the phone was away follows the same rule.
+`session.attach` failing with `session_not_found` or `not_found` clears the stale
+selection, keeps the connection and the freshly fetched catalog, and publishes the
+lost ID as `staleSession` so the app drops the place it had saved for it; the UI then
+offers a new or different session instead of staying at `Reconnecting · input paused`.
+Any other attach error still goes through the normal reconnect backoff.
+
 The extra-keys chevron beside Esc expands F1-F12 plus Home/PgUp/PgDn/End/Ins/Del.
 F1-F4 use SS3 P/Q/R/S; F5-F12 use CSI 15/17/18/19/20/21/23/24~. Collapse or hiding
 the system keyboard resets the horizontal strip to Esc. Input still requires
