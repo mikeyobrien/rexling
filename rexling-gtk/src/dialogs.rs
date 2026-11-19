@@ -63,6 +63,13 @@ fn present(ui: &Rc<Ui>, dialog: &impl IsA<adw::Dialog>) {
 
 /// A menu of window commands, in groups, with their keys written the way the rest of the app writes them.
 pub fn menu(groups: &[&[&str]]) -> gtk::Popover {
+    build_menu(groups, true)
+}
+/// A menu without key hints, for commands aimed at something other than what the keys act on.
+pub fn menu_plain(groups: &[&[&str]]) -> gtk::Popover {
+    build_menu(groups, false)
+}
+fn build_menu(groups: &[&[&str]], hints: bool) -> gtk::Popover {
     let list = gtk::Box::builder().orientation(gtk::Orientation::Vertical).build();
     let popover = gtk::Popover::builder().child(&list).css_classes(["menu"]).build();
     for (index, group) in groups.iter().enumerate() {
@@ -73,7 +80,9 @@ pub fn menu(groups: &[&[&str]]) -> gtk::Popover {
             let Some((label, action, accelerator)) = ACTIONS.iter().find(|(_, action, _)| action == wanted) else { continue };
             let row = gtk::Box::builder().spacing(24).build();
             row.append(&gtk::Label::builder().label(*label).xalign(0.0).hexpand(true).build());
-            row.append(&gtk::Label::builder().label(keys(accelerator)).css_classes(["dim-label", "caption"]).build());
+            if hints {
+                row.append(&gtk::Label::builder().label(keys(accelerator)).css_classes(["dim-label", "caption"]).build());
+            }
             let button = gtk::Button::builder().child(&row).action_name(format!("win.{action}")).css_classes(["flat", "rexling-menu-item"]).build();
             let weak = popover.downgrade();
             button.connect_clicked(move |_| {
@@ -367,7 +376,10 @@ pub fn preferences(ui: &Rc<Ui>) {
     look.add(&mode);
 
     // A terminal needs every character the same width, so only those families are offered.
-    let mut families: Vec<String> = ui.window.pango_context().list_families().iter().filter(|family| family.is_monospace()).map(|family| family.name().to_string()).collect();
+    let context = ui.window.pango_context();
+    // Monospace families that can write ordinary text: icon, emoji and symbol fonts are not for a terminal.
+    let writes = |name: &str| context.load_font(&pango::FontDescription::from_string(name)).is_some_and(|font| ['a', 'M', '0'].iter().all(|c| font.has_char(*c)));
+    let mut families: Vec<String> = context.list_families().iter().filter(|family| family.is_monospace()).map(|family| family.name().to_string()).filter(|name| writes(name) && !["Emoji", "SignWriting", "Symbols"].iter().any(|word| name.contains(word))).collect();
     families.sort_by_key(|name| name.to_lowercase());
     families.dedup();
     let current = ui.config.borrow().font.split(',').next().unwrap_or("").trim().to_owned();
@@ -385,7 +397,7 @@ pub fn preferences(ui: &Rc<Ui>) {
         let current = ui.config.borrow().font.split(',').next().unwrap_or("").trim().to_owned();
         let rows = gtk::ListBox::builder().selection_mode(gtk::SelectionMode::None).css_classes(["boxed-list"]).build();
         for family in &list {
-            let line = gtk::Box::builder().spacing(12).margin_top(10).margin_bottom(10).margin_start(12).margin_end(12).build();
+            let line = gtk::Box::builder().spacing(12).height_request(44).margin_start(12).margin_end(12).build();
             let name = gtk::Label::builder().label(family.as_str()).xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::End).build();
             let attributes = pango::AttrList::new();
             attributes.insert(pango::AttrString::new_family(family));
@@ -399,8 +411,23 @@ pub fn preferences(ui: &Rc<Ui>) {
         let search = gtk::SearchEntry::builder().placeholder_text("Search fonts").search_delay(0).build();
         let field = search.clone();
         rows.set_filter_func(move |row| row.widget_name().to_lowercase().contains(&field.text().trim().to_lowercase()));
-        let filtered = rows.clone();
-        search.connect_search_changed(move |_| filtered.invalidate_filter());
+        let nothing = gtk::Label::builder().label("No fonts match").css_classes(["dim-label"]).margin_top(18).visible(false).build();
+        let (filtered, empty, names) = (rows.clone(), nothing.clone(), list.clone());
+        search.connect_search_changed(move |field| {
+            filtered.invalidate_filter();
+            let typed = field.text().trim().to_lowercase();
+            let any = names.iter().any(|name| name.to_lowercase().contains(&typed));
+            filtered.set_visible(any);
+            empty.set_visible(!any);
+        });
+        // Enter takes the first match.
+        let (matching, names) = (rows.clone(), list.clone());
+        search.connect_activate(move |field| {
+            let typed = field.text().trim().to_lowercase();
+            if let Some(row) = names.iter().position(|name| name.to_lowercase().contains(&typed)).and_then(|at| matching.row_at_index(at as i32)) {
+                row.activate();
+            }
+        });
         let (weak, parent_for_pick, shown) = (Rc::downgrade(&ui), parent.clone(), shown.clone());
         rows.connect_row_activated(move |_, row| {
             let Some(ui) = weak.upgrade() else { return };
@@ -415,6 +442,7 @@ pub fn preferences(ui: &Rc<Ui>) {
         let body = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(12).margin_top(12).margin_bottom(18).margin_start(18).margin_end(18).build();
         body.append(&search);
         body.append(&rows);
+        body.append(&nothing);
         let view = adw::ToolbarView::builder().content(&gtk::ScrolledWindow::builder().child(&adw::Clamp::builder().child(&body).maximum_size(520).build()).hscrollbar_policy(gtk::PolicyType::Never).build()).build();
         view.add_top_bar(&adw::HeaderBar::new());
         parent.push_subpage(&adw::NavigationPage::builder().title("Font").child(&view).build());

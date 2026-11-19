@@ -121,7 +121,9 @@ pub struct Ui {
     /// The pane the server was last told has the focus.
     synced_focus: RefCell<String>,
     /// Finished and failed reports the user is looking at now, by pane.
-    reading: RefCell<HashMap<String, (String, String)>>,
+    /// The open tab has changed and has yet to be brought into view.
+    reveal: Cell<bool>,
+    reading: RefCell<HashMap<String, (String, String, std::time::Instant)>>,
     /// Where the open tab sits in the list, to land beside it if it closes.
     tab_at: Cell<usize>,
     /// The tab whose right-click menu is open.
@@ -250,6 +252,7 @@ fn minimap(panes: &[PaneRow], scale: i32) -> gtk::Fixed {
 
 #[derive(PartialEq, Clone)]
 struct TabRow {
+    folder: String,
     branch: String,
     /// Its place in the list, when Alt and that digit opens it.
     number: usize,
@@ -315,6 +318,7 @@ fn split_icon(below: bool) -> gtk::DrawingArea {
         if below { cr.rectangle(1.5, h / 2.0, w - 3.0, h / 2.0 - 2.5) } else { cr.rectangle(w / 2.0, 2.5, w / 2.0 - 1.5, h - 5.0) }
         let _ = cr.fill();
     });
+    icon.connect_state_flags_changed(|icon, _| icon.queue_draw());
     icon
 }
 
@@ -450,6 +454,7 @@ pub fn build(app: &adw::Application) {
         forwards: RefCell::default(),
         synced_focus: RefCell::default(),
         reading: RefCell::default(),
+        reveal: Cell::new(false),
         tab_at: Cell::new(0),
         menu_tab: RefCell::default(),
         scrolled_to: RefCell::default(),
@@ -581,7 +586,7 @@ pub fn build(app: &adw::Application) {
         }
     });
     // Right-click a tab for its own commands. One menu serves the whole list, so rebuilding rows cannot orphan it.
-    let tab_popover = dialogs::menu(&[&["rename-tab", "move-tab-up", "move-tab-down"], &["close-tab"]]);
+    let tab_popover = dialogs::menu_plain(&[&["rename-tab", "move-tab-up", "move-tab-down"], &["close-tab"]]);
     tab_popover.set_has_arrow(false);
     tab_popover.set_halign(gtk::Align::Start);
     // Parented outside the list: a list box treats every child as a row.
@@ -995,7 +1000,8 @@ impl Ui {
             // This session's tabs first, then anything waiting elsewhere.
             let state = ui.state.borrow().clone();
             let visible = ui.visible.borrow().clone();
-            let here = ui.activity.borrow().iter().find(|a| a.needs_attention() && a.session == state.selected_session && !visible.contains(&a.block)).map(|a| a.block.clone());
+            let rank = |a: &Activity| match a.state.as_str() { "blocked" => 0, "error" => 1, _ => 2 };
+            let here = ui.activity.borrow().iter().filter(|a| a.needs_attention() && a.session == state.selected_session && !visible.contains(&a.block)).min_by_key(|a| rank(a)).map(|a| a.block.clone());
             if let Some(block) = here {
                 ui.interact();
                 if ui.split.is_collapsed() {
@@ -1081,19 +1087,27 @@ impl Ui {
             } else {
                 config.theme_light = id.to_owned();
             }
-            let switched = chosen.palette.dark != adw::StyleManager::default().is_dark();
+            let other = chosen.palette.dark != adw::StyleManager::default().is_dark();
             let previous = config.appearance.clone();
-            if switched {
-                config.appearance = if chosen.palette.dark { "dark" } else { "light" }.into();
+            let style = if chosen.palette.dark { "dark" } else { "light" };
+            // Following the system is a choice of its own: a theme for the other brightness is kept for when the system changes.
+            let following = previous == "system";
+            if other && !following {
+                config.appearance = style.into();
             }
             config.save();
-            if switched {
-                // A theme of the other brightness can only show if the style follows it: say that it changed, and offer the way back.
-                let toast = adw::Toast::builder().title(if chosen.palette.dark { "Style set to Dark" } else { "Style set to Light" }).button_label("Undo").build();
+            if other {
+                let word = if chosen.palette.dark { "Dark" } else { "Light" };
+                let toast = if following {
+                    adw::Toast::builder().title(format!("{} is now your {} theme", chosen.name, word.to_lowercase())).button_label(format!("Switch to {word}")).build()
+                } else {
+                    adw::Toast::builder().title(format!("Style set to {word}")).button_label("Undo").build()
+                };
                 let weak = self.this.clone();
+                let to = if following { style.to_owned() } else { previous };
                 toast.connect_button_clicked(move |_| {
                     if let Some(ui) = weak.upgrade() {
-                        ui.config.borrow_mut().appearance = previous.clone();
+                        ui.config.borrow_mut().appearance = to.clone();
                         ui.config.borrow().save();
                         ui.apply_appearance();
                     }
@@ -1873,14 +1887,10 @@ impl Ui {
                 let lead = if tab.blocks.len() > 1 { tab.blocks.first() } else { tab.blocks.iter().find(|b| b.id == focused).or(tab.blocks.first()) };
                 let title = tab.name().map(str::to_owned).or_else(|| lead.map(|b| state.title(b))).unwrap_or_else(|| tab.label.clone());
                 let directory = lead.and_then(|b| state.directories.get(&b.id)).map(|d| short_path(d)).unwrap_or_default();
+                // One rule for every row: the name above, the program below. The folder is in the tooltip.
                 let detail = match tab.blocks.len() {
                     count if count > 1 && current && self.zoomed.get() => format!("Zoomed · 1 of {count} panes"),
-                    // A shell is already titled by its folder; when the path adds nothing, say which shell it is.
-                    0 | 1 if directory == title || directory.rsplit('/').next() == Some(title.as_str()) => lead.map(|b| identity(&state, b)).unwrap_or_default(),
-                    0 | 1 => directory,
-                    count if directory.is_empty() => format!("{count} panes"),
-                    _ if directory == title => lead.map(|b| identity(&state, b)).unwrap_or_default(),
-                    _ => directory,
+                    _ => lead.map(|b| identity(&state, b)).unwrap_or_default(),
                 };
                 let blocks: Vec<&str> = tab.blocks.iter().map(|b| b.id.as_str()).collect();
                 let (status, status_class) = self.status(&blocks, &state.working);
@@ -1899,7 +1909,8 @@ impl Ui {
                         let tile = programs::tile(state.programs.get(&b.id).map_or(&[][..], |p| p.as_slice()), tiles::exists);
                         // The line is named after the same program its icon shows.
                         let program = identity(&state, b);
-                        let shell = state.title(b) != state.program(b) && state.directories.contains_key(&b.id);
+                        // Only a shell is described by the folder it is in.
+                        let shell = ["bash", "zsh", "fish", "sh", "dash", "ksh", "nu", "tcsh", "csh", "pwsh"].contains(&state.program(b).as_str()) && state.directories.contains_key(&b.id);
                         PaneRow {
                             id: b.id.clone(),
                             title: program,
@@ -1920,7 +1931,7 @@ impl Ui {
                 };
                 let number = state.windows.iter().position(|t| t.id == tab.id).map_or(0, |at| at + 1);
                 let tile = lead.map(|b| programs::tile(state.programs.get(&b.id).map_or(&[][..], |p| p.as_slice()), tiles::exists)).unwrap_or_else(|| "shell".into());
-                TabRow { branch, number, panes, message, id: tab.id.clone(), title, detail, tile, status, status_class, current }
+                TabRow { folder: directory, branch, number, panes, message, id: tab.id.clone(), title, detail, tile, status, status_class, current }
             })
             .collect();
         drop(config);
@@ -2015,7 +2026,7 @@ impl Ui {
                     card.append(&gtk::Label::builder().label(pane.message.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).css_classes(["caption", "dim-label", "rexling-pane-said"]).build());
                 }
             }
-            let list_row = gtk::ListBoxRow::builder().child(&card).name(row.id.as_str()).tooltip_text(row.detail.as_str()).build();
+            let list_row = gtk::ListBoxRow::builder().child(&card).name(row.id.as_str()).tooltip_text(row.folder.as_str()).build();
             // Tabs can be dragged onto one another to reorder them.
             let source = gtk::DragSource::builder().actions(gdk::DragAction::MOVE).content(&gdk::ContentProvider::for_value(&row.id.to_value())).build();
             let dragged = list_row.clone();
@@ -2030,15 +2041,17 @@ impl Ui {
             }
         }
         // The open tab stays in view when the list is longer than the sidebar.
-        let moved = selected.is_some() && self.scrolled_to.replace(current_tab.clone()) != current_tab;
-        let list = self.tab_list.clone();
+        if selected.is_some() && self.scrolled_to.replace(current_tab.clone()) != current_tab {
+            self.reveal.set(true);
+        }
+        let (list, weak) = (self.tab_list.clone(), self.this.clone());
         gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(60), move || {
             let Some(view) = view else { return };
             if let Some(adjustment) = view.vadjustment() {
                 adjustment.set_value(was_at.min(adjustment.upper() - adjustment.page_size()).max(0.0));
             }
             // The open tab stays in view when the list is longer than the sidebar.
-            if let Some(row) = list.selected_row().filter(|_| moved) {
+            if let Some(row) = list.selected_row().filter(|_| weak.upgrade().is_some_and(|ui| ui.reveal.replace(false))) {
                 view.scroll_to(&row, None);
             }
         });
@@ -2140,11 +2153,12 @@ impl Ui {
         let left: Vec<(String, String)> = {
             let mut reading = self.reading.borrow_mut();
             let gone: Vec<String> = reading.keys().filter(|block| **block != focused).cloned().collect();
-            gone.into_iter().filter_map(|block| reading.remove(&block)).collect()
+            // Passing through a pane on the way elsewhere is not reading it.
+            gone.into_iter().filter_map(|block| reading.remove(&block)).filter(|(.., since)| since.elapsed() >= std::time::Duration::from_secs(2)).map(|(key, version, _)| (key, version)).collect()
         };
         if self.window.is_active() {
             for report in self.activity.borrow().iter().filter(|a| matches!(a.state.as_str(), "done" | "error") && a.block == focused && !a.attention_key.is_empty()) {
-                self.reading.borrow_mut().insert(report.block.clone(), (report.attention_key.clone(), report.attention_version.clone()));
+                self.reading.borrow_mut().entry(report.block.clone()).or_insert_with(|| (report.attention_key.clone(), report.attention_version.clone(), std::time::Instant::now()));
             }
         }
         self.forget(left);
@@ -2152,7 +2166,7 @@ impl Ui {
     /// The user answered in this pane: whatever it reported has been dealt with.
     fn answered(&self, block: &str) {
         let read = self.reading.borrow_mut().remove(block);
-        self.forget(read.into_iter().collect());
+        self.forget(read.into_iter().map(|(key, version, _)| (key, version)).collect());
     }
     fn forget(&self, seen: Vec<(String, String)>) {
         if seen.is_empty() {
@@ -2407,11 +2421,12 @@ impl Ui {
         }
         drop(panes);
 
-        let block = tab.and_then(|tab| tab.blocks.iter().find(|b| b.id == focused));
-        let pane_title = block.map(|b| state.title(b));
+        // A split tab is named after its first pane in the header, as it is in the sidebar.
+        let lead = tab.and_then(|tab| if tab.blocks.len() > 1 { tab.blocks.first() } else { tab.blocks.iter().find(|b| b.id == focused) });
+        let pane_title = lead.map(|b| state.title(b));
         let heading = tab.and_then(|tab| tab.name()).map(str::to_owned).or(pane_title).unwrap_or_else(|| "Rexling".into());
         self.title.set_title(&heading);
-        let directory = state.directories.get(&focused).map(|d| short_path(d)).unwrap_or_default();
+        let directory = lead.and_then(|b| state.directories.get(&b.id)).map(|d| short_path(d)).unwrap_or_default();
         let zoomed = self.zoomed.get() && tab.is_some_and(|tab| tab.blocks.len() > 1);
         self.title.set_subtitle(&match (zoomed, directory == heading) {
             (true, _) => format!("Zoomed · 1 of {} panes", tab.map_or(1, |tab| tab.blocks.len())),
