@@ -4,6 +4,7 @@ import android.view.View
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -41,7 +42,9 @@ import dev.chrisbanes.haze.hazeSource
     onMouseClick: (Int,Int,Int,Int)->Unit={_,_,_,_->},mouseTarget: ()->String={""},onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},imageTarget: ()->String=mouseTarget,bottomControlsInset: androidx.compose.ui.unit.Dp=0.dp,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,imeEnterSubmits: Boolean=false,tapOpensKeyboard: Boolean=false,keyboardChrome: ()->Int={0},onShortcut: (TerminalShortcut)->Boolean={false},
     paneIndicator: Boolean=true,
     /** Adds a pane beside the shown one; null leaves the button out. */
-    onNewPane: (()->Unit)?=null) {
+    onNewPane: (()->Unit)?=null,
+    /** False makes the button inert in place. It is false for a moment on every pane switch, so it neither moves nor dims. */
+    newPaneEnabled: Boolean=true) {
     val switchLayout=remember(paneLayout,blocks) {paneLayout.filter {p->blocks.any {it.id==p.id}}.sortedBy {it.layer}}
     val hasMinimap=blocks.all {b->switchLayout.any {it.id==b.id}}
     val localHaze=remember {HazeState()}
@@ -190,10 +193,14 @@ import dev.chrisbanes.haze.hazeSource
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(52.dp)
                 .clickable(role=Role.Button,onClick=onPanes)
                 .semantics {contentDescription="Pane position indicator";stateDescription="Pane ${candidate+1} of ${blocks.size}"},contentAlignment=Alignment.Center) {
+                // A solid surface of its own. The pane's blur only runs during a swipe, so borrowing it made the pill
+                // flash, and between swipes the text it floats over showed through.
+                val pill=Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(1.dp,MaterialTheme.colorScheme.outline.copy(alpha=.3f),CircleShape)
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     // More panes than fit as icons fall back to dots.
                     if(blocks.size>7) PanePositionIndicator(index,blocks.size,offset={-drag/stride})
-                    else Row(Modifier.paneFrost(haze,CircleShape).padding(4.dp),verticalAlignment=Alignment.CenterVertically) {
+                    else Row(Modifier.then(pill).padding(4.dp),verticalAlignment=Alignment.CenterVertically) {
                         blocks.forEachIndexed {i,block->
                             val shown=i==candidate
                             Box(Modifier.size(38.dp,26.dp).clip(CircleShape)
@@ -204,8 +211,8 @@ import dev.chrisbanes.haze.hazeSource
                             }
                         }
                     }
-                    if(onNewPane!=null) Box(Modifier.paneFrost(haze,CircleShape).size(38.dp,34.dp).clip(CircleShape)
-                        .clickable(role=Role.Button,onClick=onNewPane).semantics {contentDescription="New pane"},contentAlignment=Alignment.Center) {
+                    if(onNewPane!=null) Box(Modifier.then(pill).size(38.dp,34.dp).clip(CircleShape)
+                        .clickable(enabled=newPaneEnabled,role=Role.Button,onClick=onNewPane).semantics {contentDescription="New pane"},contentAlignment=Alignment.Center) {
                         ChromeSymbol(ChromeIcon.ADD,Modifier.size(14.dp))
                     }
                 }

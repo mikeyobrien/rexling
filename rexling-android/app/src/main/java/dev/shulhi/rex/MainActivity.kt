@@ -430,7 +430,7 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
                                 }
                                 else PortForwards.notice="Wait for this pane to connect before forwarding its link."
                             }},
-                            Modifier.fillMaxSize(),onNewPane=if(ready && state.selectedSession.isNotBlank() && chosen.isNotBlank()) ({client.createPane()}) else null,floatingDock=floating.isNotEmpty(),paneLayout=window?.layout.orEmpty(),titles=state.titles,directories=state.directories,hazeState=terminalHaze,captureBackdrop=floatingBackdrop || wheelBackdrop || readyBackdrop || model.images.state!=null,onImage=imageCommit,onPaste=::pasteClipboard,imeEnterSubmits=model.enterSubmits,tapOpensKeyboard=model.toolbarWithKeyboardOnly,
+                            Modifier.fillMaxSize(),onNewPane={client.createPane()},newPaneEnabled=ready && state.selectedSession.isNotBlank() && chosen.isNotBlank(),floatingDock=floating.isNotEmpty(),paneLayout=window?.layout.orEmpty(),titles=state.titles,directories=state.directories,hazeState=terminalHaze,captureBackdrop=floatingBackdrop || wheelBackdrop || readyBackdrop || model.images.state!=null,onImage=imageCommit,onPaste=::pasteClipboard,imeEnterSubmits=model.enterSubmits,tapOpensKeyboard=model.toolbarWithKeyboardOnly,
                             onShortcut={shortcut-> when(shortcut) {
                                 TerminalShortcut.PreviousPane -> {client.swipePane(-1);true}
                                 TerminalShortcut.NextPane -> {client.swipePane(1);true}
@@ -578,11 +578,11 @@ private fun getClipboard(context: Context)=context.getSystemService(Context.CLIP
     programs: Map<String,ProgramIdentity>,controlled: Boolean,fontSize: Float,
     onInput: (String)->Unit,onScroll: (Int)->Unit,onWheel: (Int,Int,Int,Int,Int)->Unit,onActivate: ()->Unit,onBottom: ()->Unit,onDimensions: (Int,Int)->Unit,
     onSelect: (String)->Unit,onPanes: ()->Unit,onView: (TerminalView)->Unit,modifier: Modifier=Modifier,
-    onNewPane: (()->Unit)?=null,floatingDock: Boolean=false,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},onShortcut: (TerminalShortcut)->Boolean={false},imeEnterSubmits: Boolean=false,tapOpensKeyboard: Boolean=false) {
+    onNewPane: (()->Unit)?=null,newPaneEnabled: Boolean=true,floatingDock: Boolean=false,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},onShortcut: (TerminalShortcut)->Boolean={false},imeEnterSubmits: Boolean=false,tapOpensKeyboard: Boolean=false) {
     val layout by client.displayLayout.collectAsState()
     val screen=client.screenForLayout(layout)
     TerminalCarousel(blocks,chosen,liveBlock,screen,client.paneFrames,programs,controlled,fontSize,
-        onInput,onScroll,onWheel,onActivate,onBottom,onDimensions,onSelect,onPanes,onView,modifier,client::bindTerminalView,onMouseClick=client::click,mouseTarget=client::keyTarget,onImage=onImage,onPaste=onPaste,imageTarget=client::imageInputTarget,bottomControlsInset=if(floatingDock) 56.dp else 0.dp,paneLayout=paneLayout,titles=titles,directories=directories,hazeState=hazeState,captureBackdrop=captureBackdrop,onNewPane=onNewPane,onShortcut=onShortcut,imeEnterSubmits=imeEnterSubmits,tapOpensKeyboard=tapOpensKeyboard)
+        onInput,onScroll,onWheel,onActivate,onBottom,onDimensions,onSelect,onPanes,onView,modifier,client::bindTerminalView,onMouseClick=client::click,mouseTarget=client::keyTarget,onImage=onImage,onPaste=onPaste,imageTarget=client::imageInputTarget,bottomControlsInset=if(floatingDock) 56.dp else 0.dp,paneLayout=paneLayout,titles=titles,directories=directories,hazeState=hazeState,captureBackdrop=captureBackdrop,onNewPane=onNewPane,newPaneEnabled=newPaneEnabled,onShortcut=onShortcut,imeEnterSubmits=imeEnterSubmits,tapOpensKeyboard=tapOpensKeyboard)
 }
 
 @Composable private fun BackgroundAlertsDialog(model: RexModel,hazeState: HazeState?=null,onClose: ()->Unit) {
