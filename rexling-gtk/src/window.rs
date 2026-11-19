@@ -1306,9 +1306,19 @@ impl Ui {
         for (id, pane) in self.panes.borrow().iter() {
             pane.terminal.set_dimmed(!single && shown.contains(id) && *id != focused);
         }
+        let first = self.visible.borrow().is_empty() && !shown.is_empty();
         let changed = self.visible.replace(shown) != *self.visible.borrow();
         if changed {
             self.refresh_banner();
+        }
+        if first {
+            // Terminals have just appeared: the keyboard belongs in one, not on a header button.
+            let weak = Rc::downgrade(self);
+            gtk::glib::idle_add_local_once(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.focus_terminal();
+                }
+            });
         }
 
         let panes = self.panes.borrow();
