@@ -378,7 +378,13 @@ pub fn preferences(ui: &Rc<Ui>) {
     // A terminal needs every character the same width, so only those families are offered.
     let context = ui.window.pango_context();
     // Monospace families that can write ordinary text: icon, emoji and symbol fonts are not for a terminal.
-    let writes = |name: &str| context.load_font(&pango::FontDescription::from_string(name)).is_some_and(|font| ['a', 'M', '0'].iter().all(|c| font.has_char(*c)));
+    let writes = |name: &str| {
+        // By family alone: a name ending in a number must not be read as a size.
+        let mut wanted = pango::FontDescription::new();
+        wanted.set_family(name);
+        wanted.set_size(10 * pango::SCALE);
+        context.load_font(&wanted).is_some_and(|font| ['a', 'M', '0'].iter().all(|c| font.has_char(*c)))
+    };
     let mut families: Vec<String> = context.list_families().iter().filter(|family| family.is_monospace()).map(|family| family.name().to_string()).filter(|name| writes(name) && !["Emoji", "SignWriting", "Symbols"].iter().any(|word| name.contains(word))).collect();
     families.sort_by_key(|name| name.to_lowercase());
     families.dedup();

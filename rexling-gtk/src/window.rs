@@ -123,6 +123,10 @@ pub struct Ui {
     /// Finished and failed reports the user is looking at now, by pane.
     /// The open tab has changed and has yet to be brought into view.
     reveal: Cell<bool>,
+    /// Waiting panes Go to Waiting Pane has already been to, this time round.
+    visited: RefCell<Vec<String>>,
+    /// The row whose menu is open.
+    menu_row: RefCell<Option<gtk::ListBoxRow>>,
     reading: RefCell<HashMap<String, (String, String, std::time::Instant)>>,
     /// Where the open tab sits in the list, to land beside it if it closes.
     tab_at: Cell<usize>,
@@ -455,6 +459,8 @@ pub fn build(app: &adw::Application) {
         synced_focus: RefCell::default(),
         reading: RefCell::default(),
         reveal: Cell::new(false),
+        visited: RefCell::default(),
+        menu_row: RefCell::default(),
         tab_at: Cell::new(0),
         menu_tab: RefCell::default(),
         scrolled_to: RefCell::default(),
@@ -598,6 +604,9 @@ pub fn build(app: &adw::Application) {
         gtk::glib::idle_add_local_once(move || {
             if let Some(ui) = weak.upgrade() {
                 ui.menu_tab.replace(String::new());
+                if let Some(row) = ui.menu_row.take() {
+                    row.remove_css_class("rexling-target");
+                }
                 ui.sync_actions();
                 if !ui.modal.get() {
                     ui.focus_terminal();
@@ -622,6 +631,8 @@ pub fn build(app: &adw::Application) {
             }
         }
         ui.menu_tab.replace(id);
+        row.add_css_class("rexling-target");
+        ui.menu_row.replace(Some(row.clone()));
         let at = ui.tab_list.compute_point(&ui.toasts, &gtk::graphene::Point::new(x as f32, y as f32)).unwrap_or_else(|| gtk::graphene::Point::new(x as f32, y as f32));
         tab_popover.set_pointing_to(Some(&gdk::Rectangle::new(at.x() as i32, at.y() as i32, 1, 1)));
         tab_popover.popup();
@@ -997,12 +1008,29 @@ impl Ui {
             });
         });
         add("next-waiting", |ui| {
-            // This session's tabs first, then anything waiting elsewhere.
+            // Most pressing first: this session's panes, then other sessions'. Each press goes one further, then round again.
             let state = ui.state.borrow().clone();
             let visible = ui.visible.borrow().clone();
             let rank = |a: &Activity| match a.state.as_str() { "blocked" => 0, "error" => 1, _ => 2 };
-            let here = ui.activity.borrow().iter().filter(|a| a.needs_attention() && a.session == state.selected_session && !visible.contains(&a.block)).min_by_key(|a| rank(a)).map(|a| a.block.clone());
-            if let Some(block) = here {
+            let mut here: Vec<Activity> = ui.activity.borrow().iter().filter(|a| a.needs_attention() && a.session == state.selected_session).cloned().collect();
+            here.sort_by_key(rank);
+            let elsewhere = ui.waiting();
+            let all: Vec<String> = here.iter().map(|a| a.block.clone()).chain(elsewhere.iter().map(|w| w.block.clone())).collect();
+            let next = {
+                let mut visited = ui.visited.borrow_mut();
+                visited.retain(|block| all.contains(block));
+                let fresh = |visited: &Vec<String>| all.iter().find(|block| !visited.contains(block) && !visible.contains(block)).cloned();
+                let next = fresh(&visited).or_else(|| {
+                    visited.clear();
+                    fresh(&visited)
+                });
+                visited.extend(next.clone());
+                next
+            };
+            let Some(block) = next else { return };
+            if let Some(waiting) = elsewhere.iter().find(|w| w.block == block) {
+                ui.go_to(waiting);
+            } else {
                 ui.interact();
                 if ui.split.is_collapsed() {
                     ui.split.set_show_sidebar(false);
@@ -1010,8 +1038,6 @@ impl Ui {
                 ui.jump.replace(block);
                 ui.arrange();
                 ui.focus_terminal();
-            } else if let Some(waiting) = ui.waiting().first().cloned() {
-                ui.go_to(&waiting);
             }
         });
         add("toggle-sidebar", |ui| ui.split.set_show_sidebar(!ui.split.shows_sidebar()));
@@ -1037,12 +1063,14 @@ impl Ui {
             let address = server.clone();
             items.push((tunnel::label(server), "Server".into(), Box::new(move |ui| ui.connect(&address))));
         }
-        if self.config.borrow().appearance != "system" {
-            items.push(("Follow System Style".into(), String::new(), Box::new(|ui| {
-                ui.config.borrow_mut().appearance = "system".into();
-                ui.config.borrow().save();
-                ui.apply_appearance();
-            })));
+        for (label, style) in [("Style: Follow System", "system"), ("Style: Light", "light"), ("Style: Dark", "dark")] {
+            if self.config.borrow().appearance != style {
+                items.push((label.into(), String::new(), Box::new(move |ui| {
+                    ui.config.borrow_mut().appearance = style.into();
+                    ui.config.borrow().save();
+                    ui.apply_appearance();
+                })));
+            }
         }
         for theme in theme::all() {
             let id = theme.id.clone();
@@ -1890,6 +1918,18 @@ impl Ui {
                 // One rule for every row: the name above, the program below. The folder is in the tooltip.
                 let detail = match tab.blocks.len() {
                     count if count > 1 && current && self.zoomed.get() => format!("Zoomed · 1 of {count} panes"),
+                    count if count > 1 => {
+                        // Every program in the tab, each once, in pane order.
+                        let mut names: Vec<String> = Vec::new();
+                        for name in tab.blocks.iter().map(|b| identity(&state, b)) {
+                            if !names.contains(&name) {
+                                names.push(name);
+                            }
+                        }
+                        let more = names.len().saturating_sub(3);
+                        names.truncate(3);
+                        if more > 0 { format!("{} +{more}", names.join(" · ")) } else { names.join(" · ") }
+                    }
                     _ => lead.map(|b| identity(&state, b)).unwrap_or_default(),
                 };
                 let blocks: Vec<&str> = tab.blocks.iter().map(|b| b.id.as_str()).collect();
@@ -2053,6 +2093,13 @@ impl Ui {
             // The open tab stays in view when the list is longer than the sidebar.
             if let Some(row) = list.selected_row().filter(|_| weak.upgrade().is_some_and(|ui| ui.reveal.replace(false))) {
                 view.scroll_to(&row, None);
+                // A row added at the end has no place yet on the first pass; look again once it has.
+                let (list, view) = (list.clone(), view.clone());
+                gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(260), move || {
+                    if let Some(row) = list.selected_row() {
+                        view.scroll_to(&row, None);
+                    }
+                });
             }
         });
         self.shown_tabs.replace(next);

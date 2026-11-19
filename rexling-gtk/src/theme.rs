@@ -149,11 +149,14 @@ panegrid {{ background: {line}; }}
 .rexling-float-bar {{ padding: 0 4px 0 12px; background: {sidebar}; border-bottom: 1px solid {line}; }}
 .rexling-tabs row {{ border-radius: 10px; margin: 1px 6px; padding: 6px 8px; transition: background 120ms ease; }}
 .rexling-tabs row:selected {{ background: alpha({fg}, 0.09); }}
+.rexling-tabs row.rexling-target {{ box-shadow: inset 0 0 0 1.5px alpha({fg}, 0.4); }}
 .rexling-tab-title {{ font-weight: 600; }}
 .rexling-status {{ font-size: 0.82em; font-weight: 600; }}
 .rexling-status.attention {{ color: {warm}; }}
 .rexling-status.failed {{ color: {red}; }}
 .rexling-status.done {{ color: {green}; }}
+.rexling-tabs .dim-label, .rexling-waiting .dim-label {{ opacity: {dim}; }}
+.rexling-status.attention, .rexling-status.failed, .rexling-status.done {{ filter: {firm}; }}
 .rexling-pane-line {{ border-radius: 6px; padding: 2px 6px; margin-left: 40px; }}
 .rexling-pane-said {{ margin-left: 60px; margin-bottom: 2px; }}
 .rexling-pane-line:hover {{ background: alpha({fg}, 0.06); }}
@@ -187,6 +190,9 @@ button.rexling-wants {{ background-image: radial-gradient(circle at 78% 24%, {wa
         accent_text = hex(mix(accent, fg, if contrast(accent, bg) < 4.5 { 0.35 } else { 0.0 })),
         on_accent = hex(on_accent),
         warm = hex(palette.ansi[3]),
+        // Secondary text and state colours need more weight on a light background to read as well.
+        dim = if palette.dark { "0.58" } else { "0.74" },
+        firm = if palette.dark { "none" } else { "brightness(0.72) saturate(1.3)" },
         red = hex(palette.ansi[1]),
         green = hex(palette.ansi[2]),
     )
