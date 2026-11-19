@@ -29,22 +29,25 @@ class NetworkUiTest {
         val pair=java.security.KeyPairGenerator.getInstance("RSA").apply {initialize(2048)}.generateKeyPair()
         val key="-----BEGIN PRIVATE KEY-----\n"+android.util.Base64.encodeToString(pair.private.encoded,android.util.Base64.NO_WRAP)+"\n-----END PRIVATE KEY-----\n"
         runBlocking {NetworkSettings.removeKey(endpoint)}
-        compose.setContent {MaterialTheme {Column {SshKeyEditor(endpoint)}}}
+        var selected by androidx.compose.runtime.mutableStateOf<String?>(null)
+        compose.setContent {MaterialTheme {Column {SshKeyEditor(selected) {selected=it}}}}
         val previous=clipboard.primaryClip
         try {
             compose.runOnIdle {clipboard.setPrimaryClip(ClipData.newPlainText("Test SSH key",key))}
-            compose.onNodeWithText("Paste key").performClick()
+            compose.onNodeWithText("Paste new key").performClick()
             compose.onNodeWithText("Private key").assertIsDisplayed()
             compose.onNodeWithText("Cancel").performClick()
             assertFalse(NetworkSettings.hasKey(endpoint))
-            compose.onNodeWithText("Paste key").performClick()
-            compose.onNodeWithText("Import").assertIsEnabled().performClick()
-            compose.waitUntil(timeoutMillis=10000) {NetworkSettings.hasKey(endpoint)}
-            compose.onNodeWithText("Saved securely on this phone").assertIsDisplayed()
-            val stored=context.getSharedPreferences("network",0).getString("keys","").orEmpty()
+            compose.onNodeWithText("Paste new key").performClick()
+            compose.onNodeWithText("Key name").performTextInput("Pasted test key")
+            compose.onNodeWithText("Save key").assertIsEnabled().performClick()
+            compose.waitUntil(timeoutMillis=10000) {selected!=null}
+            compose.onNodeWithText("Pasted test key").assertIsDisplayed()
+            assertFalse("Key selection is a draft until the server is saved",NetworkSettings.hasKey(endpoint))
+            val stored=context.getSharedPreferences("network",0).getString("ssh_library","").orEmpty()
             assertFalse(stored.contains(key));assertFalse(stored.contains("PRIVATE KEY"))
         } finally {
-            runBlocking {NetworkSettings.removeKey(endpoint)}
+            runBlocking {selected?.let {NetworkSettings.deleteKey(it)}}
             compose.runOnIdle {if(previous!=null) clipboard.setPrimaryClip(previous) else clipboard.clearPrimaryClip()}
         }
     }
@@ -52,13 +55,15 @@ class NetworkUiTest {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val clipboard=context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val previous=clipboard.primaryClip
-        compose.setContent {MaterialTheme {Column {SshKeyEditor("ssh://invalid-paste@127.0.0.1:2222")}}}
+        var selected by androidx.compose.runtime.mutableStateOf<String?>(null)
+        compose.setContent {MaterialTheme {Column {SshKeyEditor(selected) {selected=it}}}}
         try {
             compose.runOnIdle {clipboard.clearPrimaryClip()}
-            compose.onNodeWithText("Paste key").performClick()
-            compose.onNodeWithText("Import").assertIsNotEnabled()
+            compose.onNodeWithText("Paste new key").performClick()
+            compose.onNodeWithText("Save key").assertIsNotEnabled()
+            compose.onNodeWithText("Key name").performTextInput("Invalid key")
             compose.onNodeWithText("Private key").performTextInput("not a private key")
-            compose.onNodeWithText("Import").performClick()
+            compose.onNodeWithText("Save key").performClick()
             compose.waitUntil(timeoutMillis=10000) {compose.onAllNodesWithText("ssh: no key found").fetchSemanticsNodes().isNotEmpty()}
             assertFalse(NetworkSettings.hasKey("ssh://invalid-paste@127.0.0.1:2222"))
             compose.onNodeWithText("Cancel").performClick()
@@ -162,8 +167,8 @@ class NetworkUiTest {
     }
     @Test fun sshEditorOffersKeyImportAndKeylessConnection() {
         compose.setContent {MaterialTheme {ServerEditor(ServerProfile.create("Test SSH","ssh://tester@example.com"),{}, {_,_,_->null})}}
-        compose.onNodeWithText("Import file").assertIsDisplayed()
-        compose.onNodeWithText("Optional for Tailscale SSH.").assertIsDisplayed()
+        compose.onNodeWithText("Import new key").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("No key").assertIsDisplayed()
         compose.waitForIdle()
         InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().let {bitmap->
             File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null),"ssh-settings.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}

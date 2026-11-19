@@ -25,7 +25,7 @@ import dev.chrisbanes.haze.HazeState
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun SheetCard(title: String,closeDescription: String,onClose: ()->Unit,hazeState: HazeState?=null,modifier: Modifier=Modifier,
-    overline: String="",onBack: (() -> Unit)?=null,swipeToDismiss: Boolean=true,actions: @Composable RowScope.()->Unit={},content: @Composable ColumnScope.()->Unit) {
+    overline: String="",onBack: (() -> Unit)?=null,swipeToDismiss: Boolean=true,backDescription: String="Back to appearance",actions: @Composable RowScope.()->Unit={},content: @Composable ColumnScope.()->Unit) {
     val docked=sheetDocks()
     val localHaze=remember {HazeState()}
     // Built outside the sheet's window: inside, the frost's host would be that window and redraw it every frame.
@@ -35,7 +35,7 @@ import dev.chrisbanes.haze.HazeState
         Box(outer.fillMaxWidth().then(if(docked) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)).padding(horizontal=10.dp).padding(bottom=10.dp))) {
             Column(modifier.then(surface).fillMaxWidth().padding(vertical=12.dp)) {
                 Row(Modifier.fillMaxWidth().heightIn(min=52.dp).padding(start=if(onBack!=null) 12.dp else 22.dp,end=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    onBack?.let {KitRoundButton(ChromeIcon.LEFT,"Back to appearance",onClick=it)}
+                    onBack?.let {KitRoundButton(ChromeIcon.LEFT,backDescription,onClick=it)}
                     Column(Modifier.weight(1f)) {
                         if(overline.isNotBlank()) Text(overline,style=Kit.meta,fontWeight=FontWeight.Medium,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
                         Text(title,style=Kit.title,maxLines=1,overflow=TextOverflow.Ellipsis)
@@ -63,5 +63,5 @@ import dev.chrisbanes.haze.HazeState
 
 /** A settings sheet: the card with nothing beside its title. */
 @Composable internal fun SettingsDrawer(title: String,closeDescription: String,onClose: ()->Unit,
-    hazeState: HazeState?=null,onBack: (() -> Unit)?=null,swipeToDismiss: Boolean=true,content: @Composable ColumnScope.()->Unit) =
-    SheetCard(title,closeDescription,onClose,hazeState,onBack=onBack,swipeToDismiss=swipeToDismiss,content=content)
+    hazeState: HazeState?=null,onBack: (() -> Unit)?=null,swipeToDismiss: Boolean=true,backDescription: String="Back to appearance",content: @Composable ColumnScope.()->Unit) =
+    SheetCard(title,closeDescription,onClose,hazeState,onBack=onBack,swipeToDismiss=swipeToDismiss,backDescription=backDescription,content=content)

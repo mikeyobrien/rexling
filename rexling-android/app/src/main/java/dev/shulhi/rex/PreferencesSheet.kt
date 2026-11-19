@@ -37,7 +37,7 @@ internal const val MaxFontSize=20
     shortcutGesture: ControlShortcutGesture=ControlShortcutGesture.HOLD,onShortcutGesture: (ControlShortcutGesture)->Unit={},
     toolbarKeys: List<ToolbarKey> = ToolbarLayout.defaults,onToolbar: ()->Unit={},onNeovim: ()->Unit={},
     minimizeFloatingPanes: Boolean=false,onMinimizeFloatingPanes: (Boolean)->Unit={},
-    onNetwork: ()->Unit={},onAlerts: ()->Unit={},onForwards: ()->Unit={},
+    onNetwork: ()->Unit={},onAlerts: ()->Unit={},onForwards: ()->Unit={},onControlItems: ()->Unit={},onSshKeys: ()->Unit={},
     codexTitleAttention: Boolean=false,onCodexTitleAttention: (Boolean)->Unit={},onAbout: ()->Unit={},hazeState: dev.chrisbanes.haze.HazeState?=null) {
     SettingsDrawer("Preferences","Close preferences",onClose,hazeState) {
         Column(Modifier.fillMaxWidth().heightIn(max=sheetBodyMax(640.dp)).verticalScroll(rememberScrollState()).padding(horizontal=12.dp).padding(top=4.dp,bottom=12.dp),
@@ -68,11 +68,13 @@ internal const val MaxFontSize=20
                         }
                     }
                 }
+                GoRow("Ctrl keys",onControlItems)
                 GoRow("Neovim keys",onNeovim)
                 ChoiceRow("Floating panes",last=true) {Segmented(listOf(false to "Swipe",true to "Dock"),minimizeFloatingPanes,onMinimizeFloatingPanes)}
             }
             ChoiceGroup {
                 GoRow("Network",onNetwork)
+                GoRow("SSH keys",onSshKeys)
                 GoRow("Alerts",onAlerts)
                 GoRow("Port forwarding",onForwards)
                 Row(Modifier.fillMaxWidth().heightIn(min=52.dp).toggleable(codexTitleAttention,role=Role.Switch,onValueChange=onCodexTitleAttention).padding(horizontal=16.dp),

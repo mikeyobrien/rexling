@@ -13,7 +13,7 @@ internal class TerminalUpdates(private val imageDecoder: (Long,Long,Int,Int,Byte
         require(packet.remaining() in 17..134217728) {"Invalid terminal packet size"}
         val data=packet.order(ByteOrder.LITTLE_ENDIAN)
         val version=data.int
-        require(version==0x31545852 || version==0x32545852 || version==0x33545852 || version==0x34545852 || version==0x35545852 || version==0x36545852) {"Unsupported terminal packet"}
+        require(version==0x31545852 || version==0x32545852 || version==0x33545852 || version==0x34545852 || version==0x35545852 || version==0x36545852 || version==0x37545852) {"Unsupported terminal packet"}
         val nextRevision=data.long;require(nextRevision>revision)
         fun text(): String {val n=data.int;require(n>=0 && n<=data.remaining());val raw=ByteArray(n);data.get(raw);return raw.toString(Charsets.UTF_8)}
         val metadata=text()
@@ -28,8 +28,7 @@ internal class TerminalUpdates(private val imageDecoder: (Long,Long,Int,Int,Byte
                 val scroll=TerminalScroll(data.long,data.long,data.long)
                 val inputFlags=if(version>=0x32545852) data.get().toInt() and 0xff else 0
                 val cursorFlags=if(version>=0x36545852) data.get().toInt() and 0xff else 1
-                require(cursorFlags in 0..15) {"Invalid cursor flags"}
-                val cursorHidden=cursorFlags and 8!=0  // x/y is a hidden cursor's caret, not a cursor to draw
+                require(cursorFlags in 0..7) {"Invalid cursor flags"}
                 if(flag==2) require(previous!=null && previous.columns==columns && previous.rows==rows) {"Missing terminal delta base"}
                 // RXT5: rows moved by `shift` (positive: up) before changed rows apply.
                 val shift=if(version>=0x35545852) data.short.toInt() else 0
@@ -110,7 +109,13 @@ internal class TerminalUpdates(private val imageDecoder: (Long,Long,Int,Int,Byte
                         TerminalImagePlacement(image,layer,z,col,row,ox,oy,w,h,sx,sy,sw,sh)
                     }.sortedWith(compareBy({it.layer},{it.z}))
                 }
-                TerminalScreen(columns,rows,x.takeIf {it>=0 && !cursorHidden},y.takeIf {it>=0 && !cursorHidden},fg,bg,lines.flatten(),scroll,lines,inputFlags,placements,cw,ch,above,below,cursorFlags and 3,cursorFlags and 4!=0,y.takeIf {it>=0})
+                var anchorX: Int?=null;var anchorY: Int?=null
+                if(version>=0x37545852) {
+                    val ax=data.int;val ay=data.int
+                    require((ax==-1 && ay==-1) || (ax in 0 until columns && ay in 0 until rows)) {"Invalid cursor anchor"}
+                    anchorX=ax.takeIf {it>=0};anchorY=ay.takeIf {it>=0}
+                }
+                TerminalScreen(columns,rows,x.takeIf {it>=0},y.takeIf {it>=0},fg,bg,lines.flatten(),scroll,lines,inputFlags,placements,cw,ch,above,below,cursorFlags and 3,cursorFlags and 4!=0,anchorX,anchorY)
             }
             else->error("Invalid terminal frame flag $flag")
         }

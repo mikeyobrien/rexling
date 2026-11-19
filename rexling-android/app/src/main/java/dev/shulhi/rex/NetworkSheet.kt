@@ -32,6 +32,7 @@ import kotlinx.coroutines.withTimeoutOrNull
     val scope=rememberCoroutineScope()
     val status by NetworkSettings.status.collectAsState()
     var control by remember {mutableStateOf(NetworkSettings.controlUrl)}
+    var deviceName by remember {mutableStateOf(NetworkSettings.hostname)}
     var error by remember {mutableStateOf<String?>(null)}
     var busy by remember {mutableStateOf(false)}
     val tailscale=status.optJSONObject("tailscale")
@@ -45,7 +46,7 @@ import kotlinx.coroutines.withTimeoutOrNull
         busy=true;error=null
         scope.launch {
             try {
-                error=NetworkSettings.prepareBuiltIn(control)
+                error=NetworkSettings.prepareBuiltIn(control,deviceName)
                 if(error==null) error=NetworkSettings.login()
                 if(error==null) {
                     val url=withTimeoutOrNull(20_000) {
@@ -75,7 +76,9 @@ import kotlinx.coroutines.withTimeoutOrNull
             Text("Choose the connection network separately in each server’s settings.",style=SettingsType.detail)
             OutlinedTextField(control,{control=it},Modifier.fillMaxWidth(),label={Text("Control server (optional)")},placeholder={Text("https://headscale.example.com")},singleLine=true)
             Text("Leave blank for Tailscale. Each control server keeps its own sign-in.",style=SettingsType.detail)
-            Button(enabled=!busy,onClick={busy=true;scope.launch {error=NetworkSettings.prepareBuiltIn(control);busy=false}}) {Text(if(busy) "Applying…" else "Apply")}
+            OutlinedTextField(deviceName,{deviceName=it},Modifier.fillMaxWidth(),label={Text("Device name")},placeholder={Text(TailscaleHostname.DEFAULT)},singleLine=true)
+            Text("How this phone appears in your tailnet. A name set in the Tailscale admin console takes precedence.",style=SettingsType.detail)
+            Button(enabled=!busy,onClick={busy=true;scope.launch {error=NetworkSettings.prepareBuiltIn(control,deviceName);busy=false}}) {Text(if(busy) "Applying…" else "Apply")}
             error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=SettingsType.detail)}
         }
     }
@@ -154,65 +157,6 @@ internal fun tailscalePeers(status: org.json.JSONObject?): List<TailscalePeerSta
         }
         if(networkError.isNotBlank()) Text(networkError,Modifier.padding(start=16.dp,end=16.dp,bottom=16.dp),style=SettingsType.detail,color=MaterialTheme.colorScheme.error)
     }
-}
-
-@Composable internal fun SshKeyEditor(endpoint: String) {
-    val context=LocalContext.current;val scope=rememberCoroutineScope()
-    var source by remember(endpoint) {mutableStateOf<String?>(null)}
-    var pasted by remember(endpoint) {mutableStateOf(false)}
-    var passphrase by remember(endpoint) {mutableStateOf("")}
-    var error by remember(endpoint) {mutableStateOf<String?>(null)}
-    var busy by remember(endpoint) {mutableStateOf(false)}
-    var imported by remember(endpoint) {mutableStateOf(NetworkSettings.hasKey(endpoint))}
-    fun dismiss() {if(!busy) {source=null;passphrase="";error=null;pasted=false}}
-    val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {uri->
-        if(uri!=null) runCatching {context.contentResolver.openInputStream(uri)?.use {stream->
-            val output=java.io.ByteArrayOutputStream();val buffer=ByteArray(4096)
-            while(true) {val count=stream.read(buffer);if(count<0) break;require(output.size()+count<=131072) {"SSH key is too large"};output.write(buffer,0,count)}
-            source=String(output.toByteArray());pasted=false;passphrase="";error=null
-        }}.onFailure {error=it.message}
-    }
-    Column(Modifier.fillMaxWidth().clip(Kit.row).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.5f)).padding(12.dp),verticalArrangement=Arrangement.spacedBy(2.dp)) {
-        Text("SSH key",style=SettingsType.row)
-        Text(if(imported) "Saved securely on this phone" else "Optional for Tailscale SSH.",style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(2.dp)) {
-            TextButton(contentPadding=PaddingValues(horizontal=6.dp,vertical=4.dp),onClick={picker.launch(arrayOf("*/*"))}) {Text("Import file",style=SettingsType.detail)}
-        TextButton(contentPadding=PaddingValues(horizontal=6.dp,vertical=4.dp),onClick={
-            pasted=true;source="";passphrase="";error=null
-            runCatching {
-                val clip=(context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).primaryClip
-                val text=if(clip!=null && clip.itemCount>0) clip.getItemAt(0).text?.toString().orEmpty() else ""
-                require(text.toByteArray().size<=131072) {"SSH key is too large"}
-                source=text
-            }.onFailure {error=it.message}
-        }) {Text("Paste key",style=SettingsType.detail)}
-
-            Spacer(Modifier.weight(1f))
-            if(imported) TextButton(contentPadding=PaddingValues(horizontal=6.dp,vertical=4.dp),onClick={scope.launch {NetworkSettings.removeKey(endpoint);imported=false}}) {Text("Remove",style=SettingsType.detail,color=MaterialTheme.colorScheme.error)}
-        }
-        if(source==null) error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=SettingsType.detail)}
-    }
-    if(source!=null) KitDialog(onDismissRequest={dismiss()},title={Text(if(pasted) "Paste SSH key" else "Import SSH key",style=SettingsType.title)},text={
-        Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            Text("The key stays encrypted on this phone. Enter its passphrase if required.",style=SettingsType.detail)
-            if(pasted) OutlinedTextField(source.orEmpty(),{text->
-                if(text.toByteArray().size<=131072) {source=text;error=null} else error="SSH key is too large"
-            },Modifier.fillMaxWidth(),label={Text("Private key")},supportingText={Text("Include the BEGIN and END lines.",style=SettingsType.detail)},
-                minLines=3,maxLines=5,enabled=!busy,textStyle=SettingsType.detail,
-                visualTransformation=PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password,autoCorrectEnabled=false))
-            OutlinedTextField(passphrase,{passphrase=it;error=null},label={Text("Passphrase (optional)")},visualTransformation=PasswordVisualTransformation(),singleLine=true,textStyle=SettingsType.body,
-                enabled=!busy,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password,autoCorrectEnabled=false))
-            error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=SettingsType.detail)}
-        }
-    },confirmButton={TextButton(enabled=!busy && !source.isNullOrBlank(),onClick={
-        val key=source.orEmpty();val phrase=passphrase;busy=true
-        scope.launch {
-            error=runCatching {NetworkSettings.importKey(endpoint,key,phrase)}.getOrElse {"Could not import SSH key"}
-            busy=false
-            if(error==null) {source=null;passphrase="";imported=true;pasted=false}
-        }
-    }) {Text(if(busy) "Importing…" else "Import")}},dismissButton={TextButton(enabled=!busy,onClick={dismiss()}) {Text("Cancel")}})
-
 }
 
 @Composable internal fun NetworkPrompts() {

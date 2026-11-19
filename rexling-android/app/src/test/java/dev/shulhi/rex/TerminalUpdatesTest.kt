@@ -125,22 +125,7 @@ class TerminalUpdatesTest {
         val steady=decoder.decode(packet(2,2,2)).screen!!
         assertEquals(2,steady.cursorStyle);assertFalse(steady.cursorBlinking)
         assertEquals(first.lines,steady.lines)
-        assertTrue(runCatching {TerminalUpdates().decode(packet(1,3,16))}.isFailure)
-    }
-    @Test fun aHiddenCursorIsNotDrawnButKeepsItsCaretRow() {
-        fun packet(revision: Long,flags: Int,x: Int,y: Int): ByteArray {
-            val old=rxt5(revision,3,2,0,mapOf(0 to "a",1 to "> input"))
-            val at=16+1+4+8+8+24+1
-            val bytes=(old.take(at)+listOf(flags.toByte())+old.drop(at)).toByteArray().also {it[3]='6'.code.toByte()}
-            java.nio.ByteBuffer.wrap(bytes,21,8).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(x).putInt(y)
-            return bytes
-        }
-        val hidden=TerminalUpdates().decode(packet(1,8,1,1)).screen!!
-        assertNull(hidden.cursorX);assertNull(hidden.cursorY);assertEquals(1,hidden.caretY)
-        val shown=TerminalUpdates().decode(packet(1,0,1,1)).screen!!
-        assertEquals(1,shown.cursorX);assertEquals(1,shown.cursorY);assertEquals(1,shown.caretY)
-        val none=TerminalUpdates().decode(packet(1,8,-1,-1)).screen!!
-        assertNull(none.cursorY);assertNull(none.caretY)
+        assertTrue(runCatching {TerminalUpdates().decode(packet(1,3,8))}.isFailure)
     }
     /** RXT5 packet: [shift], changed rows (each one cell of [text]) and overscan rows. */
     private fun rxt5(revision: Long,flag: Int,rows: Int,shift: Int,changed: Map<Int,String>,above: List<String> = emptyList(),below: List<String> = emptyList(),reuseOverscan: Boolean=false): ByteArray {
@@ -181,4 +166,23 @@ class TerminalUpdatesTest {
         assertTrue(runCatching {decoder.decode(rxt5(4,2,4,1,emptyMap()))}.isFailure)
         assertTrue(runCatching {decoder.decode(rxt5(4,3,4,1,mapOf(0 to "a",1 to "b",2 to "c",3 to "d")))}.isFailure)
     }
+    @Test fun rxt7KeepsHiddenInputAnchorSeparateFromTheVisibleCursor() {
+        fun packet(rev: Long,anchorX: Int,anchorY: Int): ByteArray {
+            val out=ByteArrayOutputStream()
+            fun n(value:Long,size:Int) {repeat(size) {out.write((value ushr (8*it)).toInt() and 255)}}
+            out.write("RXT7".toByteArray());n(rev,8);n(2,4);out.write("{}".toByteArray());n(3,1)
+            n(2,2);n(2,2);n(-1,4);n(-1,4);n(-1,4);n(0,4)
+            n(2,8);n(0,8);n(2,8);n(7,1);n(1,1);n(0,2);n(2,2)
+            repeat(2) {row->n(row.toLong(),2);n(0,2);n(0,2)}
+            n(0,1);n(0,1);n(8,4);n(16,4);n(0,2);n(0,2)
+            n(anchorX.toLong(),4);n(anchorY.toLong(),4);n(0,2)
+            return out.toByteArray()
+        }
+        val decoder=TerminalUpdates();val frame=decoder.decode(packet(1,1,1)).screen!!
+        assertNull(frame.cursorX);assertNull(frame.cursorY);assertEquals(1,frame.cursorAnchorX);assertEquals(1,frame.cursorAnchorY)
+        val absent=decoder.decode(packet(2,-1,-1)).screen!!;assertNull(absent.cursorAnchorX);assertNull(absent.cursorAnchorY)
+        assertTrue(runCatching {decoder.decode(packet(3,2,1))}.isFailure)
+        assertEquals(2L,decoder.revision)
+    }
+
 }

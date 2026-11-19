@@ -120,12 +120,14 @@ class TerminalView(context: Context) : View(context) {
     var screen: TerminalScreen?
         get()=currentScreen
         set(value) {setScreen(value,false)}
+    internal var allowHiddenCursorInput: Boolean=false
+        set(value) {if(field!=value) {field=value;reportCursorViewport()}}
+    private fun inputCursorRow(frame: TerminalScreen)=frame.cursorY ?: frame.cursorAnchorY.takeIf {allowHiddenCursorInput && frame.cursorAnchorX!=null}
     internal var onKeyboardFocus: (TerminalKeyboardFocus?)->Unit={}
     internal val keyboardFocus: TerminalKeyboardFocus? get() {
         val frame=screen ?: return null
         if(frame.scroll.below>0) return null
-        // Follow the caret, not just a visible cursor: pi and openclaw hide the cursor they park there.
-        val row=frame.caretY?.takeIf {it in 0 until frame.rows} ?: return null
+        val row=inputCursorRow(frame)?.takeIf {it in 0 until frame.rows} ?: return null
         val lastText=frame.lines.indexOfLast {cells->cells.any {cell->cell.width>0 && cell.text.any {it!='\u0000' && !it.isWhitespace()}}}
         val bottom=insetTop+(row+1)*cellHeight+insetBottom
         return TerminalKeyboardFocus(insetTop+row*cellHeight,bottom,
@@ -145,6 +147,10 @@ class TerminalView(context: Context) : View(context) {
         if(onDisplayFrame) invalidate() else postInvalidateOnAnimation()
     }
     var keyboardSuggestions: Boolean = true
+    /** The on-screen keyboard's Enter submits (CR) instead of inserting a newline (LF). */
+    var imeEnterSubmits: Boolean = false
+    /** Any tap on a controlled pane opens the keyboard; set while the key toolbar hides without it. */
+    var tapOpensKeyboard: Boolean = false
         set(value) {
             if(field!=value) {field=value;if(controlled && hasFocus()) (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).restartInput(this)}
         }
@@ -674,22 +680,19 @@ class TerminalView(context: Context) : View(context) {
             // half of what is being looked at. The terminal menu still opens it.
             if(pictureAt(x,y)) {pointer("click",1,x,y);return}
             onMouseClick(col,row,cellWidth.roundToInt().coerceAtLeast(1),cellHeight.roundToInt().coerceAtLeast(1))
-            if(frame.isSemanticInputRow(row)) keyboard()
-            else if(frame.cursorX!=null && row==frame.cursorY) onCursorTap()
-            // The key toolbar (and its keyboard button) only shows once the keyboard is open, so a tap
-            // must open it in mouse-reporting apps too (pi's fullscreen mode). A no-op when it is open.
-            keyboard()
+            // Mouse-reporting programs (pi's fullscreen mode) still get the click; with no toolbar
+            // keyboard button showing, the tap must also be able to open the keyboard.
+            if(frame.isSemanticInputRow(row) || tapOpensKeyboard) keyboard()
+            else if(row==inputCursorRow(frame)) onCursorTap()
         } else if(controlled && frame?.hasSemanticPrompt==true) {
             val row=floor((y-insetTop)/cellHeight).toInt()
             if(pressedMouseTarget!=mouseTarget() || pressedMouseGrid!=(frame.columns to frame.rows) ||
                 x<insetHorizontal || x>=width-insetHorizontal || y<insetTop || y>=height-insetBottom) {tapLog {"tap: semantic branch bailed"};return}
             tapLog {"tap: semantic branch -> keyboard"}
             super.performClick()
-            if(frame.isSemanticInputRow(row)) keyboard()
-            else if(frame.scroll.below==0L && frame.cursorX!=null && row==frame.cursorY) onCursorTap()
-            // Shells with prompt marks (OSC 133) opened the keyboard only from the prompt line; with the key
-            // toolbar shown only alongside the keyboard, a tap anywhere must be able to open it.
-            keyboard()
+            // Prompt-marked shells otherwise open it only from the prompt line.
+            if(frame.isSemanticInputRow(row) || tapOpensKeyboard) keyboard()
+            else if(frame.scroll.below==0L && row==inputCursorRow(frame)) onCursorTap()
         } else {tapLog {"tap: plain -> ${if(controlled) "keyboard" else "take control"}"};performClick()}
     }
     internal fun copySemanticSelection(output: Boolean): Boolean {
@@ -854,7 +857,7 @@ class TerminalView(context: Context) : View(context) {
                     getComposingSpanStart(editor),getComposingSpanEnd(editor))
             }
             private fun submit(text: String,cursor: Int) {
-                val keys=TerminalInput.imeKeys(imeLine.edit(text,cursor))
+                val keys=TerminalInput.imeKeys(imeLine.edit(text,cursor),imeEnterSubmits)
                 if(keys.isNotEmpty()) {
                     deliveringImeInput=true
                     try {onInput(keys)} finally {deliveringImeInput=false}

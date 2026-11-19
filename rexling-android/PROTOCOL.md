@@ -97,6 +97,14 @@ Floating rectangles use translucent fill and dashed borders, retaining their rea
 geometry and stacking order. A compact Hide/Show floating control removes/restores
 only those overlays, allowing normal touch selection on a covered tiled pane.
 Toggling visibility does not select, open, close or move anything on the server.
+When navigating away from a floating terminal, the native actor retains at most
+one inactive floating data stream and Ghostty replica. It continues consuming
+output without publishing frames, taking input ownership, or replaying clipboard
+writes. Reopening that pane reuses its stream rather than downloading another
+full scrollback snapshot. Session changes, connection recovery, terminal closure,
+and stream errors invalidate the retained terminal. Another floating terminal
+evicts the previous one.
+
 Floating panes remain in the full list with a Floating caption. Visibility
 survives geometry refreshes within the same window and can be inspected while
 terminal actions are disabled.
@@ -143,6 +151,31 @@ sequentially and never automatically replayed. A failed sequence refreshes the
 actual layout and reports a potentially partial move, rather than retrying an
 operation that might undo an already-applied swap. This is server layout order,
 not a separate phone-only preference.
+
+## Screen-first snapshot restoration
+
+The selected terminal becomes renderable at Ghostty's READY checkpoint rather
+than waiting for FINISH and all retained history. The native shim uses a
+persistent callback-backed `ghostty_snapshot_decoder_ready` / `next` decoder.
+The framed reader supplies complete decoder operations: the live prefix through
+READY, then each history page (including its optional Kitty placements and
+required look-ahead header), image payload, and FINISH. Ghostty remains responsible
+for payload validation, CRCs, screen routing and history attachment. Temporary
+network starvation is never presented as EOF to its synchronous reader. The
+callback retains no borrowed network slice between calls, and the decoder is
+freed before its terminal on cancellation or errors.
+
+The actor can publish and scroll the initial screen while later history arrives.
+History import preserves an already-scrolled viewport; loaded Kitty pixels update
+the same terminal. Snapshot records are never interpreted as PTY output or
+clipboard writes. Only bytes after validated FINISH enter the live VT path.
+One-shot previews still wait through FINISH so their images are complete.
+
+This changes time to first display, not the Rex wire protocol or transfer volume.
+Rex API revision 16 sends the complete snapshot followed by live output on one
+ordered stream, with no advertised history range or screen-only request. History
+continues downloading in the background, and new output follows it. The existing
+128 MiB snapshot limit remains; the staging buffer is released at FINISH.
 
 ## Read-only carousel previews and session details
 
@@ -1202,3 +1235,97 @@ The toolbar uses the existing Ctrl shortcut, Shift press/release, joystick and
 keyboard components. Changing the layout does not recreate the terminal input
 view or change its keyboard configuration. The expanded function/navigation keys
 remain available independently of the chosen primary buttons.
+
+## Custom Ctrl shortcut buttons
+
+Preferences → Ctrl shortcut buttons shows an editable list with key chips.
+Add shortcut opens a key recorder; Ctrl is assumed for the first key. The
+recorder accepts typed or hardware keys, exposes special-key buttons, and
+supports optional names, Undo, Clear and Cancel. The keyboard Done action records
+Enter. Rows can be edited, removed or held and dragged to reorder. The list
+position survives editing. Changes stay in a draft until the list is saved.
+The stored format remains a validated, labeled sequence per line, optionally
+`Name = keys`, preserving previously saved entries. The first key receives Ctrl automatically;
+following `+`-separated keys are plain unless explicitly prefixed Ctrl or Shift.
+`L` sends form feed (Ctrl+L), `Space + L` sends NUL followed by lowercase l,
+and `Space + Ctrl + L` sends NUL followed by form feed. Space has an explicit
+NUL mapping rather than relying on the generic text-modifier helper. Named
+navigation/function keys use the existing terminal key encoder.
+
+Existing installations retain their ten default shortcuts. Larger custom lists
+use twelve-cell pages; the popup's hold/double-tap and trigger-close behavior is
+preserved. Changing the input target or configuration closes the popup. The
+connection validates the sequence and captured pane target before sending the
+whole sequence in one input command, clearing latched modifiers first. Invalid
+editor contents do not replace saved settings.
+
+## Structured Neovim shortcut editor
+
+Neovim shortcut preferences show shortcut rows and one-level group rows instead
+of a raw document. Add group creates a named draft group; groups open their own
+lists and can be renamed, reordered as a unit, or ungrouped while keeping their
+shortcuts. Individual shortcuts can be moved with a group picker. Empty draft
+groups remain visible and must be filled or removed before saving, rather than
+silently disappearing. The backend's existing JSON format and execution policy
+are unchanged; migration preserves root menu order and each group's key order.
+
+Add/edit shortcut offers Command and Key sequence modes. Commands have a colon
+prefix and retain automatic Enter execution. Key sequences record literal keys,
+case and special-key tokens, with Ctrl/Alt applied only when requested. Space,
+Tab, Esc, Enter and arrows have explicit recorder buttons; Undo removes a whole
+token. Names and group assignment have separate controls. Complex commands must
+round-trip exactly through the legacy serializer; ambiguous unnamed assignments
+require a name instead of silently changing their keys.
+
+The main editor keeps the enable switch, while Menu appearance contains layout,
+opening effect and haptics settings. The editor uses fixed drawer chrome, keeps
+its list position through edits, and saves the shortcut/group draft atomically.
+
+The editor displays a collapsible Ungrouped section, expanded by default,
+separately from named Groups. This is a visual editor section, not a persisted
+group or submenu. The group picker uses Ungrouped for direct menu entries.
+Reordering within either root section preserves the other section's original
+menu positions; merely opening, collapsing or saving the editor does not
+canonicalize the wheel/grid's root order.
+
+
+## Reusable SSH key library
+
+Preferences → SSH keys manages named private keys and their SHA-256 public-key
+fingerprints. The key library stores one AES-GCM Android-Keystore-encrypted
+secret per identity, with separate endpoint-to-key references. Import validates
+and normalizes the key in the native SSH library, accepting a transient
+passphrase when needed. Duplicate public-key fingerprints select the existing
+entry. Names, fingerprints and references are the only key data exposed to UI
+state; private keys and passphrases are never saved in UI restoration state.
+
+Existing endpoint-specific encrypted keys migrate before network configuration.
+Migration retains their original ciphertext, deduplicates identities when public
+metadata can be read, and preserves a separate entry and binding when metadata
+inspection fails. Saving the new library and removing the legacy map is atomic.
+Forgetting a server clears its binding while retaining its reusable key. Deleting
+a library key requires confirmation and clears only that key's bindings.
+
+SSH server setup offers saved keys, No key for keyless/Tailscale SSH, and adding a
+new key by paste or file import. Names and optional passphrases use separate
+fields. Imported files are bounded at 128 KiB. A new key is added to the library
+and selected in the server draft; the endpoint binding changes only on Save &
+connect. A failed server save restores the previous route and key selection.
+Adding an unassigned key or renaming one does not reconfigure/retry connections.
+
+
+## Hidden TUI cursor input anchors (RXT7)
+
+Ghostty's cursor viewport position and its visible cursor glyph are separate.
+The native frame retains `cursor_position` whenever the position is in the
+viewport, even with DEC mode 25 disabled; the existing `cursor` remains absent
+when the glyph must not be painted. RXT7 appends this optional coordinate pair to
+each full/delta frame after image placements. Android still accepts RXT1–RXT6,
+and validates RXT7 positions against the frame grid before committing a packet.
+
+For a live foreground Claude/Codex pane, TerminalView can use this hidden
+position as its input-row tap target and IME pan anchor. Mouse reporting still
+forwards the original click, with the existing target/ownership/grid guards.
+The input anchor never draws or blinks a cursor. Hidden positions are not used
+for other programs, including Neovim, or while viewing scrollback; existing
+viewport stabilization and keyboard/PTY sizing behavior are unchanged.

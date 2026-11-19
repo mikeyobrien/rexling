@@ -125,17 +125,12 @@ fn encode_row(out: &mut Vec<u8>, row: &[Cell]) {
             text(out, uri);
         }
 }
-/// Cursor flag bit: x/y is a hidden cursor's caret position, not a cursor to draw.
-const CURSOR_HIDDEN: u8 = 8;
 fn encode_frame(out: &mut Vec<u8>, frame: &Frame, previous: Option<&Frame>) {
     out.push(if previous.is_some() { 2 } else { 3 });
     u16le(out, frame.columns);
     u16le(out, frame.rows);
-    // A hidden cursor still carries its caret position, flagged with CURSOR_HIDDEN.
-    let hidden = frame.cursor.is_none() && frame.caret.is_some();
     let (x, y) = frame
         .cursor
-        .or(frame.caret)
         .map_or((-1, -1), |(x, y)| (i32::from(x), i32::from(y)));
     out.extend(x.to_le_bytes());
     out.extend(y.to_le_bytes());
@@ -149,7 +144,7 @@ fn encode_frame(out: &mut Vec<u8>, frame: &Frame, previous: Option<&Frame>) {
         u64le(out, v);
     }
     out.push(frame.input_flags);
-    out.push(frame.cursor_style | ((frame.cursor_blinking as u8) << 2) | if hidden { CURSOR_HIDDEN } else { 0 });
+    out.push(frame.cursor_style | ((frame.cursor_blinking as u8) << 2));
     let next = rows(frame);
     let old = previous.map(|old| rows(old));
     // RXT5 shift: content moved by `shift` rows (positive: up). The decoder
@@ -215,6 +210,9 @@ fn encode_frame(out: &mut Vec<u8>, frame: &Frame, previous: Option<&Frame>) {
             u32le(out, v);
         }
     }
+    // RXT7: input/IME anchoring is independent of whether the cursor is drawn.
+    let (x,y)=frame.cursor_position.map_or((-1,-1),|(x,y)|(i32::from(x),i32::from(y)));
+    out.extend(x.to_le_bytes());out.extend(y.to_le_bytes());
 }
 pub fn encode(state: &mut Shared, after: u64) -> Vec<u8> {
     encode_reusing(state, after, Vec::new())
@@ -228,7 +226,7 @@ pub fn encode_reusing(state: &mut Shared, after: u64, mut out: Vec<u8>) -> Vec<u
     }
     let base = &state.wire;
     let reset = after != base.revision || base.key != state.key;
-    out.extend_from_slice(b"RXT6");
+    out.extend_from_slice(b"RXT7");
     u64le(&mut out, state.revision);
     let previews: Vec<_> = std::mem::take(&mut state.pending_previews)
         .into_iter()
@@ -305,7 +303,7 @@ mod wire_tests {
             columns: 100,
             rows: 50,
             cursor: Some((0, 0)),
-            caret: Some((0, 0)),
+            cursor_position: Some((0,0)),
             cursor_style: 1,
             cursor_blinking: false,
             foreground: [255; 3],
@@ -344,19 +342,12 @@ mod wire_tests {
         assert_eq!(bytes[46],4);
         assert_eq!(u16::from_le_bytes(bytes[49..51].try_into().unwrap()),0);
     }
-    #[test]
-    fn a_hidden_cursor_sends_its_caret_with_the_hidden_flag() {
-        let mut hidden=frame();hidden.cursor=None;hidden.caret=Some((3,2));
-        let mut bytes=Vec::new();encode_frame(&mut bytes,&hidden,None);
-        assert_eq!(i32::from_le_bytes(bytes[5..9].try_into().unwrap()),3);
-        assert_eq!(i32::from_le_bytes(bytes[9..13].try_into().unwrap()),2);
-        assert_eq!(bytes[46]&CURSOR_HIDDEN,CURSOR_HIDDEN);
-        let mut gone=frame();gone.cursor=None;gone.caret=None;
-        let mut bytes=Vec::new();encode_frame(&mut bytes,&gone,None);
+    #[test] fn hidden_cursor_position_is_carried_without_drawing_a_cursor_or_resending_rows() {
+        let old=frame();let mut next=frame();next.cursor=None;next.cursor_position=Some((4,6));
+        let mut bytes=Vec::new();encode_frame(&mut bytes,&next,Some(&old));
         assert_eq!(i32::from_le_bytes(bytes[5..9].try_into().unwrap()),-1);
-        assert_eq!(bytes[46]&CURSOR_HIDDEN,0);
-        let mut bytes=Vec::new();encode_frame(&mut bytes,&frame(),None);
-        assert_eq!(bytes[46]&CURSOR_HIDDEN,0,"a visible cursor is not flagged");
+        assert_eq!(u16::from_le_bytes(bytes[49..51].try_into().unwrap()),0);
+        assert_eq!(&bytes[bytes.len()-8..],&[4,0,0,0,6,0,0,0]);
     }
     #[test]
     fn packets_diff_against_delivered_frame_and_reset_on_unknown_base() {
@@ -423,7 +414,7 @@ mod wire_tests {
             activity: Arc::default(),
         };
         let full = encode(&mut state, 0);
-        assert_eq!(&full[..4], b"RXT6");
+        assert_eq!(&full[..4], b"RXT7");
         assert_eq!(
             full.windows(b"https://example.com/one".len())
                 .filter(|w| *w == b"https://example.com/one")
