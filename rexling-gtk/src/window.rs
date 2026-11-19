@@ -20,7 +20,7 @@ use std::{
 };
 
 /// Connections kept for panes that are not on screen, so going back to a tab is instant.
-const SPARE_PANES: usize = 8;
+const SPARE_PANES: usize = 3;
 
 struct Pane {
     client: Rc<Client>,
@@ -219,22 +219,30 @@ fn branch_mark() -> gtk::DrawingArea {
     area
 }
 
-/// A tab's panes in miniature: each program's icon where its pane is, and nothing else.
+/// A tab's panes in miniature: each program's icon where its pane is, all one size. When the
+/// real layout would shrink them to specks, the icons sit in an even grid in pane order instead.
 fn minimap(panes: &[PaneRow], scale: i32) -> gtk::Fixed {
     const WIDTH: f64 = 50.0;
     const HEIGHT: f64 = 40.0;
+    const LEGIBLE: f64 = 14.0;
     let map = gtk::Fixed::builder().width_request(WIDTH as i32).height_request(HEIGHT as i32).valign(gtk::Align::Center).build();
-    for pane in panes.iter().filter(|pane| pane.rect[2] > 0.0 && pane.rect[3] > 0.0) {
-        let (x, y, w, h) = (pane.rect[0] * WIDTH, pane.rect[1] * HEIGHT, pane.rect[2] * WIDTH, pane.rect[3] * HEIGHT);
-        // The icon keeps its shape, as large as its pane's share allows, centred in it.
-        let high = (h - 2.0).min((w - 2.0) * 48.0 / 61.0).floor();
-        if high < 6.0 {
-            continue;
-        }
-        let wide = (high * 61.0 / 48.0).round();
+    let shown: Vec<&PaneRow> = panes.iter().filter(|pane| pane.rect[2] > 0.0 && pane.rect[3] > 0.0).collect();
+    // The height an icon can have in a share of the miniature, keeping its shape.
+    let fit = |w: f64, h: f64| (h * HEIGHT - 2.0).min((w * WIDTH - 2.0) * 48.0 / 61.0).floor();
+    let mut cells: Vec<[f64; 4]> = shown.iter().map(|pane| pane.rect).collect();
+    let mut high = cells.iter().map(|rect| fit(rect[2], rect[3])).fold(f64::MAX, f64::min);
+    if high < LEGIBLE && !cells.is_empty() {
+        let columns = (cells.len() as f64).sqrt().ceil().min(3.0);
+        let rows = (cells.len() as f64 / columns).ceil();
+        cells = (0..cells.len()).map(|at| [(at as f64 % columns) / columns, (at as f64 / columns).floor() / rows, 1.0 / columns, 1.0 / rows]).collect();
+        high = fit(1.0 / columns, 1.0 / rows);
+    }
+    let high = high.clamp(6.0, 30.0);
+    let wide = (high * 61.0 / 48.0).round();
+    for (pane, rect) in shown.iter().zip(cells) {
         if let Some(texture) = tiles::texture(&pane.tile, high as i32 * scale) {
             let icon = gtk::Picture::builder().paintable(&texture).can_shrink(true).width_request(wide as i32).height_request(high as i32).build();
-            map.put(&icon, (x + (w - wide) / 2.0).round(), (y + (h - high) / 2.0).round());
+            map.put(&icon, ((rect[0] + rect[2] / 2.0) * WIDTH - wide / 2.0).round(), ((rect[1] + rect[3] / 2.0) * HEIGHT - high / 2.0).round());
         }
     }
     map
@@ -1692,7 +1700,7 @@ impl Ui {
             self.recovering.set(false);
             self.connect(&server);
             if !self.told_restart.replace(true) {
-                let toast = adw::Toast::builder().title("The server restarted and the open session has ended").timeout(5).build();
+                let toast = adw::Toast::builder().title("The server restarted without the session that was open").timeout(5).build();
                 self.toasts.add_toast(toast.clone());
                 self.restart_toast.replace(Some(toast));
             }
@@ -1862,7 +1870,7 @@ impl Ui {
             .map(|tab| {
                 let current = tab.id == current_tab;
                 let focused = if current { self.focused.borrow().clone() } else { config.panes.get(&tab.id).cloned().unwrap_or_default() };
-                let lead = tab.blocks.iter().find(|b| b.id == focused).or(tab.blocks.first());
+                let lead = if tab.blocks.len() > 1 { tab.blocks.first() } else { tab.blocks.iter().find(|b| b.id == focused).or(tab.blocks.first()) };
                 let title = tab.name().map(str::to_owned).or_else(|| lead.map(|b| state.title(b))).unwrap_or_else(|| tab.label.clone());
                 let directory = lead.and_then(|b| state.directories.get(&b.id)).map(|d| short_path(d)).unwrap_or_default();
                 let detail = match tab.blocks.len() {
@@ -1921,6 +1929,9 @@ impl Ui {
             self.show_waiting();
             return;
         }
+        // Emptying the list sends it back to the top, so where it was is put back afterwards.
+        let view = self.tab_list.parent().and_downcast::<gtk::Viewport>();
+        let was_at = view.as_ref().and_then(|view| view.vadjustment()).map_or(0.0, |adjustment| adjustment.value());
         self.tab_list.remove_all();
         let mut selected = None;
         if let Some(at) = next.iter().position(|row| row.current) {
@@ -1964,7 +1975,7 @@ impl Ui {
                 content.append(&adw::Spinner::builder().valign(gtk::Align::Center).build());
             }
             // Its place in the list tells apart tabs that are otherwise alike.
-            if next.len() > 1 && row.number <= 9 {
+            if next.len() > 1 {
                 content.append(&gtk::Label::builder().label(row.number.to_string()).css_classes(["dim-label", "caption", "numeric"]).valign(gtk::Align::Center).build());
             }
             // The open tab lists its panes; any other tab lists the ones that want the user.
@@ -2004,9 +2015,6 @@ impl Ui {
                     card.append(&gtk::Label::builder().label(pane.message.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).css_classes(["caption", "dim-label", "rexling-pane-said"]).build());
                 }
             }
-            if next.len() > 1 && row.number > 9 {
-                content.append(&gtk::Label::builder().label(" ").css_classes(["caption", "numeric"]).build());
-            }
             let list_row = gtk::ListBoxRow::builder().child(&card).name(row.id.as_str()).tooltip_text(row.detail.as_str()).build();
             // Tabs can be dragged onto one another to reorder them.
             let source = gtk::DragSource::builder().actions(gdk::DragAction::MOVE).content(&gdk::ContentProvider::for_value(&row.id.to_value())).build();
@@ -2022,20 +2030,18 @@ impl Ui {
             }
         }
         // The open tab stays in view when the list is longer than the sidebar.
-        if let Some(row) = selected.filter(|_| self.scrolled_to.replace(current_tab.clone()) != current_tab) {
-            let list = self.tab_list.clone();
-            // After the rebuilt rows have been given their places.
-            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(90), move || {
-                let (Some(bounds), Some(view)) = (row.compute_bounds(&list), list.ancestor(gtk::ScrolledWindow::static_type()).and_downcast::<gtk::ScrolledWindow>()) else { return };
-                let adjustment = view.vadjustment();
-                let (top, bottom) = (bounds.y() as f64, (bounds.y() + bounds.height()) as f64);
-                if top < adjustment.value() {
-                    adjustment.set_value(top);
-                } else if bottom > adjustment.value() + adjustment.page_size() {
-                    adjustment.set_value(bottom - adjustment.page_size());
-                }
-            });
-        }
+        let moved = selected.is_some() && self.scrolled_to.replace(current_tab.clone()) != current_tab;
+        let list = self.tab_list.clone();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(60), move || {
+            let Some(view) = view else { return };
+            if let Some(adjustment) = view.vadjustment() {
+                adjustment.set_value(was_at.min(adjustment.upper() - adjustment.page_size()).max(0.0));
+            }
+            // The open tab stays in view when the list is longer than the sidebar.
+            if let Some(row) = list.selected_row().filter(|_| moved) {
+                view.scroll_to(&row, None);
+            }
+        });
         self.shown_tabs.replace(next);
         self.show_waiting();
     }

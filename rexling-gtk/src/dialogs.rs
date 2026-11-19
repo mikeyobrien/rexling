@@ -374,20 +374,51 @@ pub fn preferences(ui: &Rc<Ui>) {
     if !current.is_empty() && !families.contains(&current) {
         families.insert(0, current.clone());
     }
-    let names: Vec<&str> = families.iter().map(String::as_str).collect();
-    let font = adw::ComboRow::builder().title("Font").model(&gtk::StringList::new(&names)).enable_search(true).build();
-    font.set_expression(Some(gtk::PropertyExpression::new(gtk::StringObject::static_type(), gtk::Expression::NONE, "string")));
-    font.set_selected(families.iter().position(|name| *name == current).unwrap_or(0) as u32);
-    let (weak, list) = (Rc::downgrade(ui), families.clone());
-    font.connect_selected_notify(move |row| {
-        let (Some(ui), Some(family)) = (weak.upgrade(), list.get(row.selected() as usize)) else { return };
-        // Keep a monospace fallback behind whatever was picked.
-        let chosen = format!("{family}, monospace");
-        if ui.config.borrow().font != chosen {
-            ui.config.borrow_mut().font = chosen;
+    // The row opens a page of its own: every family, written in itself, with room for long names.
+    let font = adw::ActionRow::builder().title("Font").activatable(true).build();
+    let chosen = gtk::Label::builder().label(current.as_str()).ellipsize(pango::EllipsizeMode::End).css_classes(["dim-label"]).build();
+    font.add_suffix(&chosen);
+    font.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+    let (weak, list, parent, shown) = (Rc::downgrade(ui), families.clone(), dialog.clone(), chosen.clone());
+    font.connect_activated(move |_| {
+        let Some(ui) = weak.upgrade() else { return };
+        let current = ui.config.borrow().font.split(',').next().unwrap_or("").trim().to_owned();
+        let rows = gtk::ListBox::builder().selection_mode(gtk::SelectionMode::None).css_classes(["boxed-list"]).build();
+        for family in &list {
+            let line = gtk::Box::builder().spacing(12).margin_top(10).margin_bottom(10).margin_start(12).margin_end(12).build();
+            let name = gtk::Label::builder().label(family.as_str()).xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::End).build();
+            let attributes = pango::AttrList::new();
+            attributes.insert(pango::AttrString::new_family(family));
+            name.set_attributes(Some(&attributes));
+            line.append(&name);
+            if *family == current {
+                line.append(&gtk::Image::from_icon_name("object-select-symbolic"));
+            }
+            rows.append(&gtk::ListBoxRow::builder().child(&line).name(family.as_str()).build());
+        }
+        let search = gtk::SearchEntry::builder().placeholder_text("Search fonts").search_delay(0).build();
+        let field = search.clone();
+        rows.set_filter_func(move |row| row.widget_name().to_lowercase().contains(&field.text().trim().to_lowercase()));
+        let filtered = rows.clone();
+        search.connect_search_changed(move |_| filtered.invalidate_filter());
+        let (weak, parent_for_pick, shown) = (Rc::downgrade(&ui), parent.clone(), shown.clone());
+        rows.connect_row_activated(move |_, row| {
+            let Some(ui) = weak.upgrade() else { return };
+            let family = row.widget_name().to_string();
+            // Keep a monospace fallback behind whatever was picked.
+            ui.config.borrow_mut().font = format!("{family}, monospace");
             ui.config.borrow().save();
             ui.apply_font();
-        }
+            shown.set_label(&family);
+            parent_for_pick.pop_subpage();
+        });
+        let body = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(12).margin_top(12).margin_bottom(18).margin_start(18).margin_end(18).build();
+        body.append(&search);
+        body.append(&rows);
+        let view = adw::ToolbarView::builder().content(&gtk::ScrolledWindow::builder().child(&adw::Clamp::builder().child(&body).maximum_size(520).build()).hscrollbar_policy(gtk::PolicyType::Never).build()).build();
+        view.add_top_bar(&adw::HeaderBar::new());
+        parent.push_subpage(&adw::NavigationPage::builder().title("Font").child(&view).build());
+        search.grab_focus();
     });
     look.add(&font);
     let size = adw::SpinRow::with_range(6.0, 32.0, 1.0);
@@ -604,7 +635,7 @@ pub fn ask(ui: &Rc<Ui>, heading: &str, current: &str, verb: &str, apply: impl Fn
     let entry = gtk::Entry::builder().text(current).activates_default(true).build();
     // Left empty, the server picks a name.
     if current.is_empty() {
-        entry.set_placeholder_text(Some("Optional"));
+        entry.set_placeholder_text(Some("Name (optional)"));
     }
     let dialog = adw::AlertDialog::builder().heading(heading).extra_child(&entry).close_response("cancel").default_response("rename").build();
     dialog.add_responses(&[("cancel", "Cancel"), ("rename", verb)]);
@@ -625,7 +656,8 @@ pub fn ask(ui: &Rc<Ui>, heading: &str, current: &str, verb: &str, apply: impl Fn
 /// Lists the remote ports reachable on this computer and adds new ones.
 pub fn forwards(ui: &Rc<Ui>) {
     const ASK: &str = "Port on the server";
-    let page = adw::PreferencesPage::new();
+    // A plain column, so the sheet can be exactly as tall as what is in it.
+    let page = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(18).width_request(440).margin_top(6).margin_bottom(18).margin_start(18).margin_end(18).build();
     let add = adw::PreferencesGroup::builder().description("Reach a port on the server from this computer").build();
     let port = adw::EntryRow::builder().title(ASK).input_purpose(gtk::InputPurpose::Digits).show_apply_button(true).build();
     let weak = Rc::downgrade(ui);
@@ -657,9 +689,9 @@ pub fn forwards(ui: &Rc<Ui>) {
         }
     });
     add.add(&port);
-    page.add(&add);
+    page.append(&add);
     let active = adw::PreferencesGroup::new();
-    page.add(&active);
+    page.append(&active);
 
     let rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::default();
     let refresh: Rc<dyn Fn()> = {
@@ -702,9 +734,9 @@ pub fn forwards(ui: &Rc<Ui>) {
     refresh();
     ui.forwards_changed.replace(Some(refresh));
 
-    let view = adw::ToolbarView::builder().content(&page).build();
+    let view = adw::ToolbarView::builder().content(&gtk::ScrolledWindow::builder().child(&page).hscrollbar_policy(gtk::PolicyType::Never).propagate_natural_height(true).propagate_natural_width(true).max_content_height(460).build()).build();
     view.add_top_bar(&adw::HeaderBar::new());
-    let dialog = adw::Dialog::builder().title("Port Forwards").child(&view).content_width(460).content_height(340).build();
+    let dialog = adw::Dialog::builder().title("Port Forwards").child(&view).follows_content_size(true).build();
     let weak = Rc::downgrade(ui);
     dialog.connect_closed(move |_| {
         if let Some(ui) = weak.upgrade() {
