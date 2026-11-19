@@ -35,7 +35,7 @@ android {
         applicationId = "dev.mobrienv.rexling"
         minSdk = 28
         targetSdk = 37
-        versionCode = 157
+        versionCode = 158
         versionName = dateVersion
         buildConfigField("String","GIT_REVISION","\"$revision\"")
         buildConfigField("boolean","LOCAL_CHANGES",modified.toString())
