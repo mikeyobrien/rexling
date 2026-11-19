@@ -409,6 +409,10 @@ impl Inner {
         let context = self.context();
         let description = self.description(0);
         let layout = pango::Layout::new(&context);
+        // A terminal shows the characters a program wrote: "->" stays two characters, not an arrow.
+        let plain = pango::AttrList::new();
+        plain.insert(pango::AttrFontFeatures::new("liga 0, calt 0, dlig 0"));
+        layout.set_attributes(Some(&plain));
         layout.set_font_description(Some(&description));
         layout.set_text("MMMMMMMMMM");
         let width = (layout.pixel_size().0 as f64 / 10.0).max(1.0);
@@ -481,9 +485,14 @@ impl Inner {
         }
         let metrics = self.metrics.get();
         let layout = pango::Layout::new(&context);
+        // A terminal shows the characters a program wrote: "->" stays two characters, not an arrow.
+        let plain = pango::AttrList::new();
+        plain.insert(pango::AttrFontFeatures::new("liga 0, calt 0, dlig 0"));
+        layout.set_attributes(Some(&plain));
         let needed = (PADDING * 2.0 + frame.columns as f64 * metrics.width, PADDING * 2.0 + frame.rows as f64 * metrics.height);
         // Shrink a pane this client does not size so it shows whole, but never past readable: beyond that it is cut off.
-        let fit = if self.controlled.get() { 1.0 } else { (width / needed.0).min(height / needed.1).clamp(0.75, 1.0) };
+        // While the server is away the last screen stays exactly as it was.
+        let fit = if self.controlled.get() || self.offline.get() { 1.0 } else { (width / needed.0).min(height / needed.1).clamp(0.75, 1.0) };
         self.view_scale.set(fit);
         let _ = cr.save();
         cr.scale(fit, fit);

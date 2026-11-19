@@ -250,28 +250,31 @@ fn miniature(rects: &[[f64; 4]]) -> Vec<[f64; 4]> {
     }).collect()
 }
 
+/// The size of the picture at the start of every tab row, so every title starts in the same place.
+const MINIATURE: (f64, f64) = (46.0, 38.0);
+
 /// A tab's panes in miniature: each program's icon where its pane is, all one size, in a box the
 /// same size on every row. Panes that float over others are set out in a grid, since their icons would cover the rest.
 fn minimap(panes: &[PaneRow], scale: i32) -> gtk::Fixed {
-    const WIDTH: f64 = 50.0;
-    const HEIGHT: f64 = 40.0;
-    let map = gtk::Fixed::builder().width_request(WIDTH as i32).height_request(HEIGHT as i32).valign(gtk::Align::Center).build();
+    let (width, height) = MINIATURE;
+    let map = gtk::Fixed::builder().width_request(width as i32).height_request(height as i32).valign(gtk::Align::Center).build();
     let shown: Vec<&PaneRow> = panes.iter().filter(|pane| pane.rect[2] > 0.0 && pane.rect[3] > 0.0).collect();
     let rects: Vec<[f64; 4]> = shown.iter().map(|pane| pane.rect).collect();
-    let cells = if shown.iter().any(|pane| pane.floating) {
-        let columns = (rects.len() as f64).sqrt().ceil().min(3.0);
-        let rows = (rects.len() as f64 / columns).ceil();
-        (0..rects.len()).map(|at| [(at as f64 % columns) / columns, (at as f64 / columns).floor() / rows, 1.0 / columns, 1.0 / rows]).collect()
-    } else {
-        miniature(&rects)
-    };
+    // Tiled panes make the layout; a floating pane keeps its own place over them.
+    let tiled: Vec<[f64; 4]> = shown.iter().filter(|pane| !pane.floating).map(|pane| pane.rect).collect();
+    let mut placed = miniature(&tiled).into_iter();
+    let cells: Vec<[f64; 4]> = shown.iter().zip(&rects).map(|(pane, rect)| if pane.floating { *rect } else { placed.next().unwrap_or(*rect) }).collect();
     // The height an icon can have in the smallest share, keeping its shape.
-    let high = cells.iter().map(|rect| (rect[3] * HEIGHT - 1.0).min((rect[2] * WIDTH - 1.0) * 48.0 / 61.0).floor()).fold(f64::MAX, f64::min).clamp(6.0, 26.0);
+    let high = cells.iter().zip(&shown).filter(|(_, pane)| !pane.floating).map(|(rect, _)| (rect[3] * height - 1.0).min((rect[2] * width - 1.0) * 48.0 / 61.0).floor()).fold(f64::MAX, f64::min).clamp(6.0, 26.0);
     let wide = (high * 61.0 / 48.0).round();
     for (pane, rect) in shown.iter().zip(cells) {
         if let Some(texture) = tiles::texture(&pane.tile, high as i32 * scale) {
             let icon = gtk::Picture::builder().paintable(&texture).can_shrink(true).width_request(wide as i32).height_request(high as i32).build();
-            map.put(&icon, ((rect[0] + rect[2] / 2.0) * WIDTH - wide / 2.0).round(), ((rect[1] + rect[3] / 2.0) * HEIGHT - high / 2.0).round());
+            // A floating pane's icon sits a little down and right, so the one under it still shows.
+            let lift = if pane.floating { 4.0 } else { 0.0 };
+            let x = ((rect[0] + rect[2] / 2.0) * width - wide / 2.0 + lift).round().clamp(0.0, width - wide);
+            let y = ((rect[1] + rect[3] / 2.0) * height - high / 2.0 + lift).round().clamp(0.0, height - high);
+            map.put(&icon, x, y);
         }
     }
     map
@@ -2128,11 +2131,16 @@ impl Ui {
                 }
             }
             let content = gtk::Box::builder().spacing(10).build();
-            let picture = gtk::Image::builder().pixel_size(30).valign(gtk::Align::Center).build();
+            let picture = gtk::Image::builder().pixel_size(30).valign(gtk::Align::Center).width_request(MINIATURE.0 as i32).build();
             if let Some(texture) = tiles::texture(&row.tile, 30 * scale) {
                 picture.set_paintable(Some(&texture));
             }
-            if row.panes.is_empty() {
+            // A tab showing one pane, because it has one or is zoomed onto one, has that pane's icon alone.
+            let alone: Vec<&PaneRow> = row.panes.iter().filter(|pane| pane.rect[2] > 0.0 && pane.rect[3] > 0.0).collect();
+            if let [pane] = alone[..] && let Some(texture) = tiles::texture(&pane.tile, 30 * scale) {
+                picture.set_paintable(Some(&texture));
+            }
+            if alone.len() < 2 {
                 content.append(&picture);
             } else {
                 content.append(&minimap(&row.panes, scale));
@@ -2521,7 +2529,11 @@ impl Ui {
                     pane.bar.set_visible(floating);
                     if floating { pane.shell.add_css_class("rexling-float") } else { pane.shell.remove_css_class("rexling-float") }
                     let block = tab.and_then(|tab| tab.blocks.iter().find(|b| b.id == placement.id));
-                    pane.caption.set_label(&block.map(|b| state.title(b)).unwrap_or_default());
+                    let caption = block.map(|b| {
+                        let (program, title) = (identity(&state, b), state.title(b));
+                        if title.eq_ignore_ascii_case(&program) { program } else { format!("{program} · {title}") }
+                    });
+                    pane.caption.set_label(&caption.unwrap_or_default());
                 }
             }
         }

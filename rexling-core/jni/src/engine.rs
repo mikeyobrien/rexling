@@ -575,7 +575,11 @@ impl Actor {
         self.summary_task = None;
         self.activity_task=None;
         self.program_task = None;
-        if let Ok(mut link) = self.program_link.lock() { link.take(); }
+        // Said goodbye to properly, so the server does not list it as a lost connection.
+        let kept = self.program_link.lock().ok().and_then(|mut link| link.take());
+        if let Some((_, mut link)) = kept {
+            let _ = tokio::time::timeout(Duration::from_secs(2), link.close()).await;
+        }
         self.preview_updates.clear();
         self.session_details = json!({});self.activity=json!([]);self.activity_dirty=true;self.activity_panes=json!([]);self.activity_titles.clear();self.attention_count=0;self.activity_pending.clear();self.activity_inflight.clear();self.activity_full=false;self.activity_error.clear();self.activity_partial=false;
         self.programs = json!({});
