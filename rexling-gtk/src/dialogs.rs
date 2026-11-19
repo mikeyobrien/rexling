@@ -409,20 +409,6 @@ pub fn about(ui: &Rc<Ui>) {
         .present(Some(&ui.window));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::score;
-
-    #[test]
-    fn palette_ranks_direct_matches_first() {
-        assert_eq!(score("Split Right", "split"), Some(0));
-        assert!(score("Split Right", "sr").is_some());
-        assert!(score("New Tab", "split").is_none());
-        assert!(score("Toggle Sidebar", "rght").is_none());
-        assert!(score("Split Right", "right") < score("Split Right", "srt"), "a whole word outranks scattered letters");
-    }
-}
-
 /// Asks before ending a session: every program in it stops.
 pub fn confirm_close_session(ui: &Rc<Ui>, label: &str, close: impl Fn(&Rc<Ui>) + 'static) {
     let dialog = adw::AlertDialog::builder().heading(format!("Close “{label}”?")).body("Every program in this session will be stopped.").close_response("cancel").default_response("cancel").build();
@@ -529,4 +515,18 @@ pub fn forwards(ui: &Rc<Ui>) {
     });
     dialog.present(Some(&ui.window));
     port.grab_focus();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::score;
+
+    #[test]
+    fn palette_ranks_direct_matches_first() {
+        assert_eq!(score("Split Right", "split"), Some(0));
+        assert!(score("Split Right", "sr").is_some());
+        assert!(score("New Tab", "split").is_none());
+        assert!(score("Toggle Sidebar", "rght").is_none());
+        assert!(score("Split Right", "right") < score("Split Right", "srt"), "a whole word outranks scattered letters");
+    }
 }

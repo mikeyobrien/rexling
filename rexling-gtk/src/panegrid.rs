@@ -7,6 +7,9 @@ use std::{
     rc::Rc,
 };
 
+/// Called with a border and the share of its area the first side should get.
+type ResizeHandler = Rc<dyn Fn(&Split, f64)>;
+
 /// How close to a border, in pixels, the pointer grabs it.
 const GRAB: f64 = 5.0;
 
@@ -18,7 +21,7 @@ mod imp {
         pub panes: RefCell<Vec<(gtk::Widget, [f64; 4])>>,
         pub splits: RefCell<Vec<Split>>,
         pub dragging: RefCell<Option<Split>>,
-        pub on_resize: RefCell<Option<Rc<dyn Fn(&Split, f64)>>>,
+        pub on_resize: RefCell<Option<ResizeHandler>>,
         pub last_ratio: Cell<f64>,
     }
 
