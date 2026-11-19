@@ -82,14 +82,6 @@ class AppearanceSheetTest {
             }
         } finally {main {store.clear()};app.deleteSharedPreferences(name)}
     }
-    @Test fun quickMenuSwitchUsesCurrentAppearanceAndSupportsBothDirections() {
-        val dark=mutableStateOf(false)
-        ui.setContent {MaterialTheme {QuickThemeMenuItem(dark.value) {dark.value=it}}}
-        ui.onNodeWithText("Toggle Dark theme").performClick()
-        ui.runOnIdle {assertTrue(dark.value)}
-        ui.onNodeWithText("Toggle Light theme").performClick()
-        ui.runOnIdle {assertFalse(dark.value)}
-    }
     @Test fun preferencesChooseTheCtrlShortcutGesture() {
         val gesture=mutableStateOf(ControlShortcutGesture.HOLD)
         val joystick=mutableStateOf(true)

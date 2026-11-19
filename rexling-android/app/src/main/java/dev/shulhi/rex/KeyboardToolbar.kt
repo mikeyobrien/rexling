@@ -2,9 +2,9 @@ package dev.shulhi.rex
 
 /** Stable preference IDs; terminal input behavior remains owned by KeyboardBar. */
 internal enum class ToolbarKey(val id: String,val label: String,val icon: ChromeIcon?=null,val terminal: String="",val controlLetter: String="") {
-    ESCAPE("escape","Escape",ChromeIcon.ESCAPE,"esc"),
-    CONTROL("control","Ctrl",ChromeIcon.CONTROL),ALT("alt","Alt",ChromeIcon.ALT),SHIFT("shift","Shift",ChromeIcon.SHIFT),
-    TAB("tab","Tab",ChromeIcon.TAB,"tab"),ARROWS("arrows","Arrows / joystick",ChromeIcon.ARROWS),ENTER("enter","Enter",ChromeIcon.ENTER,"enter"),
+    ESCAPE("escape","Escape",terminal="esc"),
+    CONTROL("control","Ctrl"),ALT("alt","Alt"),SHIFT("shift","Shift",ChromeIcon.SHIFT),
+    TAB("tab","Tab",terminal="tab"),ARROWS("arrows","Arrows / joystick",ChromeIcon.ARROWS),ENTER("enter","Enter",ChromeIcon.ENTER,"enter"),
     PASTE("paste","Paste",ChromeIcon.PASTE),BACKSPACE("backspace","Backspace",ChromeIcon.BACKSPACE,"backspace"),
     DELETE("delete","Delete",null,"delete"),HOME("home","Home",null,"home"),END("end","End",null,"end"),
     PAGE_UP("pageup","Page Up",null,"pageup"),PAGE_DOWN("pagedown","Page Down",null,"pagedown"),INSERT("insert","Insert",null,"insert"),
@@ -13,7 +13,13 @@ internal enum class ToolbarKey(val id: String,val label: String,val icon: Chrome
     CTRL_L("ctrl-l","Ctrl+L",controlLetter="l"),CTRL_R("ctrl-r","Ctrl+R",controlLetter="r"),
     F1("f1","F1",terminal="f1"),F2("f2","F2",terminal="f2"),F3("f3","F3",terminal="f3"),F4("f4","F4",terminal="f4"),
     F5("f5","F5",terminal="f5"),F6("f6","F6",terminal="f6"),F7("f7","F7",terminal="f7"),F8("f8","F8",terminal="f8"),
-    F9("f9","F9",terminal="f9"),F10("f10","F10",terminal="f10"),F11("f11","F11",terminal="f11"),F12("f12","F12",terminal="f12")
+    F9("f9","F9",terminal="f9"),F10("f10","F10",terminal="f10"),F11("f11","F11",terminal="f11"),F12("f12","F12",terminal="f12");
+
+    /** What the keycap says: the short lowercase word a keyboard prints. */
+    val cap: String get()=when(this) {
+        ESCAPE->"esc";PAGE_UP->"pgup";PAGE_DOWN->"pgdn";INSERT->"ins";DELETE->"del"
+        else->if(controlLetter.isNotBlank()) "^${controlLetter.uppercase()}" else label.lowercase()
+    }
 }
 
 internal object ToolbarLayout {

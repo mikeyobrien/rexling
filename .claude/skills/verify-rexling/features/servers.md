@@ -6,12 +6,12 @@ The user adds a Rex server by URL (HTTPS or `ssh://user@host`), and Rexling conn
 
 - Add server dialog: an icon picker (`Choose server icon`), `Name`, `Server URL`, a `Connection network` choice (`Phone network / VPN` or built-in Tailscale), and `Save & connect`.
 - The header status line: `disconnected · No server` before any server, then `<session> · <server>`.
-- `Terminal menu` → `Servers · N connected` manages saved servers.
+- `Terminal menu` → `Servers` manages saved servers. The row adds `N connected` when there are several servers or none is connected.
 - SSH and built-in Tailscale servers: `docs/connections.md`. Neither is driven by this skill yet.
 
 ## How to get to it (user POV)
 
-On a fresh install: the welcome card's `Add server` button. Afterwards: `Terminal menu` → `Servers · N connected`.
+On a fresh install: the welcome card's `Add server` button. Afterwards: `Terminal menu` → `Servers`.
 
 ## Driving it with ui.py
 

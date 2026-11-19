@@ -82,7 +82,7 @@ import dev.chrisbanes.haze.HazeState
                 Text("Your toolbar · ${draft.size}/7",style=SettingsType.section,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(Modifier.fillMaxWidth().height(48.dp).onGloballyPositioned {toolbarBounds=it.boundsInRoot()}
                     .semantics {contentDescription="Your toolbar drop area"},horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.CenterVertically) {
-                    if(draft.isEmpty()) Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(11.dp))
+                    if(draft.isEmpty()) Box(Modifier.weight(1f).fillMaxHeight().clip(KeyCapShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f)),contentAlignment=Alignment.Center) {
                         Text("Drag buttons here",style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -90,8 +90,8 @@ import dev.chrisbanes.haze.HazeState
                         DisposableEffect(item) {onDispose {slotBounds.remove(item)}}
                         val highlighted=if(dragged!=null) overToolbar && targetIndex()==index else index==selected
                         Box(Modifier.weight(1f).height(40.dp).onGloballyPositioned {slotBounds[item]=it.boundsInRoot()}
-                            .clip(RoundedCornerShape(11.dp)).background(if(highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)
-                            .border(if(highlighted) 1.dp else 0.dp,if(highlighted) MaterialTheme.colorScheme.primary.copy(alpha=.5f) else androidx.compose.ui.graphics.Color.Transparent,RoundedCornerShape(11.dp))
+                            .clip(KeyCapShape).background(if(highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)
+                            .border(if(highlighted) 1.dp else 0.dp,if(highlighted) MaterialTheme.colorScheme.primary.copy(alpha=.5f) else androidx.compose.ui.graphics.Color.Transparent,KeyCapShape)
                             .graphicsLayer {alpha=if(dragged==item) .3f else 1f}
                             .clickable(role=Role.Tab) {selected=index}
                             .semantics {
@@ -141,7 +141,7 @@ import dev.chrisbanes.haze.HazeState
                 Box(Modifier.size(44.dp).graphicsLayer {
                     translationX=pointer.x-origin.x-with(density) {22.dp.toPx()}
                     translationY=pointer.y-origin.y-with(density) {22.dp.toPx()}
-                    shadowElevation=with(density) {6.dp.toPx()};shape=RoundedCornerShape(11.dp);clip=true
+                    shadowElevation=with(density) {6.dp.toPx()};shape=KeyCapShape;clip=true
                 }.zIndex(10f).background(MaterialTheme.colorScheme.primaryContainer),contentAlignment=Alignment.Center) {ToolbarButtonFace(item)}
             }
         }
@@ -150,5 +150,5 @@ import dev.chrisbanes.haze.HazeState
 
 @Composable private fun ToolbarButtonFace(item: ToolbarKey) {
     if(item.icon!=null) ChromeSymbol(item.icon,Modifier.size(20.dp))
-    else Text(item.label,style=SettingsType.detail,maxLines=2,overflow=TextOverflow.Ellipsis)
+    else KeyCapLabel(item.cap,LocalContentColor.current)
 }

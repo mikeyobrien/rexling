@@ -274,7 +274,7 @@ class MainActivity : ComponentActivity() {
         moveTab=client::moveTab,movePane=client::movePane,
         floatPane={tab,id->client.editTerminal(displayedSession,tab,id,"float_pane")},
         dockPane={tab,id,anchor,split->client.editTerminal(displayedSession,tab,id,"dock_pane",anchor=anchor,split=split)},
-        openSession={picker="";model.selectSessionTarget(it)},newSession={picker="";newSession=true},refreshSessions=model::refreshSessionDetails,
+        openSession={picker="";model.selectSessionTarget(it)},newSession={picker="";newSession=true},refreshSessions={client.refresh();model.refreshSessionDetails()},
         closeSession=model::closeSession,renameSession=model::renameSession)
     LaunchedEffect(palette) { model.updateTerminalTheme(palette) }
     LaunchedEffect(state.phase) {if(state.connected || state.phase=="preview") showServer=false}
@@ -335,33 +335,7 @@ class MainActivity : ComponentActivity() {
                         // Everything that needs you and is not on screen: other sessions, and this session's other tabs.
                         attentionCount=activityBadges.elsewhere+activityBadges.tabs.filterKeys {it!=window?.id}.values.sum(),quiet=wide,
                         working=state.workingBlocks.any {it!=chosen} || sessionActivity.any {it.key!=currentSessionKey && it.value.working})
-                    Box {
-                        ChromeButton(ChromeIcon.MORE,"Terminal menu"){menu=true}
-                        DropdownMenu(menu,{menu=false},modifier=Modifier.drawerFrost(workspaceHaze,RoundedCornerShape(16.dp),workspaceBackdrop),shape=RoundedCornerShape(16.dp),containerColor=Color.Transparent,tonalElevation=0.dp) {
-                            Text(model.activeServer.label,Modifier.padding(horizontal=16.dp,vertical=6.dp),fontSize=12.sp,fontWeight=FontWeight.SemiBold)
-                            Text(if(state.connected) if(controlled) "In control" else "Viewing terminal" else state.phase,
-                                Modifier.padding(horizontal=16.dp,vertical=8.dp),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                            client.screenDimensions?.let {Text("${it.first} × ${it.second}",Modifier.padding(horizontal=16.dp),fontFamily=MonoUi,fontSize=11.sp)}
-                            HorizontalDivider(Modifier.padding(vertical=6.dp))
-                            TerminalMenuItem("New session",ChromeIcon.ADD,enabled=ready,onClick={menu=false;newSession=true})
-                            OwnershipMenuItem(controlled,ready&&client.hasScreen) {menu=false;if(controlled) client.releaseControl() else client.takeControl()}
-                            QuickThemeMenuItem(palette.dark) {dark->menu=false;model.changeAppearance(if(dark) Appearance.DARK else Appearance.LIGHT)}
-                            // The toolbar's keyboard button only shows with the keyboard; mouse-mode apps take taps.
-                            TerminalMenuItem("Show keyboard",ChromeIcon.KEYBOARD,enabled=ready && client.hasScreen && !keyboardVisible,onClick={
-                                menu=false;client.requestKeyboard()})
-                            TerminalMenuItem("Preferences",ChromeIcon.SETTINGS,onClick={menu=false;preferencesOpen=true})
-                            TerminalMenuItem("Copy viewport",ChromeIcon.COPY,enabled=client.hasScreen,onClick={
-                                menu=false;client.terminal.value?.let {screen->(getClipboard(model.getApplication()) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rex terminal",screen.plainText()))}
-                            })
-                            TerminalMenuItem("Paste",ChromeIcon.PASTE,enabled=controlled,onClick={
-                                menu=false;pasteClipboard()
-                            })
-                            TerminalMenuItem("Attach image",ChromeIcon.IMAGE,enabled=controlled && model.images.state==null,onClick={menu=false;chooseImage()})
-                            TerminalMenuItem("Port forwarding",ChromeIcon.SERVER,onClick={menu=false;forwards=true})
-                            TerminalMenuItem("Servers · ${model.connectedCount} connected",ChromeIcon.SERVER,onClick={menu=false;servers=true})
-                            TerminalMenuItem("Refresh sessions",ChromeIcon.REFRESH,enabled=state.connected,onClick={menu=false;client.refresh()})
-                        }
-                    }
+                    ChromeButton(ChromeIcon.MORE,"Terminal menu"){menu=true}
                     }
                 })
             }
@@ -447,6 +421,27 @@ class MainActivity : ComponentActivity() {
         }
     }
     // Sessions, tabs and panes share one card: the title opens it on the tabs, "sessions" one level up.
+    if(menu) ActionCard(ActionCardModel(
+        overline=listOf(switcher.session,switcher.server).filter {it.isNotBlank()}.joinToString(" · "),
+        title=(state.programs[chosen] ?: ProgramIdentity.Loading).paneTitle(blocks.firstOrNull {it.id==chosen}?.label.orEmpty(),state.titles[chosen].orEmpty()),
+        status=paused ?: if(!state.connected) state.phase.replaceFirstChar(Char::uppercaseChar) else if(controlled) "In control" else "Viewing only",
+        controlled=controlled && paused==null,size=client.screenDimensions?.let {"${it.first} × ${it.second}"}.orEmpty(),
+        ownership=if(client.hasScreen) CardAction(if(controlled) "Release" else "Take over",ChromeIcon.POINTER,
+            run=if(ready) ({if(controlled) client.releaseControl() else client.takeControl()}) else null) else null,
+        tiles=listOf(
+            CardAction("Paste",ChromeIcon.PASTE,run=if(controlled) ({pasteClipboard()}) else null),
+            CardAction("Image",ChromeIcon.IMAGE,run=if(controlled && model.images.state==null) ::chooseImage else null),
+            CardAction("Copy",ChromeIcon.COPY,run=if(client.hasScreen) ({
+                client.terminal.value?.let {screen->(getClipboard(model.getApplication()) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rex terminal",screen.plainText()))}
+            }) else null),
+            // The key row's keyboard button only shows with the keyboard; mouse-mode apps take taps.
+            CardAction("Keyboard",ChromeIcon.KEYBOARD,run=if(ready && client.hasScreen) client::requestKeyboard else null)),
+        places=listOf(
+            CardAction("New session",ChromeIcon.ADD,run=if(ready) ({newSession=true}) else null),
+            CardAction("Port forwarding",ChromeIcon.SERVER,run={forwards=true}),
+            // One server that is connected needs no count.
+            CardAction("Servers",ChromeIcon.SERVER,detail=if(model.servers.size>1 || model.connectedCount==0) "${model.connectedCount} connected" else "",run={servers=true})),
+        preferences={preferencesOpen=true}),onClose={menu=false},hazeState=workspaceHaze)
     if(picker.isNotEmpty()) Switcher(switcher,onClose={picker=""},sessionsFirst=picker=="sessions",hazeState=workspaceHaze)
     if(model.activityVisible) ActivitySheet(model.activitySources,model::refreshActivity,model::openActivity,onClose={model.showActivity(false)},onSeen=model::markActivitySeen,onMarkAll=model::markAllActivitySeen,hazeState=workspaceHaze)
     NetworkPrompts()

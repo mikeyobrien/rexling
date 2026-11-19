@@ -4,7 +4,7 @@ One file per user-facing feature. Each has: what it is, how a user reaches it, h
 
 | Feature | File | Proof |
 |---|---|---|
-| Servers and connection | [servers.md](servers.md) | Header shows `<session> · <server>`; `Servers · N connected` |
+| Servers and connection | [servers.md](servers.md) | Header shows `<session> · <server>`; `Terminal menu` → `Servers` |
 | Sessions | [sessions.md](sessions.md) | Header names the chosen session; `rex ls` shows new ones |
 | Terminal control and input | [terminal-input.md](terminal-input.md) | `smoke.sh` PASS (the server ran what the app typed) |
 | Tabs and panes | [tabs-panes.md](tabs-panes.md) | Pane count and active tab match `rex block ls -s <scratch>` |

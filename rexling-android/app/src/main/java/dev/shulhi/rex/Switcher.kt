@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.chrisbanes.haze.HazeState
+import kotlinx.coroutines.delay
 
 private enum class SwitcherLevel {TABS,SESSIONS}
 
@@ -120,6 +122,7 @@ private val GroupShape=RoundedCornerShape(22.dp)
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun SessionsLevel(model: SwitcherModel,rows: RowsState,manager: RowManager,onTabs: ()->Unit) {
     val scheme=MaterialTheme.colorScheme
     var search by rememberSaveable {mutableStateOf("")}
@@ -138,7 +141,10 @@ private val GroupShape=RoundedCornerShape(22.dp)
         fontSize=14.sp,color=scheme.onSurfaceVariant)
     // Searching filters inside a list of fixed height, so the field never moves under the finger.
     val height=sheetBodyMax(432.dp,chrome=if(searchable) 360.dp else 300.dp)
-    if(groups.isNotEmpty() || searchable) ManagedList(rows,list,true,manager::actions,manager::siblings,manager::move,manager.keys(),
+    // Pulling the list down asks every server again; nothing reports back, so the spinner just says it was heard.
+    var refreshing by remember {mutableStateOf(false)}
+    LaunchedEffect(refreshing) {if(refreshing) {model.refreshSessions();delay(700);refreshing=false}}
+    if(groups.isNotEmpty() || searchable) PullToRefreshBox(refreshing,{refreshing=true}) {ManagedList(rows,list,true,manager::actions,manager::siblings,manager::move,manager.keys(),
         Modifier.fillMaxWidth().then(if(searchable) Modifier.height(minOf(height,56.dp*model.sessions.size)) else Modifier.heightIn(max=height)).clip(GroupShape)
             .background(scheme.surfaceVariant.copy(alpha=.55f)).semantics {contentDescription="Sessions list"}) {
         groups.forEachIndexed {index,group->
@@ -153,7 +159,7 @@ private val GroupShape=RoundedCornerShape(22.dp)
                 // The session you are in is already open: show its tabs.
                 onOpen={entry->if(entry.key==model.currentSession && model.tabs.isNotEmpty()) onTabs() else model.openSession(entry.key)})
         }
-    }
+    }    }
     if(model.sessionError.isNotBlank()) Text(model.sessionError,Modifier.padding(horizontal=10.dp),fontSize=12.sp,color=scheme.error,maxLines=2,overflow=TextOverflow.Ellipsis)
     PillButton(ChromeIcon.ADD,"New session",model.ready,Modifier.fillMaxWidth(),onClick=model.newSession)
 }

@@ -75,7 +75,7 @@ private val controlShortcutRows=(controlShortcuts.size+CONTROL_SHORTCUT_COLUMNS-
         anchor=it.boundsInWindow()
         screenAnchor=Rect(it.localToScreen(Offset.Zero),androidx.compose.ui.geometry.Size(it.size.width.toFloat(),it.size.height.toFloat()))
     }
-        .clip(RoundedCornerShape(11.dp)).background(if(selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+        .clip(KeyCapShape).background(if(selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
         .semantics {
             contentDescription="Control";this.selected=active;role=Role.Button
             if(enabled) {onClick {if(visible) closeFromTrigger() else toggle();true};onLongClick(label="Control shortcuts") {visible=true;true}} else disabled()
@@ -118,8 +118,7 @@ private val controlShortcutRows=(controlShortcuts.size+CONTROL_SHORTCUT_COLUMNS-
                 } finally {timer?.cancel();pressed=false;if(!released || opened) dismiss()}
             }
         },contentAlignment=Alignment.Center) {
-        ChromeSymbol(ChromeIcon.CONTROL,Modifier.size(20.dp),
-            (if(selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha=if(readable) 1f else .38f))
+        KeyCapLabel(ToolbarKey.CONTROL.cap,(if(selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha=if(readable) 1f else .38f),selected)
         if(visible) Popup(popupPositionProvider=provider,onDismissRequest={dismiss()},
             properties=PopupProperties(focusable=false,dismissOnClickOutside=true)) {
             val popupView=LocalView.current.rootView

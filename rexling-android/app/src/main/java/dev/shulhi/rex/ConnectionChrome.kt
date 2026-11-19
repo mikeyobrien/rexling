@@ -42,9 +42,6 @@ internal fun connectionStatus(phase: String,network: Boolean?): String? = when {
     else->"Reconnecting…"
 }
 
-@Composable internal fun OwnershipMenuItem(controlled: Boolean,enabled: Boolean,onClick: ()->Unit) {
-    TerminalMenuItem(if(controlled) "Release control" else "Take control",ChromeIcon.POINTER,enabled=enabled,onClick=onClick)
-}
 @Composable internal fun ReadyNotice(epoch: Long,controlled: Boolean,ready: Boolean,modifier: Modifier=Modifier,hazeState: dev.chrisbanes.haze.HazeState?=null,onVisibleChange: (Boolean)->Unit={}) {
     var shown by remember {mutableLongStateOf(0)};var visible by remember {mutableStateOf(false)}
     LaunchedEffect(epoch,controlled,ready) {

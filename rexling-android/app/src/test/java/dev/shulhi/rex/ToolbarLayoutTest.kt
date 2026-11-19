@@ -45,4 +45,11 @@ class ToolbarLayoutTest {
         assertFalse(ToolbarKey.ENTER in ToolbarLayout.defaults)
         assertEquals(ToolbarLayout.defaults+ToolbarKey.ENTER,ToolbarLayout.assign(ToolbarLayout.defaults,6,ToolbarKey.ENTER))
     }
+    @Test fun keycapsCarryTheShortWordsAKeyboardPrints() {
+        assertEquals(listOf("esc","ctrl","alt","shift","tab"),listOf(ToolbarKey.ESCAPE,ToolbarKey.CONTROL,ToolbarKey.ALT,ToolbarKey.SHIFT,ToolbarKey.TAB).map {it.cap})
+        assertEquals(listOf("pgup","pgdn","ins","del","home","f5","^C"),listOf(ToolbarKey.PAGE_UP,ToolbarKey.PAGE_DOWN,ToolbarKey.INSERT,ToolbarKey.DELETE,ToolbarKey.HOME,ToolbarKey.F5,ToolbarKey.CTRL_C).map {it.cap})
+    }
+    @Test fun theArrowsTakeTwoKeysOfWidth() {
+        assertEquals(7f,ToolbarLayout.defaults.sumOf {keyUnits(it).toDouble()}.toFloat())
+    }
 }

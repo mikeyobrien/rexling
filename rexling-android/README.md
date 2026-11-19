@@ -75,7 +75,7 @@ Configure each Rex server under **⋮ → Preferences → Portside**. Rexling ca
 [Portside](https://github.com/shulhi/portside) 0.3+'s Tailscale-authenticated upload
 API directly; see its repository for server installation and hosting setup.
 Keyboard image paste,
-menu Paste and Attach image upload PNG/JPEG/GIF/WebP files and insert the returned
+the action card's Paste and Image tiles upload PNG/JPEG/GIF/WebP files and insert the returned
 server path without submitting the prompt. Uploaded images remain ready for the
 original pane if you navigate away. The separate Portside app can be opened from
 settings but is not required for transfers. See the root README for setup and

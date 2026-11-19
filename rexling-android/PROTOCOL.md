@@ -496,7 +496,7 @@ and offers native Copy / Select all actions. Selection handles can extend or
 reverse the range. Copy uses plain cell text and includes wide glyphs once,
 retaining spaces and physical line breaks. Selection never acquires ownership,
 sends terminal input or opens the keyboard. Dismissal/pane departure releases
-the frozen screen. The existing Copy viewport menu remains available.
+the frozen screen. The action card's Copy tile still copies the whole viewport.
 
 The pane picker now uses the current program tile, live title (or executable
 name), directory caption, and selected-pane marker. The supplied Superlogical
