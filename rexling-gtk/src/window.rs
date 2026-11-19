@@ -2016,8 +2016,9 @@ impl Ui {
                         let shell = ["bash", "zsh", "fish", "sh", "dash", "ksh", "nu", "tcsh", "csh", "pwsh"].contains(&state.program(b).as_str()) && state.directories.contains_key(&b.id);
                         PaneRow {
                             id: b.id.clone(),
-                            title: program,
-                            place: if shell { state.title(b) } else { String::new() },
+                            title: program.clone(),
+                            // A shell is described by its folder; anything else by the title it gave itself, when that says more than its name.
+                            place: Some(state.title(b)).filter(|title| shell || (!title.eq_ignore_ascii_case(&program) && !title.eq_ignore_ascii_case(&state.program(b)))).unwrap_or_default(),
                             waiting: report.map(|a| a.label().to_owned()).unwrap_or_default(),
                             message: report.map(|a| a.message.clone()).unwrap_or_default(),
                             tile,
