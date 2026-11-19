@@ -490,6 +490,12 @@ impl Ui {
             ui.dock_pane(&focused);
         });
         add("attach-image", |ui| ui.choose_image());
+        add("new-window", |ui| {
+            // Another window shows another session, or another server, beside this one.
+            if let Some(app) = ui.window.application().and_downcast::<adw::Application>() {
+                build(&app);
+            }
+        });
         add("next-tab", |ui| ui.step_tab(1));
         add("previous-tab", |ui| ui.step_tab(-1));
         add("next-pane", |ui| ui.step_pane(1));

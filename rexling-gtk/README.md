@@ -55,7 +55,10 @@ python3 rexling-core/scripts/build_native.py --host-test   # once: builds libgho
 ./rexling-gtk/install.sh
 ```
 
-That puts `rexling`, a launcher entry and an icon under `~/.local`.
+On Arch Linux and Omarchy, build a package instead:
+`cd rexling-gtk/packaging/arch && makepkg -si`.
+
+`install.sh` puts `rexling`, a launcher entry and an icon under `~/.local`.
 `./rexling-gtk/install.sh --uninstall` removes them. To run from the source tree instead:
 `cargo run --release --manifest-path rexling-gtk/Cargo.toml`.
 
@@ -78,6 +81,7 @@ session switcher. Sessions on `ssh://` servers appear once that server is opened
 | --- | --- |
 | `Ctrl+Shift+P` | Command palette |
 | `Ctrl+Shift+T` | New tab |
+| `Ctrl+Shift+N` | New window, for a second session or server side by side |
 | `Ctrl+Shift+D` / `Ctrl+Shift+E` | Split right / below |
 | `Ctrl+Shift+W` | Close pane |
 | `Ctrl+Shift+Enter` | Zoom the focused pane |
@@ -115,9 +119,8 @@ Set `REXLING_TIMING=1` to print repaint times while you work.
 
 ## Not built yet
 
-- Tabs from two sessions on screen at the same time; one session is open at a time
 - A built-in Tailscale client. Use the system's Tailscale; the Android app carries its own
-- Packages for distributions. `install.sh` builds from source
+- Packages beyond Arch. Other distributions build from source with `install.sh`
 
 ## How it is put together
 

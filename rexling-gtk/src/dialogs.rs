@@ -11,6 +11,7 @@ use std::{cell::RefCell, rc::Rc};
 /// Every window action: its name in the palette, its `win.` action and its keys.
 pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("New Tab", "new-tab", "<Ctrl><Shift>t"),
+    ("New Window", "new-window", "<Ctrl><Shift>n"),
     ("Split Right", "split-right", "<Ctrl><Shift>d"),
     ("Split Below", "split-below", "<Ctrl><Shift>e"),
     ("Close Pane", "close-pane", "<Ctrl><Shift>w"),

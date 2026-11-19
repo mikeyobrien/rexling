@@ -1,0 +1,45 @@
+# Maintainer: Rexling contributors
+#
+# Builds Rexling for Linux from the repository. To package another fork or branch:
+#   REXLING_REPO=https://github.com/you/rexling.git REXLING_BRANCH=my-branch makepkg -si
+pkgname=rexling-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Native client for Superlogical Rex terminal sessions"
+arch=('x86_64' 'aarch64')
+url="https://github.com/shulhi/rexling"
+license=('Apache-2.0')
+depends=('gtk4' 'libadwaita' 'librsvg' 'hicolor-icon-theme')
+makedepends=('git' 'rust' 'python' 'curl')
+optdepends=('openssh: ssh:// servers' 'tailscale: servers on a tailnet')
+provides=('rexling')
+conflicts=('rexling')
+source=("rexling::git+${REXLING_REPO:-https://github.com/shulhi/rexling.git}#branch=${REXLING_BRANCH:-main}")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd rexling
+  printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  cd rexling
+  # Downloads the pinned Zig and Ghostty sources and builds libghostty-vt for this machine.
+  python3 rexling-core/scripts/build_native.py --host-test
+  cargo build --release --locked --manifest-path rexling-gtk/Cargo.toml
+}
+
+check() {
+  cd rexling
+  cargo test --release --locked --manifest-path rexling-gtk/Cargo.toml
+}
+
+package() {
+  cd rexling
+  install -Dm755 rexling-gtk/target/release/rexling "$pkgdir/usr/bin/rexling"
+  install -Dm644 rexling-gtk/data/dev.shulhi.Rexling.desktop "$pkgdir/usr/share/applications/dev.shulhi.Rexling.desktop"
+  install -Dm644 rexling-gtk/data/dev.shulhi.Rexling.metainfo.xml "$pkgdir/usr/share/metainfo/dev.shulhi.Rexling.metainfo.xml"
+  install -Dm644 rexling-android/app/src/main/res/drawable-nodpi/rexlink_dinosaur.png "$pkgdir/usr/share/icons/hicolor/1024x1024/apps/dev.shulhi.Rexling.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 THIRD_PARTY_NOTICES.md "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.md"
+}
