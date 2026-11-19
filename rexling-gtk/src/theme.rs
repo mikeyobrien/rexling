@@ -77,14 +77,18 @@ pub fn contrast(a: Rgb, b: Rgb) -> f64 {
 }
 
 /// Text that would all but vanish into what is behind it, such as white on a cream theme, is
-/// moved far enough towards black or white to be read. Text set to exactly the colour behind it
+/// moved far enough towards black or white to be read; text that is merely faint is firmed up a little. Text set to exactly the colour behind it
 /// was hidden on purpose and stays hidden.
 pub fn legible(text: Rgb, behind: Rgb) -> Rgb {
-    if text == behind || contrast(text, behind) >= 1.6 {
+    let was = contrast(text, behind);
+    if text == behind || was >= 3.0 {
         return text;
     }
+    // The fainter it was, the fainter it stays, so the order of a theme's shades survives:
+    // on a pale theme bright white is still lighter than white, and white lighter than a mid grey.
+    let wanted = 1.9 + (was - 1.0) * 0.55;
     let towards = if luminance(behind) > 0.4 { [0, 0, 0] } else { [255, 255, 255] };
-    (1..=10).map(|step| mix(text, towards, step as f64 / 10.0)).find(|c| contrast(*c, behind) >= 2.6).unwrap_or(towards)
+    (1..=40).map(|step| mix(text, towards, step as f64 / 40.0)).find(|c| contrast(*c, behind) >= wanted).unwrap_or(towards)
 }
 
 /// An accent that stays visible on the background: some themes use a cursor colour close to it.
@@ -163,6 +167,9 @@ panegrid {{ background: {line}; }}
 .rexling-pane-dot.done {{ background: {green}; }}
 .rexling-dot.done {{ background: {green}; }}
 button.rexling-wants {{ background-image: radial-gradient(circle at 78% 24%, {warm} 0, {warm} 3px, transparent 3.5px); }}
+button.rexling-wants.failed {{ background-image: radial-gradient(circle at 78% 24%, {red} 0, {red} 3px, transparent 3.5px); }}
+.rexling-pane-spin {{ margin: -2px -5px; }}
+.rexling-pane-line.focused {{ background: alpha({fg}, 0.07); }}
 .rexling-status.working {{ color: alpha({fg}, 0.55); }}
 .rexling-dot {{ min-width: 8px; min-height: 8px; border-radius: 4px; background: {warm}; }}
 .rexling-dot.failed {{ background: {red}; }}
@@ -171,12 +178,15 @@ button.rexling-wants {{ background-image: radial-gradient(circle at 78% 24%, {wa
 .rexling-pane-dot.attention {{ background: {warm}; }}
 .rexling-pane-dot.failed {{ background: {red}; }}
 .rexling-pane-dot.working {{ background: alpha({fg}, 0.6); }}
-.rexling-waiting {{ padding-top: 4px; padding-bottom: 4px; }}
+.rexling-waiting {{ padding-top: 4px; padding-bottom: 10px; }}
 .rexling-session {{ font-weight: 700; font-size: 1.05em; }}
 .rexling-swatch {{ border-radius: 12px; border: 2px solid transparent; padding: 3px; transition: border-color 120ms ease; }}
 .rexling-swatch.current {{ border-color: {accent}; }}
+dialog.rexling-palette-dialog sheet {{ background: none; box-shadow: none; outline: none; border: none; }}
+.rexling-palette-card {{ background: {raised}; border-radius: 15px; margin: 4px 14px 14px 14px; box-shadow: 0 0 0 1px alpha({fg}, 0.12), 0 6px 18px alpha(black, 0.28); }}
+.rexling-palette-card .rexling-palette {{ background: none; }}
 .rexling-palette row {{ border-radius: 8px; margin: 0 6px; padding: 8px 10px; }}
-.rexling-palette row:hover:not(:selected) {{ background: alpha({fg}, 0.035); }}
+.rexling-palette row:hover:not(:selected) {{ background: none; }}
 .rexling-menu-item {{ padding: 6px 10px; font-weight: normal; }}
 .rexling-cap {{ border: 1px solid alpha({fg}, 0.25); border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px; font-size: 0.85em; background: alpha({fg}, 0.06); }}
 .rexling-key {{ font-family: monospace; font-size: 0.85em; color: alpha({fg}, 0.6); }}
@@ -205,11 +215,14 @@ mod tests {
     #[test]
     fn faint_text_is_made_legible_but_hidden_text_stays_hidden() {
         let cream = [0xf4, 0xee, 0xdf];
-        assert!(contrast(legible([0xff, 0xff, 0xff], cream), cream) >= 2.6);
+        assert!(contrast(legible([0xff, 0xff, 0xff], cream), cream) >= 1.9);
+        let paper = [0xff, 0xff, 0xff];
+        let shades = [[0xf4, 0xf5, 0xfa], [0xe3, 0xe5, 0xee], [0xbc, 0xbc, 0xbc], [0x80, 0x80, 0x80]].map(|shade| contrast(legible(shade, paper), paper));
+        assert!(shades.windows(2).all(|pair| pair[1] > pair[0] + 0.04), "shades keep their order and stay apart: {shades:?}");
         assert_eq!(legible(cream, cream), cream);
         assert_eq!(legible([0x20, 0x20, 0x20], cream), [0x20, 0x20, 0x20]);
         let night = [0x10, 0x12, 0x18];
-        assert!(contrast(legible([0x16, 0x18, 0x20], night), night) >= 2.6);
+        assert!(contrast(legible([0x16, 0x18, 0x20], night), night) >= 1.9);
     }
 
     #[test]

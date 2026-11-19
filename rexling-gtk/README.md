@@ -87,6 +87,7 @@ session switcher. Sessions on `ssh://` servers appear once that server is opened
 | `Ctrl+Shift+D` / `Ctrl+Shift+E` | Split right / below |
 | `Ctrl+Shift+W` | Close pane |
 | `Ctrl+Shift+Enter` | Zoom the focused pane |
+| `Ctrl+Shift+F` | Float the focused pane, or dock it again |
 | `Ctrl+Alt+Left` / `Ctrl+Alt+Right` | Previous / next pane |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Previous / next tab |
 | `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Move the tab up / down |

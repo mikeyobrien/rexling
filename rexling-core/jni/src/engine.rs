@@ -228,6 +228,8 @@ fn collect_splits(node: &Value,depth: usize,out: &mut Vec<Value>) {
 }
 type ConnectTask = Pin<Box<dyn Future<Output = Result<Control>>>>;
 type ProgramTask = Pin<Box<dyn Future<Output = Result<Value>>>>;
+/// The connection program metadata is read over, kept between refreshes with the session it is attached to.
+type ProgramLink = Arc<std::sync::Mutex<Option<(String, Control)>>>;
 type SummaryTask = Pin<Box<dyn Future<Output = Result<Value>>>>;
 struct Actor {
     latest_navigation: Arc<AtomicU64>,
@@ -291,6 +293,7 @@ struct Actor {
     activity_error: String,
     activity_partial: bool,
     program_task: Option<ProgramTask>,
+    program_link: ProgramLink,
     programs: Value,
     directories: Value,
     titles: Value,
@@ -344,6 +347,7 @@ impl Actor {
             activity_open:false,monitoring:false,activity_task:None,activity_refresh:tokio::time::Instant::now(),
             activity:json!([]),activity_snapshot:Arc::default(),activity_dirty:true,activity_panes:json!([]),activity_titles:BTreeMap::new(),activity_full:false,activity_inflight_full:false,activity_pending:BTreeSet::new(),activity_inflight:BTreeSet::new(),activity_seen:json!({}),attention_count:0,activity_error:String::new(),activity_partial:false,
             program_task: None,
+            program_link: ProgramLink::default(),
             programs: json!({}),
             directories: json!({}),
             titles: json!({}),
@@ -538,7 +542,7 @@ impl Actor {
                     {
                         let ids=self.windows.as_array().into_iter().flatten().flat_map(|w|
                             w["blocks"].as_array().into_iter().flatten().filter_map(|b|b["id"].as_str().map(str::to_owned))).collect();
-                        self.program_task=Some(program_task(self.endpoint.clone().unwrap(),self.selected_session.clone(),ids));
+                        self.program_task=Some(program_task(self.endpoint.clone().unwrap(),self.selected_session.clone(),ids,self.program_link.clone()));
                         self.program_refresh=tokio::time::Instant::now()+Duration::from_secs(4);
                     }
                     if self.visible && (self.dirty || animation_at.is_some_and(|at|at<=now)) {
@@ -571,6 +575,7 @@ impl Actor {
         self.summary_task = None;
         self.activity_task=None;
         self.program_task = None;
+        if let Ok(mut link) = self.program_link.lock() { link.take(); }
         self.preview_updates.clear();
         self.session_details = json!({});self.activity=json!([]);self.activity_dirty=true;self.activity_panes=json!([]);self.activity_titles.clear();self.attention_count=0;self.activity_pending.clear();self.activity_inflight.clear();self.activity_full=false;self.activity_error.clear();self.activity_partial=false;
         self.programs = json!({});
@@ -594,6 +599,7 @@ impl Actor {
         self.summary_task = None;
         self.activity_task=None;
         self.program_task = None;
+        if let Ok(mut link) = self.program_link.lock() { link.take(); }
         if let Some(c) = self.control.take() {
             self.control_token = c.token().map(str::to_owned);
             drop(c);
@@ -1796,14 +1802,25 @@ fn program_directory(process: &Value) -> String {
         .take(1024)
         .collect()
 }
-fn program_task(endpoint: Endpoint, session: String, ids: Vec<String>) -> ProgramTask {
+fn program_task(endpoint: Endpoint, session: String, ids: Vec<String>, link: ProgramLink) -> ProgramTask {
     Box::pin(async move {
         tokio::time::timeout(Duration::from_secs(8), async {
-            let mut control = Control::connect(endpoint, None, Trace::default()).await?;
-            control
-                .call("client.set_label", json!({"label":"rexling-programs"}))
-                .await?;
+            // One connection serves every refresh of a session. Opening one each time made the
+            // server announce a client arriving and leaving every few seconds.
+            let kept = link.lock().ok().and_then(|mut slot| slot.take()).filter(|(attached, _)| *attached == session);
+            let mut control = match kept {
+                Some((_, control)) => control,
+                None => {
+                    let mut control = Control::connect(endpoint, None, Trace::default()).await?;
+                    control
+                        .call("client.set_label", json!({"label":"rexling-programs"}))
+                        .await?;
+                    control
+                }
+            };
+            // Also proves a kept connection still works: a dead one fails here and is replaced next time.
             control.attach(&session).await?;
+            control.events.clear();
             let mut programs = serde_json::Map::new();
             let mut directories = serde_json::Map::new();
             let mut titles = serde_json::Map::new();
@@ -1823,7 +1840,10 @@ fn program_task(endpoint: Endpoint, session: String, ids: Vec<String>) -> Progra
                     programs.insert(id, program_candidates(&process, &status));
                 }
             }
-            let _ = control.close().await;
+            control.events.clear();
+            if let Ok(mut slot) = link.lock() {
+                *slot = Some((session, control));
+            }
             Ok::<_, anyhow::Error>(json!({"programs":programs,"directories":directories,"titles":titles,"working":working,"owners":owners}))
         })
         .await

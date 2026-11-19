@@ -175,13 +175,26 @@ pub fn palette(ui: &Rc<Ui>) {
     let commands = Rc::new(commands);
 
     let entry = gtk::SearchEntry::builder().search_delay(0).placeholder_text("Search commands, tabs, sessions and themes").margin_top(12).margin_start(12).margin_end(12).margin_bottom(6).build();
-    let list = gtk::ListBox::builder().selection_mode(gtk::SelectionMode::Browse).css_classes(["navigation-sidebar", "rexling-palette"]).build();
-    let scroller = gtk::ScrolledWindow::builder().child(&list).hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).build();
-    let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).margin_bottom(8).build();
-    content.append(&entry);
-    content.append(&scroller);
-    // A fixed size: the box must not jump about as the results change.
-    let dialog = adw::Dialog::builder().child(&content).content_width(560).content_height(460).build();
+    let list = gtk::ListBox::builder().selection_mode(gtk::SelectionMode::Browse).css_classes(["navigation-sidebar", "rexling-palette"]).margin_bottom(8).build();
+    // The card is as tall as its results, up to a limit, and hangs from a fixed top edge: the field never moves as the list changes.
+    let scroller = gtk::ScrolledWindow::builder().child(&list).hscrollbar_policy(gtk::PolicyType::Never).propagate_natural_height(true).max_content_height(392).build();
+    let card = gtk::Box::builder().orientation(gtk::Orientation::Vertical).valign(gtk::Align::Start).css_classes(["rexling-palette-card"]).build();
+    card.append(&entry);
+    card.append(&scroller);
+    let below = gtk::Box::builder().vexpand(true).build();
+    let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).build();
+    content.append(&card);
+    content.append(&below);
+    let dialog = adw::Dialog::builder().child(&content).content_width(560).content_height(470).presentation_mode(adw::DialogPresentationMode::Floating).css_classes(["rexling-palette-dialog"]).build();
+    // The space under a short card is not part of it: a click there closes the palette, as a click beside it does.
+    let outside = gtk::GestureClick::new();
+    let weak = dialog.downgrade();
+    outside.connect_released(move |_, _, _, _| {
+        if let Some(dialog) = weak.upgrade() {
+            dialog.close();
+        }
+    });
+    below.add_controller(outside);
 
     let fill = {
         let (list, commands) = (list.clone(), commands.clone());
@@ -201,7 +214,7 @@ pub fn palette(ui: &Rc<Ui>) {
             }
             list.select_row(list.row_at_index(0).as_ref());
             if list.row_at_index(0).is_none() {
-                list.append(&gtk::ListBoxRow::builder().child(&gtk::Label::builder().label("No matches").css_classes(["dim-label"]).margin_top(24).build()).activatable(false).selectable(false).name("none").build());
+                list.append(&gtk::ListBoxRow::builder().child(&gtk::Label::builder().label("No matches").css_classes(["dim-label"]).margin_top(14).margin_bottom(14).build()).activatable(false).selectable(false).name("none").build());
             }
         }
     };
@@ -362,14 +375,37 @@ pub fn preferences(ui: &Rc<Ui>) {
     let modes = ["system", "dark", "light"];
     let mode = adw::ComboRow::builder().title("Style").model(&gtk::StringList::new(&["Follow System", "Dark", "Light"])).build();
     mode.set_selected(modes.iter().position(|m| *m == ui.config.borrow().appearance).unwrap_or(0) as u32);
-    let weak = Rc::downgrade(ui);
+    // The galleries: the style in use comes first; the other style's pick is marked too, since Follow System switches to it.
+    let galleries = [true, false].map(|dark| {
+        let group = adw::PreferencesGroup::builder().title(if dark { "Dark Themes" } else { "Light Themes" }).build();
+        group.add(&theme_gallery(ui, dark));
+        (dark, group)
+    });
+    let order = {
+        let (page, galleries) = (appearance.clone(), galleries.clone());
+        move |placed: bool| {
+            let dark_now = adw::StyleManager::default().is_dark();
+            for (dark, group) in galleries.iter().filter(|(dark, _)| *dark == dark_now).chain(galleries.iter().filter(|(dark, _)| *dark != dark_now)) {
+                let _ = dark;
+                if placed {
+                    page.remove(group);
+                }
+                page.add(group);
+            }
+        }
+    };
+    let (weak, reorder) = (Rc::downgrade(ui), order.clone());
     mode.connect_selected_notify(move |row| {
         if let Some(ui) = weak.upgrade() {
             let chosen = modes[(row.selected() as usize).min(2)];
             if ui.config.borrow().appearance != chosen {
+                let was_dark = adw::StyleManager::default().is_dark();
                 ui.config.borrow_mut().appearance = chosen.into();
                 ui.config.borrow().save();
                 ui.apply_appearance();
+                if adw::StyleManager::default().is_dark() != was_dark {
+                    reorder(true);
+                }
             }
         }
     });
@@ -415,6 +451,11 @@ pub fn preferences(ui: &Rc<Ui>) {
             rows.append(&gtk::ListBoxRow::builder().child(&line).name(family.as_str()).build());
         }
         let search = gtk::SearchEntry::builder().placeholder_text("Search fonts").search_delay(0).build();
+        // Escape goes back, as it does everywhere else.
+        let back = parent.clone();
+        search.connect_stop_search(move |_| {
+            back.pop_subpage();
+        });
         let field = search.clone();
         rows.set_filter_func(move |row| row.widget_name().to_lowercase().contains(&field.text().trim().to_lowercase()));
         let nothing = gtk::Label::builder().label("No fonts match").css_classes(["dim-label"]).margin_top(18).visible(false).build();
@@ -469,14 +510,7 @@ pub fn preferences(ui: &Rc<Ui>) {
     look.add(&size);
     appearance.add(&look);
 
-    // The style in use comes first; the other style's pick is marked too, since Follow System switches to it.
-    let dark_now = adw::StyleManager::default().is_dark();
-    let order = if dark_now { [("Dark Themes", true), ("Light Themes", false)] } else { [("Light Themes", false), ("Dark Themes", true)] };
-    for (title, dark) in order {
-        let group = adw::PreferencesGroup::builder().title(title).build();
-        group.add(&theme_gallery(ui, dark));
-        appearance.add(&group);
-    }
+    order(false);
     dialog.add(&appearance);
 
     let general = adw::PreferencesPage::builder().title("General").icon_name("preferences-system-symbolic").build();
@@ -636,8 +670,9 @@ pub fn about(ui: &Rc<Ui>) {
         .application_name("Rexling")
         .application_icon("dev.shulhi.Rexling")
         .version(env!("CARGO_PKG_VERSION"))
-        .developer_name("A native Linux client for Rex")
-        .comments("Rexling is an unofficial client for Superlogical Rex, made by its contributors.")
+        .developer_name("The Rexling Contributors")
+        .comments("A native Linux client for Rex: persistent terminal sessions, with tabs and split panes, on any of your servers.\n\nRexling is an independent project and is not affiliated with Superlogical.")
+        .copyright("© 2026 The Rexling Contributors")
         .website("https://github.com/shulhi/rexling")
         .issue_url("https://github.com/shulhi/rexling/issues")
         .license_type(gtk::License::Apache20)

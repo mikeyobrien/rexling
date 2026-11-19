@@ -21,6 +21,14 @@ const ALIASES: &[(&str, &str)] = &[
 ];
 const SHELLS: &[&str] = &["fish", "zsh", "bash", "sh", "dash", "ash", "ksh", "mksh", "tcsh", "csh", "nu", "nushell", "pwsh"];
 
+/// Programs a shell runs for an instant to draw its prompt. They are never what a pane is "running".
+const HELPERS: &[&str] = &["zoxide", "starship", "direnv", "atuin", "mise", "fnm", "vivid", "tput", "dircolors", "lesspipe", "lesspipe.sh", "oh-my-posh", "omp"];
+
+/// Whether a program is only a shell's prompt helper, caught in the moment it ran.
+pub fn helper(candidate: &str) -> bool {
+    HELPERS.contains(&executable(candidate).as_str())
+}
+
 fn executable(candidate: &str) -> String {
     let path = candidate.replace('\\', "/").to_lowercase();
     let name = path.rsplit('/').next().unwrap_or("").trim_start_matches('-');
@@ -56,7 +64,12 @@ pub fn name(program: &str) -> String {
         "gemini" => "Gemini".into(),
         "copilot" => "Copilot".into(),
         "neovim" => "Neovim".into(),
-        _ => program.replace('_', " "),
+        "nvim" => "Neovim".into(),
+        // Everything else by its own name, capitalised like the names above: "Bash", "Docker", "Hugging Face".
+        other => other.split('_').map(|word| {
+            let mut letters = word.chars();
+            letters.next().map(|first| first.to_uppercase().chain(letters).collect::<String>()).unwrap_or_default()
+        }).collect::<Vec<_>>().join(" "),
     }
 }
 
@@ -97,6 +110,12 @@ mod tests {
     fn resolve(programs: &[&str]) -> String {
         let programs: Vec<String> = programs.iter().map(|p| (*p).to_owned()).collect();
         tile(&programs, |name| ["bash", "zsh", "docker", "rust", "kube", "shell"].contains(&name))
+    }
+
+    #[test]
+    fn prompt_helpers_are_not_programs() {
+        assert!(helper("/usr/bin/zoxide") && helper("starship"));
+        assert!(!helper("bash") && !helper("git") && !helper("/usr/bin/nvim"));
     }
 
     #[test]

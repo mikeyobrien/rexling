@@ -143,6 +143,8 @@ pub struct Ui {
     closed: Cell<bool>,
     /// A pane to open as soon as its session is on screen.
     jump: RefCell<String>,
+    /// This window is waiting for a session of its own: the sessions there were when it asked, once it has asked.
+    fresh: RefCell<Option<Option<HashSet<String>>>>,
     waiting_list: gtk::ListBox,
     waiting_heading: gtk::Label,
     waiting_box: gtk::Box,
@@ -185,7 +187,7 @@ struct Waiting {
 /// The one name a pane's program goes by: what its icon shows, or the command for a plain shell.
 fn identity(state: &State, block: &crate::client::Block) -> String {
     let tile = programs::tile(state.programs.get(&block.id).map_or(&[][..], |p| p.as_slice()), tiles::exists);
-    if tile == "shell" { state.program(block) } else { programs::name(&tile) }
+    programs::name(&if tile == "shell" { state.program(block) } else { tile })
 }
 
 /// The branch checked out in a folder on this computer, if it is in a Git repository.
@@ -237,7 +239,9 @@ fn minimap(panes: &[PaneRow], scale: i32) -> gtk::Fixed {
     let fit = |w: f64, h: f64| (h * HEIGHT - 2.0).min((w * WIDTH - 2.0) * 48.0 / 61.0).floor();
     let mut cells: Vec<[f64; 4]> = shown.iter().map(|pane| pane.rect).collect();
     let mut high = cells.iter().map(|rect| fit(rect[2], rect[3])).fold(f64::MAX, f64::min);
-    if high < LEGIBLE && !cells.is_empty() {
+    // A floating pane sits over the others; icons that would cover each other go in the grid too.
+    let covered = cells.iter().enumerate().any(|(at, a)| cells[..at].iter().any(|b| ((a[0] + a[2] / 2.0) - (b[0] + b[2] / 2.0)).abs() * WIDTH < high * 61.0 / 48.0 && ((a[1] + a[3] / 2.0) - (b[1] + b[3] / 2.0)).abs() * HEIGHT < high));
+    if (high < LEGIBLE || covered) && !cells.is_empty() {
         let columns = (cells.len() as f64).sqrt().ceil().min(3.0);
         let rows = (cells.len() as f64 / columns).ceil();
         cells = (0..cells.len()).map(|at| [(at as f64 % columns) / columns, (at as f64 / columns).floor() / rows, 1.0 / columns, 1.0 / rows]).collect();
@@ -274,6 +278,8 @@ struct TabRow {
 thread_local! {
     /// The session a window being opened should start on.
     static NEXT_WINDOW_SESSION: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The window being opened has no session to start on, so it makes one.
+    static NEXT_WINDOW_FRESH: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The forms of address the connect page accepts.
@@ -470,6 +476,7 @@ pub fn build(app: &adw::Application) {
         tab_after: RefCell::default(),
         closed: Cell::new(false),
         jump: RefCell::default(),
+        fresh: RefCell::default(),
         waiting_list,
         waiting_heading,
         waiting_box,
@@ -774,7 +781,11 @@ pub fn build(app: &adw::Application) {
     // The sidebar appearing or folding away must not carry the keyboard off with it.
     for property in ["collapsed", "show-sidebar"] {
         let weak = Rc::downgrade(&ui);
-        ui.split.connect_notify_local(Some(property), move |_, _| {
+        ui.split.connect_notify_local(Some(property), move |split, _| {
+            // Folding puts the sidebar away and unfolding brings it back, so the toggle always starts from what is on screen.
+            if property == "collapsed" {
+                split.set_show_sidebar(!split.is_collapsed());
+            }
             let weak = weak.clone();
             gtk::glib::idle_add_local_once(move || {
                 if let Some(ui) = weak.upgrade() {
@@ -977,9 +988,10 @@ impl Ui {
         });
         add("attach-image", |ui| ui.choose_image());
         add("new-window", |ui| {
-            // Another window is for another session: it opens on one this window is not showing, when there is one.
+            // Another window is for another session: one this window is not showing, or a new one when there is no other.
             let state = ui.state.borrow().clone();
             let other = state.sessions.iter().find(|s| s.session_id != state.selected_session).map(|s| s.session_id.clone());
+            NEXT_WINDOW_FRESH.with(|fresh| fresh.set(other.is_none() && ui.link.borrow().connected() && !state.sessions.is_empty()));
             NEXT_WINDOW_SESSION.with(|next| next.replace(other));
             if let Some(app) = ui.window.application().and_downcast::<adw::Application>() {
                 build(&app);
@@ -1010,7 +1022,7 @@ impl Ui {
         add("next-waiting", |ui| {
             // Most pressing first: this session's panes, then other sessions'. Each press goes one further, then round again.
             let state = ui.state.borrow().clone();
-            let visible = ui.visible.borrow().clone();
+            let focused = ui.focused.borrow().clone();
             let rank = |a: &Activity| match a.state.as_str() { "blocked" => 0, "error" => 1, _ => 2 };
             let mut here: Vec<Activity> = ui.activity.borrow().iter().filter(|a| a.needs_attention() && a.session == state.selected_session).cloned().collect();
             here.sort_by_key(rank);
@@ -1019,7 +1031,7 @@ impl Ui {
             let next = {
                 let mut visited = ui.visited.borrow_mut();
                 visited.retain(|block| all.contains(block));
-                let fresh = |visited: &Vec<String>| all.iter().find(|block| !visited.contains(block) && !visible.contains(block)).cloned();
+                let fresh = |visited: &Vec<String>| all.iter().find(|block| !visited.contains(block) && **block != focused).cloned();
                 let next = fresh(&visited).or_else(|| {
                     visited.clear();
                     fresh(&visited)
@@ -1172,6 +1184,7 @@ impl Ui {
             config.server = server.clone();
             config.save();
             let preferred = NEXT_WINDOW_SESSION.with(|next| next.take());
+            self.fresh.replace(NEXT_WINDOW_FRESH.with(|fresh| fresh.replace(false)).then_some(None));
             self.chrome.remembered_session.replace(preferred.or_else(|| config.sessions.get(&server).cloned()).unwrap_or_default());
         }
         // Nothing from the previous server may linger: its panes, its tunnel, or its last state.
@@ -1615,6 +1628,22 @@ impl Ui {
             self.went_offline(&state);
             return;
         }
+        // A window opened for a session of its own shows nothing of the others while that session is made.
+        let fresh = self.fresh.borrow().clone();
+        let waiting = match fresh {
+            Some(None) => {
+                self.fresh.replace(Some(Some(state.sessions.iter().map(|s| s.session_id.clone()).collect())));
+                self.chrome.new_session("");
+                true
+            }
+            Some(Some(before)) => state.error.is_empty() && (state.selected_session.is_empty() || before.contains(&state.selected_session)),
+            None => false,
+        };
+        if waiting {
+            return;
+        }
+        self.fresh.replace(None);
+        let state = self.steady(state);
         self.state.replace(state.clone());
         self.came_online();
 
@@ -1665,6 +1694,28 @@ impl Ui {
         self.arrange();
         self.refresh_banner();
         self.sync_actions();
+    }
+
+    /// A shell's prompt helper caught in the foreground says nothing about the pane: what was there before stands.
+    fn steady(&self, state: Rc<State>) -> Rc<State> {
+        let passing = |names: &Vec<String>| names.last().is_some_and(|name| programs::helper(name));
+        if !state.programs.values().any(passing) {
+            return state;
+        }
+        let before = self.state.borrow().clone();
+        let mut next = (*state).clone();
+        let blocks: Vec<String> = next.programs.iter().filter(|(_, names)| passing(names)).map(|(block, _)| block.clone()).collect();
+        for block in blocks {
+            match before.programs.get(&block).filter(|names| !passing(names)) {
+                Some(names) => next.programs.insert(block.clone(), names.clone()),
+                None => next.programs.remove(&block),
+            };
+            match before.titles.get(&block) {
+                Some(title) => next.titles.insert(block.clone(), title.clone()),
+                None => next.titles.remove(&block),
+            };
+        }
+        Rc::new(next)
     }
 
     /// The server answered. The first time, it becomes a saved server.
@@ -1817,7 +1868,7 @@ impl Ui {
         } else if !link.connected() {
             ("Reconnecting. Typing is paused".to_owned(), Some("Retry"))
         } else if self.watching() {
-            ("In use elsewhere".to_owned(), Some("Take Control"))
+            ("In use elsewhere. Typing here takes control".to_owned(), Some("Take Control"))
         } else {
             (String::new(), None)
         };
@@ -1919,9 +1970,21 @@ impl Ui {
                 let detail = match tab.blocks.len() {
                     count if count > 1 && current && self.zoomed.get() => format!("Zoomed · 1 of {count} panes"),
                     count if count > 1 => {
-                        // Every program in the tab, each once, in pane order.
+                        // Every program in the tab, each once: those that want the user first, plain shells last.
+                        let mut ordered: Vec<(u8, String)> = tab.blocks.iter().map(|b| {
+                            let rank = match self.status(&[b.id.as_str()], &state.working).1 {
+                                "attention" => 0,
+                                "failed" => 1,
+                                "done" => 2,
+                                "working" => 3,
+                                _ if programs::tile(state.programs.get(&b.id).map_or(&[][..], |p| p.as_slice()), tiles::exists) != "shell" => 4,
+                                _ => 5,
+                            };
+                            (rank, identity(&state, b))
+                        }).collect();
+                        ordered.sort_by_key(|(rank, _)| *rank);
                         let mut names: Vec<String> = Vec::new();
-                        for name in tab.blocks.iter().map(|b| identity(&state, b)) {
+                        for (_, name) in ordered {
                             if !names.contains(&name) {
                                 names.push(name);
                             }
@@ -1992,12 +2055,7 @@ impl Ui {
         for row in &next {
             let text = gtk::Box::builder().orientation(gtk::Orientation::Vertical).hexpand(true).valign(gtk::Align::Center).build();
             text.append(&gtk::Label::builder().label(row.title.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).css_classes(["rexling-tab-title"]).build());
-            if !row.status.is_empty() {
-                text.append(&gtk::Label::builder().label(row.status.as_str()).xalign(0.0).css_classes(["rexling-status", row.status_class]).build());
-                if !row.message.is_empty() {
-                    text.append(&gtk::Label::builder().label(row.message.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).lines(2).wrap(true).wrap_mode(pango::WrapMode::WordChar).css_classes(["caption", "dim-label"]).build());
-                }
-            } else if !row.detail.is_empty() || !row.branch.is_empty() {
+            if !row.detail.is_empty() || !row.branch.is_empty() {
                 // "bash", then the branch its folder has checked out.
                 let line = gtk::Box::builder().spacing(4).css_classes(["caption", "dim-label"]).build();
                 if !row.detail.is_empty() {
@@ -2010,6 +2068,13 @@ impl Ui {
                     line.append(&gtk::Label::builder().label(row.branch.as_str()).xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::End).build());
                 }
                 text.append(&line);
+            }
+            // What the program reports comes under what it is, not instead of it. A spinner already says "working".
+            if !row.status.is_empty() && row.status_class != "working" {
+                text.append(&gtk::Label::builder().label(row.status.as_str()).xalign(0.0).css_classes(["rexling-status", row.status_class]).build());
+                if !row.message.is_empty() {
+                    text.append(&gtk::Label::builder().label(row.message.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).lines(2).wrap(true).wrap_mode(pango::WrapMode::WordChar).css_classes(["caption", "dim-label"]).build());
+                }
             }
             let content = gtk::Box::builder().spacing(10).build();
             let picture = gtk::Image::builder().pixel_size(30).valign(gtk::Align::Center).build();
@@ -2032,15 +2097,23 @@ impl Ui {
             // The open tab lists its panes; any other tab lists the ones that want the user.
             let card = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(2).build();
             card.append(&content);
-            for pane in row.panes.iter().filter(|pane| row.current || !pane.waiting.is_empty()) {
+            for pane in row.panes.iter().filter(|pane| row.current || !pane.waiting.is_empty() || pane.status == "working") {
                 let line = gtk::Box::builder().spacing(8).css_classes(["rexling-pane-line"]).build();
+                if pane.focused && row.current {
+                    line.add_css_class("focused");
+                }
                 let dot = gtk::Box::builder().css_classes(["rexling-pane-dot"]).valign(gtk::Align::Center).build();
                 if !pane.status.is_empty() {
                     dot.add_css_class(pane.status);
                 } else if pane.focused && row.current {
                     dot.add_css_class("focused");
                 }
-                line.append(&dot);
+                if pane.status == "working" {
+                    // A working pane turns, so it cannot be mistaken for an idle one.
+                    line.append(&adw::Spinner::builder().width_request(10).height_request(10).valign(gtk::Align::Center).css_classes(["rexling-pane-spin"]).build());
+                } else {
+                    line.append(&dot);
+                }
                 line.append(&gtk::Label::builder().label(pane.title.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).css_classes(if pane.focused && row.current { vec!["caption"] } else { vec!["caption", "dim-label"] }).build());
                 if !pane.waiting.is_empty() {
                     line.append(&gtk::Label::builder().label(pane.waiting.as_str()).xalign(1.0).hexpand(true).css_classes(["rexling-status", if pane.status == "failed" { "failed" } else if pane.status == "done" { "done" } else { "attention" }]).build());
@@ -2133,11 +2206,15 @@ impl Ui {
     fn show_waiting(&self) {
         let next = self.waiting();
         if let Some(action) = self.window.lookup_action("next-waiting").and_downcast::<gio::SimpleAction>() {
-            let visible = self.visible.borrow();
-            let any = !next.is_empty() || (!self.offline.get() && self.activity.borrow().iter().any(|a| a.needs_attention() && !visible.contains(&a.block)));
+            let focused = self.focused.borrow();
+            let activity = self.activity.borrow();
+            let here = || activity.iter().filter(|a| a.needs_attention() && !self.offline.get());
+            let any = !next.is_empty() || here().any(|a| a.block != *focused);
             action.set_enabled(any);
-            // With the sidebar folded away, its button says something is waiting.
+            // With the sidebar folded away, its button says something is waiting, in the colour of the worst of it.
+            let failed = !here().any(|a| a.state == "blocked") && !next.iter().any(|w| w.kind == "attention") && (here().any(|a| a.state == "error") || next.iter().any(|w| w.kind == "failed"));
             if any && !self.split.shows_sidebar() { self.sidebar_toggle.add_css_class("rexling-wants") } else { self.sidebar_toggle.remove_css_class("rexling-wants") }
+            if failed { self.sidebar_toggle.add_css_class("failed") } else { self.sidebar_toggle.remove_css_class("failed") }
         }
         if *self.shown_waiting.borrow() == next {
             return;
@@ -2475,10 +2552,12 @@ impl Ui {
         self.title.set_title(&heading);
         let directory = lead.and_then(|b| state.directories.get(&b.id)).map(|d| short_path(d)).unwrap_or_default();
         let zoomed = self.zoomed.get() && tab.is_some_and(|tab| tab.blocks.len() > 1);
-        self.title.set_subtitle(&match (zoomed, directory == heading) {
-            (true, _) => format!("Zoomed · 1 of {} panes", tab.map_or(1, |tab| tab.blocks.len())),
-            (false, true) => String::new(),
-            (false, false) => directory,
+        // The sidebar's second line, then the folder: the same words in the same order in both places.
+        let detail = self.shown_tabs.borrow().iter().find(|row| row.current).map(|row| row.detail.clone()).unwrap_or_default();
+        let place = if directory == heading { String::new() } else { directory };
+        self.title.set_subtitle(&match zoomed {
+            true => format!("Zoomed · 1 of {} panes", tab.map_or(1, |tab| tab.blocks.len())),
+            false => [detail, place].into_iter().filter(|part| !part.is_empty() && *part != heading).collect::<Vec<_>>().join(" · "),
         });
         self.window.set_title(Some(&heading));
         self.remember(&state);
