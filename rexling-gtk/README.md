@@ -51,7 +51,7 @@ You need Rust 1.93+, GTK 4.14+, libadwaita 1.6+, Python 3 and a C compiler.
 ```sh
 git clone https://github.com/shulhi/rexling.git
 cd rexling
-python3 rexling-core/scripts/build_native.py --host-test   # once: builds libghostty-vt
+python3 rexling-core/scripts/build_native.py --host-build   # once: builds libghostty-vt
 ./rexling-gtk/install.sh
 ```
 

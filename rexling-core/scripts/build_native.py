@@ -36,6 +36,7 @@ def download(url, expected, path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host-test", action="store_true")
+    parser.add_argument("--host-build", action="store_true", help="build libghostty-vt for this machine without running the Rust tests")
     parser.add_argument("--abi", action="append", choices=sorted(ABIS), help="Android ABI to build (repeatable; default arm64-v8a)")
     args = parser.parse_args()
     manifest = json.loads((ROOT / "native/ghostty-source.json").read_text())
@@ -72,9 +73,11 @@ def main():
     rustup = shutil.which("rustup") or str(Path.home() / ".cargo/bin/rustup")
     env["CARGO_TARGET_DIR"] = str(ROOT / ".build/rust")
     zig_build = [zig_root / "zig", "build", "-Demit-lib-vt", "-Demit-macos-app=false", "-Demit-xcframework=false", "-Doptimize=ReleaseFast"]
-    if args.host_test:
+    if args.host_test or args.host_build:
         prefix = ROOT / ".build/ghostty-host"
         run(zig_build + ["--prefix", prefix], cwd=source_root, env=env)
+        if args.host_build:
+            return
         env["GHOSTTY_PREFIX"] = str(prefix)
         run([cargo, "test", "--locked", "--workspace", "--all-features", "--manifest-path", ROOT / "Cargo.toml"], cwd=ROOT, env=env)
         return

@@ -12,6 +12,8 @@ license=('Apache-2.0')
 depends=('gtk4' 'libadwaita' 'librsvg' 'hicolor-icon-theme')
 makedepends=('git' 'rust' 'python' 'curl')
 optdepends=('openssh: ssh:// servers' 'tailscale: servers on a tailnet')
+# The terminal core is a static C library linked into Rust; link-time optimisation across the two breaks the link.
+options=('!lto')
 provides=('rexling')
 conflicts=('rexling')
 source=("rexling::git+${REXLING_REPO:-https://github.com/shulhi/rexling.git}#branch=${REXLING_BRANCH:-main}")
@@ -25,7 +27,7 @@ pkgver() {
 build() {
   cd rexling
   # Downloads the pinned Zig and Ghostty sources and builds libghostty-vt for this machine.
-  python3 rexling-core/scripts/build_native.py --host-test
+  python3 rexling-core/scripts/build_native.py --host-build
   cargo build --release --locked --manifest-path rexling-gtk/Cargo.toml
 }
 
