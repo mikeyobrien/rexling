@@ -99,6 +99,9 @@ class MainActivity : ComponentActivity() {
 
 private data class TerminalCloseTarget(val session: String,val id: String,val label: String,val tab: Boolean,val blocks: List<String>)
 
+private enum class CommandStep { PALETTE, SPLIT, RENAME }
+private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme: Boolean,val step: CommandStep=CommandStep.PALETTE)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun RexWorkspace(model: RexModel,client: RexConnection) {
     val state by client.chromeState.collectAsState()
@@ -142,6 +145,8 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
     var toolbarSettings by remember {mutableStateOf(false)}
     var alerts by remember {mutableStateOf(false)}
     var closeTarget by remember {mutableStateOf<TerminalCloseTarget?>(null)}
+    var commandFlow by remember {mutableStateOf<CommandFlow?>(null)}
+    var restoreCommandIme by remember {mutableStateOf<TerminalCommandTarget?>(null)}
     val fontSize=model.fontSize
     var fontPicker by remember {mutableStateOf(false)}
     var terminalView by remember {mutableStateOf<TerminalView?>(null)}
@@ -214,7 +219,35 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
     val floatingActive=floating.any {it.id==chosen}
     var hiddenFloating by rememberSaveable(displayedSession,window?.id) {mutableStateOf("")}
     val controlled=state.controlled && ready && client.hasScreen && (!floatingActive || hiddenFloating!=chosen)
-    SideEffect {model.setPaneObscured((floatingActive && hiddenFloating==chosen) || model.activityVisible || picker.isNotEmpty() || preferencesOpen || networkSettings || servers || addServer || forwards || newSession || appearance || about || neovimSettings || toolbarSettings || alerts || fontPicker || closeTarget!=null)}
+    fun currentCommandTarget() = TerminalCommandTarget.capture(client.state.value,client.navigationRequest.pending)
+    val commandsAvailable=TerminalCommandTarget.capture(state,navigation.pending)!=null && (!floatingActive || hiddenFloating!=chosen)
+    fun openCommands() {
+        if(!commandsAvailable || commandFlow!=null) return
+        val target=currentCommandTarget() ?: return
+        if(target.pane!=chosen || target.session!=displayedSession) return
+        commandFlow=CommandFlow(target,controlled && keyboardVisible)
+        terminalView?.hideKeyboard()
+    }
+    fun closeCommands(restore: Boolean=true) {
+        val flow=commandFlow ?: return
+        commandFlow=null
+        restoreCommandIme=flow.target.takeIf {restore && flow.restoreIme}
+    }
+    fun copyViewport() {
+        client.terminal.value?.let {screen->
+            (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rex terminal",screen.plainText()))
+        }
+    }
+    val activeCommands=commandFlow?.takeIf {it.target.matches(state,navigation.pending)}
+    LaunchedEffect(commandFlow,activeCommands) {if(commandFlow!=null && activeCommands==null) closeCommands(false)}
+    LaunchedEffect(restoreCommandIme,terminalView) {
+        val target=restoreCommandIme ?: return@LaunchedEffect
+        val view=terminalView ?: return@LaunchedEffect
+        withFrameNanos { }
+        restoreCommandIme=null
+        if(target==currentCommandTarget() && controlled && view.isAttachedToWindow) view.keyboard()
+    }
+    SideEffect {model.setPaneObscured((floatingActive && hiddenFloating==chosen) || model.activityVisible || picker.isNotEmpty() || preferencesOpen || networkSettings || servers || addServer || forwards || newSession || appearance || about || neovimSettings || toolbarSettings || alerts || fontPicker || closeTarget!=null || commandFlow!=null)}
     fun openPane(id: String) {hiddenFloating="";client.selectBlock(id)}
     fun minimizeFloating() {
         hiddenFloating=chosen
@@ -244,15 +277,15 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
         if(index>=0 && blocks.size>1) client.prefetchPanes(listOf(blocks[Math.floorMod(index-1,blocks.size)].id,blocks[(index+1)%blocks.size].id).distinct())
     }
     LaunchedEffect(ready,chosen,client.hasScreen,hiddenFloating) {if(ready && (!floatingActive || hiddenFloating!=chosen)) client.claimActivePane()}
-    LaunchedEffect(controlled,client.keyboardRequest,terminalView) {
-        if(controlled) {
+    LaunchedEffect(controlled,client.keyboardRequest,terminalView,commandFlow!=null) {
+        if(controlled && commandFlow==null) {
             terminalView?.requestFocus()
             client.applySize()
             if(client.keyboardRequest==displayedBlock && terminalView!=null) {terminalView?.keyboard();client.keyboardShown()}
         }
     }
     LaunchedEffect(picker) {if(picker=="sessions") model.refreshSessionDetails()}
-    val workspaceBackdrop=rememberBackdropCapture(menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || fontPicker || alerts || picker in setOf("tabs","panes","sessions","tabpicker") || model.activityVisible)
+    val workspaceBackdrop=rememberBackdropCapture(commandFlow!=null || menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || fontPicker || alerts || picker in setOf("tabs","panes","sessions","tabpicker") || model.activityVisible)
     Surface(Modifier.fillMaxSize().then(if(workspaceBackdrop) Modifier.hazeSource(workspaceHaze) else Modifier),color=MaterialTheme.colorScheme.background) {
         // Wide screens (an unfolded Fold, tablets): the tab list sits beside the terminal; maximize hides it.
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
@@ -304,9 +337,8 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                             TerminalMenuItem("Show keyboard",ChromeIcon.KEYBOARD,enabled=ready && client.hasScreen && !keyboardVisible,onClick={
                                 menu=false;client.requestKeyboard()})
                             TerminalMenuItem("Preferences",ChromeIcon.SETTINGS,onClick={menu=false;preferencesOpen=true})
-                            TerminalMenuItem("Copy viewport",ChromeIcon.COPY,enabled=client.hasScreen,onClick={
-                                menu=false;client.terminal.value?.let {screen->(getClipboard(model.getApplication()) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Rex terminal",screen.plainText()))}
-                            })
+                            TerminalMenuItem("Commands",ChromeIcon.COMMANDS,enabled=commandsAvailable,onClick={menu=false;openCommands()})
+                            TerminalMenuItem("Copy viewport",ChromeIcon.COPY,enabled=client.hasScreen,onClick={menu=false;copyViewport()})
                             TerminalMenuItem("Paste",ChromeIcon.PASTE,enabled=controlled,onClick={
                                 menu=false;pasteClipboard()
                             })
@@ -383,7 +415,7 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                     if(chromeVisible && keyboardVisible) {
                         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart=24.dp,topEnd=24.dp)).background(MaterialTheme.colorScheme.surface)) {
                             KeyboardBar(controlled,ready,client.controlModifier,client.altModifier,client.shiftModifier,keyboardVisible,
-                                client::toggleControl,client::toggleAlt,client::toggleShift,client::pressShift,client::releaseShift,{client.keyForTarget(it,keyTarget)},readable=state.connected,onControlShortcut=client::controlShortcut,inputKey=keyTarget,shortcutGesture=model.shortcutGesture,arrowJoystickEnabled=model.arrowJoystickEnabled,onPaste={pasteClipboard()},onPrompt=if(client.hasSemanticPrompts && !changingSession) client::scrollPrompt else null,toolbarKeys=model.toolbarKeys) {
+                                client::toggleControl,client::toggleAlt,client::toggleShift,client::pressShift,client::releaseShift,{client.keyForTarget(it,keyTarget)},readable=state.connected,onControlShortcut=client::controlShortcut,inputKey=keyTarget,shortcutGesture=model.shortcutGesture,arrowJoystickEnabled=model.arrowJoystickEnabled,onPaste={pasteClipboard()},onPrompt=if(client.hasSemanticPrompts && !changingSession) client::scrollPrompt else null,toolbarKeys=model.toolbarKeys,onCommands=if(commandsAvailable) ::openCommands else null) {
                                 if(!controlled) client.takeControl() else if(keyboardVisible) terminalView?.hideKeyboard() else terminalView?.keyboard()
                             }
                         }
@@ -423,6 +455,31 @@ if(picker=="tabpicker") TabPickerCard(model.activeServer.label,
     if(model.images.notice.isNotEmpty()) AlertDialog(onDismissRequest={model.images.notice=""},title={Text("Image upload")},text={Text(model.images.notice)},confirmButton={TextButton(onClick={model.images.notice=""}) {Text("OK")}})
     if(about) AboutSheet(hazeState=workspaceHaze) {about=false}
     if(alerts) BackgroundAlertsDialog(model,hazeState=workspaceHaze) {alerts=false}
+    activeCommands?.let {flow->
+        val tab=windows.firstOrNull {it.id==flow.target.tab}
+        val block=tab?.blocks?.firstOrNull {it.id==flow.target.pane}
+        when(flow.step) {
+            CommandStep.PALETTE->TerminalCommandsSheet(
+                (state.programs[flow.target.pane] ?: ProgramIdentity.Loading).paneTitle(block?.label.orEmpty(),state.titles[flow.target.pane].orEmpty()),
+                canCopy=client.hasScreen,onClose={closeCommands()},hazeState=workspaceHaze,onChoose={command->
+                    if(currentCommandTarget()!=flow.target) closeCommands(false)
+                    else when(command) {
+                        TerminalCommand.SPLIT->commandFlow=flow.copy(step=CommandStep.SPLIT)
+                        TerminalCommand.RENAME->commandFlow=flow.copy(step=CommandStep.RENAME)
+                        TerminalCommand.COPY->{if(client.hasScreen) copyViewport();closeCommands()}
+                        TerminalCommand.FORWARDS->{closeCommands(false);forwards=true}
+                    }
+                })
+            CommandStep.SPLIT->CommandSplitDialog(onClose={closeCommands()},onChoose={split->
+                if(currentCommandTarget()==flow.target) client.createPane(split,flow.target.pane)
+                closeCommands(false)
+            })
+            CommandStep.RENAME->TerminalRenameDialog(TerminalRenameTarget(flow.target.tab,flow.target.tab,true,tab?.label.orEmpty()),
+                enabled=ready,onClose={closeCommands()},onSave={label->
+                    currentCommandTarget()==flow.target && client.editTerminal(flow.target.session,flow.target.tab,flow.target.tab,"rename_tab",label=label)
+                })
+        }
+    }
     if(forwards) PortForwardSheet(model.forwardServers(),model.activeServerId,workspaceHaze,onClose={forwards=false},onStart={id->
         val saved=PortForwards.items.firstOrNull {it.id==id}
         val target=model.forwardServers().firstOrNull {it.profile.id==saved?.serverId && it.profile.endpoint==saved.endpoint}

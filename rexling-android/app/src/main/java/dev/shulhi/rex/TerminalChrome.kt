@@ -77,7 +77,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
-internal enum class ChromeIcon { SPLIT, SEARCH, CHEVRON, SESSIONS, COPY, MORE, ADD, KEYBOARD, HIDE_KEYBOARD, LEFT, RIGHT, UP, DOWN, TAB, CLOSE, ESCAPE, CONTROL, ALT, SHIFT, POINTER, EYE, BACKSPACE, ARROWS, ENTER, SETTINGS, PASTE, IMAGE, SERVER, REFRESH, SUN, MOON, EDIT, UNPLUG, DELETE, FLOAT, CHECK, PLAY, STOP, EXPAND, COLLAPSE }
+internal enum class ChromeIcon { SPLIT, SEARCH, CHEVRON, SESSIONS, COPY, MORE, ADD, KEYBOARD, HIDE_KEYBOARD, LEFT, RIGHT, UP, DOWN, TAB, CLOSE, ESCAPE, CONTROL, ALT, SHIFT, POINTER, EYE, BACKSPACE, ARROWS, ENTER, SETTINGS, PASTE, IMAGE, SERVER, REFRESH, SUN, MOON, EDIT, UNPLUG, DELETE, FLOAT, CHECK, PLAY, STOP, EXPAND, COLLAPSE, COMMANDS }
 
 @Composable internal fun ChromeSymbol(icon: ChromeIcon, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurface) {
     Canvas(modifier.size(19.dp)) {
@@ -97,6 +97,7 @@ internal enum class ChromeIcon { SPLIT, SEARCH, CHEVRON, SESSIONS, COPY, MORE, A
             ChromeIcon.STOP -> {box(6f,6f,12f,12f,1.5f)}
             ChromeIcon.FLOAT -> {box(3f,7f,14f,14f);box(10f,3f,11f,10f)}
             ChromeIcon.SPLIT -> { box(3f,4f,18f,16f);line(12f,4f,12f,20f) }
+            ChromeIcon.COMMANDS -> {box(3.5f,4.5f,17f,15f,3f);line(7f,9f,9.5f,11.5f);line(9.5f,11.5f,7f,14f);line(12f,14f,16.5f,14f)}
             ChromeIcon.SEARCH -> { drawCircle(color,6f*u,Offset(10f*u,10f*u),style=Stroke(width));line(15f,15f,21f,21f) }
             ChromeIcon.CHEVRON -> {line(7f,10f,12f,15f);line(12f,15f,17f,10f)}
             ChromeIcon.SESSIONS -> { box(4f,8f,13f,12f); line(8f,4f,20f,4f); line(20f,4f,20f,16f); line(7f,12f,11f,12f); line(7f,16f,13f,16f) }
@@ -649,7 +650,7 @@ internal interface TitleHold {
 }
 
 @Composable internal fun KeyboardBar(controlled: Boolean,enabled: Boolean,control: Boolean,alt: Boolean,shift: Boolean,
-    keyboardVisible: Boolean,onControl: ()->Unit,onAlt: ()->Unit,onShift: ()->Unit,onShiftPress: ()->Unit,onShiftRelease: (Boolean)->Unit,onKey: (String)->Unit,readable: Boolean=enabled,onControlShortcut: (String)->Unit={},inputKey: String="",shortcutGesture: ControlShortcutGesture=ControlShortcutGesture.HOLD,arrowJoystickEnabled: Boolean=true,onPaste: (() ->Unit)?=null,onPrompt: ((Int)->Unit)?=null,toolbarKeys: List<ToolbarKey> = ToolbarLayout.defaults,onKeyboard: ()->Unit) {
+    keyboardVisible: Boolean,onControl: ()->Unit,onAlt: ()->Unit,onShift: ()->Unit,onShiftPress: ()->Unit,onShiftRelease: (Boolean)->Unit,onKey: (String)->Unit,readable: Boolean=enabled,onControlShortcut: (String)->Unit={},inputKey: String="",shortcutGesture: ControlShortcutGesture=ControlShortcutGesture.HOLD,arrowJoystickEnabled: Boolean=true,onPaste: (() ->Unit)?=null,onPrompt: ((Int)->Unit)?=null,toolbarKeys: List<ToolbarKey> = ToolbarLayout.defaults,onCommands: (() ->Unit)?=null,onKeyboard: ()->Unit) {
     val toolbar=ToolbarLayout.normalize(toolbarKeys)
     var expanded by remember {mutableStateOf(false)}
     // The extra-key trigger lives just before Esc, outside the initial viewport.
@@ -680,6 +681,7 @@ internal interface TitleHold {
                                 ToolbarKey.ALT->DockKey("alt",controlled,alt,description="Alt",modifier=Modifier.weight(1f),icon=ChromeIcon.ALT,readable=readable,onClick=onAlt)
                                 ToolbarKey.SHIFT->ShiftDockKey(controlled,shift,Modifier.weight(1f),onShift,onShiftPress,onShiftRelease,readable=readable)
                                 ToolbarKey.ARROWS->ArrowJoystickDockKey(controlled,Modifier.weight(1f),onKey,readable,inputKey,keyboardVisible,arrowJoystickEnabled,onPrompt)
+                                ToolbarKey.COMMANDS->DockKey("Commands",onCommands!=null,modifier=Modifier.weight(1f),icon=item.icon,readable=readable) {onCommands?.invoke()}
                                 ToolbarKey.PASTE->DockKey("paste",controlled && onPaste!=null,description="Paste",modifier=Modifier.weight(1f),icon=ChromeIcon.PASTE,readable=readable) {onPaste?.invoke()}
                                 else->DockKey(item.label,controlled,description=if(item==ToolbarKey.TAB) "Tab key" else item.label,
                                     modifier=Modifier.weight(1f),icon=item.icon,readable=readable,

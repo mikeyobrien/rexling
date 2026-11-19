@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rexling · Commands comparison</title>
+<style>
+:root{color-scheme:dark;font:16px system-ui,sans-serif;--bg:#101317;--phone:#14181e;--line:#333d48;--surface:#222a33;--text:#edf2f6;--muted:#a5b0bc;--mint:#a5ecc9;--accent:#294739}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}main{max-width:960px;margin:auto;padding:34px 20px 52px}header{margin:0 0 26px}header p{color:var(--muted);margin:8px 0 0}h1{font-size:30px;letter-spacing:-.04em;margin:0}h2{font-size:16px;font-weight:650;margin:0 0 12px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:30px}.concept{min-width:0}.concept>p{color:var(--muted);font-size:14px;line-height:1.5;margin:12px 0 0}.phone{height:690px;background:var(--phone);border:1px solid var(--line);border-radius:28px;overflow:hidden;position:relative;display:flex;flex-direction:column;box-shadow:0 14px 40px #0005;isolation:isolate}.status{padding:10px 17px;display:flex;justify-content:space-between;font-size:12px}.top{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding:2px 12px 2px 17px;font-size:15px;font-weight:650}.top button,.panel-title button{width:44px;height:44px;font-size:22px}.top button,.panel-title button,.command{border:0;background:transparent;color:inherit}button{font:inherit;cursor:pointer;border:0;color:inherit}button:focus-visible,input:focus-visible{outline:2px solid var(--mint);outline-offset:-2px}.terminal{flex:1;padding:19px 16px 0;font:13px/1.65 ui-monospace,monospace;white-space:pre;overflow:hidden;color:#c6d0db}.prompt{color:var(--mint)}.cursor{background:var(--mint);display:inline-block;width:7px;height:13px;vertical-align:middle}.input{background:#1b222b;position:relative;z-index:2}.extras{display:flex;gap:4px;padding:6px;border-block:1px solid var(--line)}.extras button{flex:1;min-width:0;height:44px;font:12px ui-monospace,monospace;border-radius:8px;background:#2c3642;padding:0}.extras .launcher{color:var(--mint);background:var(--accent);font-size:19px}.extras .launcher[aria-expanded=true]{box-shadow:inset 0 0 0 1px var(--mint)}.ime{padding:8px 5px 5px;background:#20262e}.keys{display:flex;justify-content:center;gap:4px;margin-bottom:6px}.keys span{display:grid;place-items:center;width:9.3%;height:34px;background:#35404a;border-radius:6px;font-size:14px}.keys .space{width:51%;font-size:12px}.keys .wide{width:19%;font-size:13px}.gesture{height:19px;display:grid;place-items:center;background:#20262e}.gesture::after{content:'';width:96px;height:4px;border-radius:4px;background:#a5aeb6}.scrim{position:absolute;inset:0;background:#080b1199;z-index:1}.panel{background:var(--surface);border:1px solid var(--line);z-index:3;max-height:calc(100% - 85px);overflow:auto}.sheet{position:absolute;inset:auto 0 0;border-radius:24px 24px 0 0;padding:0 12px 14px}.handle{height:4px;width:30px;background:#748291;border-radius:5px;margin:9px auto 3px}.panel-title{display:flex;align-items:center;justify-content:space-between;margin-left:8px;font-size:17px;font-weight:650}.scope{color:var(--muted);font-size:12px;font-weight:450;margin-left:8px}.search{margin:0 5px 7px;width:calc(100% - 10px);height:46px;border:1px solid var(--line);background:#171d24;color:var(--text);border-radius:12px;padding:0 12px;font:inherit}.command{display:flex;align-items:center;gap:13px;width:100%;min-height:48px;text-align:left;padding:0 12px;border-radius:10px}.command:hover,.command:focus-visible{background:#344453}.command i{font-style:normal;width:20px;color:var(--mint);text-align:center}.command em{margin-left:auto;color:var(--muted);font-style:normal;font-size:12px}.tray{position:absolute;inset:auto 7px 100%;border-radius:17px 17px 8px 8px;padding:0 7px 6px;max-height:none}.tray .command{min-height:48px}.menu{position:absolute;top:67px;right:10px;padding:6px;border-radius:12px;z-index:4;background:var(--surface);border:1px solid var(--line)}.menu button{background:none;padding:12px}.feedback{position:absolute;top:84px;left:10px;right:10px;border-radius:10px;background:var(--accent);padding:8px 12px;font-size:13px;z-index:4;pointer-events:none}.background-hidden .input{visibility:hidden}.keyboard-hidden .input{display:none}.reset{margin-top:10px;background:none;color:var(--mint);padding:8px 0;font-size:13px}.empty{padding:9px 12px;color:var(--muted);font-size:14px}.note{margin-top:28px;color:var(--muted);font-size:14px;line-height:1.5}[hidden]{display:none!important}@media(max-width:690px){main{max-width:450px;padding-top:22px}.grid{grid-template-columns:1fr}.phone{height:650px}}
+.extras .launcher{display:grid;place-items:center}.panel:focus{outline:none}.search::placeholder{color:var(--muted)}.export header p,.export .reset,.export .note{display:none}.export main{padding-bottom:22px}
+</style>
+</head>
+<body><main>
+<header><h1>Commands from the extra-key row</h1><p>Two Android concepts. Close either preview, then tap the highlighted <strong>Commands</strong> key to reopen it.</p></header>
+<div class="grid" id="concepts"></div>
+<p class="note">Prototype only. Actions are simulated.</p>
+</main>
+<template id="concept">
+<section class="concept"><h2></h2><div class="phone">
+<div class="status"><span>9:41</span><span aria-label="Connected, battery 89 percent">▮▮▮ &nbsp; 89%</span></div>
+<div class="top"><span>▾ &nbsp; rexling</span><button data-menu aria-label="Terminal menu" aria-expanded="false">⋮</button></div>
+<div class="terminal" tabindex="-1"><span class="prompt">mikey@reef</span> ~/Projects/rexling<br>$ git status --short<br> M app/src/main/TerminalChrome.kt<br><br><span class="prompt">mikey@reef</span> ~/Projects/rexling<br>$ <span class="cursor"></span></div>
+<div class="input"><div class="extras" aria-label="Extra keys"><button>Esc</button><button>Ctrl</button><button>Alt</button><button>Shift</button><button>Tab</button><button aria-label="Arrow keys">↔</button><button class="launcher" aria-label="Commands" aria-expanded="false" title="Commands"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="m7 9 2.5 2.5L7 14m5 0h4.5"/></svg></button></div><div class="ime" aria-hidden="true"></div><div class="gesture"></div></div>
+<button class="scrim" hidden tabindex="-1" aria-label="Dismiss commands"></button>
+<div class="menu" hidden><button data-open>Commands</button><button data-keyboard>Hide keyboard</button></div>
+<div class="feedback" role="status" hidden></div>
+</div><button class="reset">Reset preview</button><p></p></section>
+</template>
+<script>
+const actions = [['◫','Split pane…','Pane'],['⛶','Zoom pane','Pane'],['▤','Copy viewport','Pane'],['✎','Rename tab…','Tab'],['⇄','Port forwarding…','Session']];
+function mount(variant) {
+ const el=document.querySelector('#concept').content.firstElementChild.cloneNode(true), $=s=>el.querySelector(s);
+ document.querySelector('#concepts').append(el); $('h2').textContent=variant==='sheet'?'A · Bottom sheet':'B · Above-keyboard tray';
+ el.lastElementChild.textContent=variant==='sheet'?'More room for commands and search. The terminal keyboard returns when you close the sheet.':'The keyboard stays in place. Three quick actions, with More commands for the full list.';
+ for(const chars of ['qwertyuiop','asdfghjkl','zxcvbnm']) $('.ime').insertAdjacentHTML('beforeend',`<div class="keys">${[...chars].map(c=>`<span>${c}</span>`).join('')}</div>`);
+ $('.ime').insertAdjacentHTML('beforeend','<div class="keys"><span class="wide">?123</span><span class="space">English</span><span class="wide">↵</span></div>');
+ const phone=$('.phone'), launcher=$('.launcher'), menu=$('.menu'), menuButton=$('[data-menu]'), scrim=$('.scrim'), feedback=$('.feedback');
+ let panel, restore, toast;
+ function setMenu(on) {menu.hidden=!on;menuButton.setAttribute('aria-expanded',String(on));}
+ function setKeyboard(on){phone.classList.toggle('keyboard-hidden',!on);$('[data-keyboard]').textContent=on?'Hide keyboard':'Show keyboard';}
+ function close(focus=true){panel?.remove();panel=null;scrim.hidden=true;phone.classList.remove('background-hidden');launcher.setAttribute('aria-expanded','false');if(focus) restore?.focus();}
+ function show(kind,source){close(false);setMenu(false);restore=source;feedback.hidden=true;
+  panel=document.createElement('section');panel.className='panel '+kind;panel.setAttribute('aria-label','Commands for Shell');panel.tabIndex=-1;
+  panel.innerHTML=`${kind==='sheet'?'<div class="handle"></div>':''}<div class="panel-title"><span>Commands <span class="scope">Shell</span></span><button data-close aria-label="Close commands">×</button></div>${kind==='sheet'?'<input class="search" type="search" aria-label="Search commands" placeholder="Search commands">':''}<div class="results"></div>`;
+  (kind==='tray'?$('.input'):phone).append(panel);scrim.hidden=kind==='tray';phone.classList.toggle('background-hidden',kind==='sheet');launcher.setAttribute('aria-expanded','true');
+  panel.querySelector('[data-close]').onclick=()=>close();
+  function results(query=''){
+   const list=panel.querySelector('.results');list.replaceChildren();
+   const rows=kind==='tray'?[...actions.slice(0,3),['⌕','More commands…','']]:actions.filter(([,name,scope])=>(name+' '+scope).toLowerCase().includes(query.trim().toLowerCase()));
+   for(const [icon,name,scope] of rows){const btn=document.createElement('button');btn.className='command';btn.innerHTML=`<i aria-hidden="true">${icon}</i><span>${name}</span><em>${kind==='sheet'?scope:''}</em>`;list.append(btn);btn.onclick=()=>{if(name==='More commands…'){show('sheet',source);return;}close();feedback.textContent='Previewed: '+name;feedback.hidden=false;clearTimeout(toast);toast=setTimeout(()=>feedback.hidden=true,2000);};}
+   if(!rows.length){const empty=document.createElement('div');empty.className='empty';empty.textContent='No matching commands';list.append(empty);}
+  }
+  results();panel.querySelector('.search')?.addEventListener('input',event=>results(event.target.value));panel.focus({preventScroll:true});
+ }
+ launcher.onclick=()=>panel?close():show(variant,launcher);scrim.onclick=()=>close();
+ menuButton.onclick=()=>{if(panel)close(false);setMenu(menu.hidden);};$('[data-open]').onclick=()=>show('sheet',menuButton);
+ $('[data-keyboard]').onclick=()=>{setKeyboard(phone.classList.contains('keyboard-hidden'));setMenu(false);menuButton.focus();};
+ phone.addEventListener('keydown',event=>{if(event.key==='Escape'&&panel){event.preventDefault();close();}else if(event.key==='Escape'&&!menu.hidden){setMenu(false);menuButton.focus();}});
+ $('.reset').onclick=()=>{setKeyboard(true);show(variant,launcher);};show(variant,launcher);
+}
+if(new URLSearchParams(location.search).has('export')) document.body.classList.add('export');
+mount('sheet');mount('tray');
+</script>
+</body></html>
