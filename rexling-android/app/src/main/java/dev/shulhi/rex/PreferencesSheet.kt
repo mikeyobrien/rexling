@@ -88,7 +88,7 @@ internal const val MaxFontSize=20
 }
 
 @Composable private fun ChoiceGroup(content: @Composable ColumnScope.()->Unit) {
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f)),content=content)
+    Column(Modifier.fillMaxWidth().clip(Kit.group).background(Kit.groupFill()),content=content)
 }
 @Composable private fun RowDivider() {
     HorizontalDivider(Modifier.padding(horizontal=16.dp),color=MaterialTheme.colorScheme.outline.copy(alpha=.22f))

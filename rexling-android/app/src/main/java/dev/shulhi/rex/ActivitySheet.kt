@@ -39,19 +39,13 @@ import androidx.compose.ui.unit.dp
         (112+count.coerceIn(1,7)*72+groups.coerceAtMost(5)*24+sources.count {it.error.isNotBlank() || it.partial}*32).dp.coerceIn(208.dp,620.dp)
     }
     val scheme=MaterialTheme.colorScheme
-    val drawerSurface=Modifier.sheetSurface(hazeState,BottomSheetDefaults.ExpandedShape)
-    SheetWindow(onClose) {
-        Column(drawerSurface.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))) {
-        DrawerHandle()
-        Column(Modifier.fillMaxWidth().height(panelHeight).padding(bottom=4.dp).semantics {paneTitle="Activity"}) {
-            Row(Modifier.fillMaxWidth().heightIn(min=48.dp).padding(start=16.dp,end=4.dp),verticalAlignment=Alignment.CenterVertically) {
-                Text("Activity",Modifier.weight(1f),style=SettingsType.row,fontWeight=FontWeight.Bold)
-                TextButton(onClick=onMarkAll,contentPadding=PaddingValues(horizontal=8.dp),enabled=sources.any {source->source.connected && source.items.any {it.notifiable && it.key !in source.seen}}) {Text("Mark seen",style=SettingsType.detail)}
-                ChromeButton(ChromeIcon.REFRESH,"Refresh activity",sources.any {it.connected},onClick=onRefresh)
-                ChromeButton(ChromeIcon.CLOSE,"Close activity",onClick=onClose)
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal=16.dp).height(40.dp).clip(RoundedCornerShape(12.dp))
-                .background(scheme.surfaceVariant.copy(alpha=.45f)).padding(4.dp).selectableGroup()) {
+    SheetCard("Activity","Close activity",onClose,hazeState,actions={
+        TextButton(onClick=onMarkAll,contentPadding=PaddingValues(horizontal=8.dp),enabled=sources.any {source->source.connected && source.items.any {it.notifiable && it.key !in source.seen}}) {Text("Mark seen",style=Kit.meta)}
+        KitRoundButton(ChromeIcon.REFRESH,"Refresh activity",enabled=sources.any {it.connected},onClick=onRefresh)
+    }) {
+        Column(Modifier.fillMaxWidth().then(if(sheetDocks()) Modifier else Modifier.height(panelHeight-56.dp)).padding(bottom=4.dp).semantics {paneTitle="Activity"}) {
+            Row(Modifier.fillMaxWidth().padding(horizontal=16.dp).height(40.dp).clip(Kit.row)
+                .background(Kit.groupFill()).padding(4.dp).selectableGroup()) {
                 ActivityFilter.entries.forEach {entry->
                     val active=filter==entry
                     Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(9.dp))
@@ -79,7 +73,7 @@ import androidx.compose.ui.unit.dp
                         }
                         items(records,key={"${source.server.id}:${it.key}"}) {record->
                             val seen=record.notifiable && record.key in source.seen
-                            Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clip(RoundedCornerShape(12.dp)).background(scheme.surfaceVariant.copy(alpha=.45f))
+                            Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clip(Kit.row).background(Kit.groupFill())
                                 .semantics {contentDescription="${record.label}, ${record.stateLabel}, ${record.sessionLabel}, ${source.server.label}"
                                     stateDescription=listOf(record.stateLabel,if(seen) "Seen" else "",record.progress?.let {"$it%"}.orEmpty()).filter {it.isNotBlank()}.joinToString(" · ")}
                                 .clickable(enabled=source.connected,role=Role.Button){onSelect(ActivityTarget(source.server,record))}.padding(start=8.dp,end=4.dp,top=4.dp,bottom=4.dp),
@@ -105,7 +99,6 @@ import androidx.compose.ui.unit.dp
                 }
             }
         }
-    }
     }
 }
 
@@ -153,7 +146,8 @@ import androidx.compose.ui.unit.dp
         seen->scheme.onSurfaceVariant.copy(alpha=.22f)
         state==ActivityState.BLOCKED->if(LocalTerminalPalette.current.dark) Color(0xffe6a947) else Color(0xffb77710)
         state==ActivityState.ERROR->scheme.error
-        working || state==ActivityState.DONE->scheme.primary
+        state==ActivityState.DONE->Kit.done()
+        working->scheme.primary
         else->scheme.onSurfaceVariant.copy(alpha=.22f)
     }
     Canvas(modifier) {

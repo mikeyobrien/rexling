@@ -73,7 +73,7 @@ import kotlinx.coroutines.delay
     val target=PortForwards.items.firstOrNull {it.id==conflict?.id}
     if(conflict!=null && target!=null) {
         val owner=PortForwards.items.firstOrNull {it.id==conflict.owner}
-        AlertDialog(onDismissRequest={PortForwards.cancelConflict()},title={Text("Phone port ${target.localPort} is unavailable",style=SettingsType.title)},
+        KitDialog(onDismissRequest={PortForwards.cancelConflict()},title={Text("Phone port ${target.localPort} is unavailable",style=SettingsType.title)},
             text={Text(if(owner!=null) "${owner.server} is forwarding ${owner.target} on this port. Choose another port, or stop that forward and reuse the port."
                 else "This port is reserved or in use by another app. Rexling can choose an available phone port.",style=SettingsType.body)},
             confirmButton={Column(horizontalAlignment=Alignment.End) {

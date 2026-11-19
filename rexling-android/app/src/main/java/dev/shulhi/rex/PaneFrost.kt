@@ -89,15 +89,6 @@ private class PopupFrostNode(haze: HazeState,style: HazeStyle,var invalidator: P
     return visible || capture
 }
 
-@Composable internal fun DrawerHandle() {
-    // Docked on a wide screen there is nothing to drag.
-    if(sheetDocks()) return
-    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(16.dp),contentAlignment=androidx.compose.ui.Alignment.Center) {
-        androidx.compose.foundation.layout.Box(Modifier.width(28.dp).height(3.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant,androidx.compose.foundation.shape.RoundedCornerShape(3.dp)))
-    }
-}
-
 /**
  * Max height for a sheet's scrolling body: [preferred], but never more than fits between the
  * status bar and the bottom insets after [chrome] (handle, title, actions). Short windows (an

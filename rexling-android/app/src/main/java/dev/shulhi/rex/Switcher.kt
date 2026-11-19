@@ -42,7 +42,7 @@ private enum class SwitcherLevel {TABS,SESSIONS}
 
 /** Past this many, sessions no longer fit on screen at once and the list can be searched. */
 private const val SearchableSessions=6
-private val GroupShape=RoundedCornerShape(22.dp)
+private val GroupShape=Kit.group
 
 /**
  * One card for sessions, tabs and panes. It opens on the session's tabs; a tab with several panes
@@ -65,7 +65,7 @@ private val GroupShape=RoundedCornerShape(22.dp)
     LaunchedEffect(level) {rows.settle();if(level==SwitcherLevel.SESSIONS) refresh()}
     // Built out here on purpose: the frost redraws when its host window draws, and inside the sheet
     // the host would be the sheet's own window, which would then redraw itself every frame.
-    val frost=Modifier.sheetSurface(hazeState,RoundedCornerShape(30.dp))
+    val frost=Modifier.sheetSurface(hazeState,Kit.card)
     SheetWindow(onClose,card=true) {
         Box(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)).padding(horizontal=10.dp).padding(bottom=10.dp)) {
             Box(Modifier.fillMaxWidth().then(frost).dockedCardEdge().padding(12.dp)) {
@@ -168,12 +168,5 @@ private val GroupShape=RoundedCornerShape(22.dp)
     PillButton(ChromeIcon.ADD,"New session",model.ready,Modifier.fillMaxWidth(),onClick=model.newSession)
 }
 
-@Composable private fun PillButton(icon: ChromeIcon,label: String,enabled: Boolean,modifier: Modifier=Modifier,onClick: ()->Unit) {
-    Row(modifier.height(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.55f))
-        .clickable(enabled=enabled,role=Role.Button,onClick=onClick).padding(horizontal=18.dp),
-        verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.Center) {
-        val color=MaterialTheme.colorScheme.onSurface.copy(alpha=if(enabled) 1f else .38f)
-        ChromeSymbol(icon,Modifier.size(20.dp),color)
-        Text(label,Modifier.padding(start=10.dp),fontSize=16.sp,fontWeight=FontWeight.Medium,color=color)
-    }
-}
+@Composable private fun PillButton(icon: ChromeIcon,label: String,enabled: Boolean,modifier: Modifier=Modifier,onClick: ()->Unit) =
+    KitButton(label,onClick,modifier.height(52.dp),enabled=enabled,icon=icon)

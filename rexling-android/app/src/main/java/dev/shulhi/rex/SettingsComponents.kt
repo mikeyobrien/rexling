@@ -22,12 +22,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+/** The kit's type, under the names the settings screens use. */
 internal object SettingsType {
-    val title=TextStyle(fontSize=20.sp,lineHeight=26.sp,fontWeight=FontWeight.Bold)
-    val row=TextStyle(fontSize=14.sp,lineHeight=20.sp,fontWeight=FontWeight.Medium)
+    val title=Kit.title
+    val row=Kit.rowText
     val body=TextStyle(fontSize=14.sp,lineHeight=20.sp)
-    val detail=TextStyle(fontSize=12.sp,lineHeight=18.sp)
-    val section=detail.copy(fontWeight=FontWeight.SemiBold)
+    val detail=Kit.meta
+    val section=Kit.meta.copy(fontWeight=FontWeight.SemiBold)
 }
 
 @Composable internal fun SettingsHeader(title: String,closeDescription: String,onClose: ()->Unit,subtitle: String?=null) {
@@ -43,7 +44,7 @@ internal object SettingsType {
 @Composable internal fun SettingsSection(title: String,compact: Boolean=true,content: @Composable ColumnScope.()->Unit) {
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Text(title,Modifier.padding(start=4.dp),style=SettingsType.section,color=MaterialTheme.colorScheme.primary)
-        Surface(shape=RoundedCornerShape(if(compact) 12.dp else 20.dp),color=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f)) {
+        Surface(shape=Kit.group,color=Kit.groupFill()) {
             Column(Modifier.fillMaxWidth(),content=content)
         }
     }

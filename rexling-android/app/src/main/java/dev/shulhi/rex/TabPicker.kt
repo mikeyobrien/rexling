@@ -99,14 +99,14 @@ internal class TabHoldState {
     // Not focusable: the finger that opened it keeps driving the header's gesture.
     Popup(alignment=Alignment.TopStart,offset=IntOffset(with(density) {56.dp.roundToPx()},headerBottom),properties=PopupProperties(focusable=false)) {
         // A popup is its own window, so the workspace blur cannot reach it: use an opaque surface.
-        Column(Modifier.width(260.dp).shadow(16.dp,RoundedCornerShape(22.dp)).clip(RoundedCornerShape(22.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh).border(1.dp,MaterialTheme.colorScheme.outline.copy(alpha=.25f),RoundedCornerShape(22.dp))
+        Column(Modifier.width(260.dp).shadow(16.dp,Kit.group).clip(Kit.group)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh).border(1.dp,MaterialTheme.colorScheme.outline.copy(alpha=.25f),Kit.group)
             .padding(vertical=6.dp).semantics {contentDescription="Choose a tab"}) {
             tabs.forEachIndexed {index,tab->
                 val active=tab.id==current
-                Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal=6.dp).clip(RoundedCornerShape(14.dp))
+                Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal=6.dp).clip(Kit.row)
                     .background(if(index==highlighted) MaterialTheme.colorScheme.primary.copy(alpha=.28f) else Color.Transparent)
-                    .border(if(index==highlighted) 1.dp else 0.dp,if(index==highlighted) MaterialTheme.colorScheme.primary.copy(alpha=.6f) else Color.Transparent,RoundedCornerShape(14.dp))
+                    .border(if(index==highlighted) 1.dp else 0.dp,if(index==highlighted) MaterialTheme.colorScheme.primary.copy(alpha=.6f) else Color.Transparent,Kit.row)
                     .padding(horizontal=10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
                     Box(Modifier.width(44.dp)) {ProgramStack(tab.programs,tab.selectedPane,framed=true,fixedSlot=true)}
                     Text(tab.title,Modifier.weight(1f),fontSize=15.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)

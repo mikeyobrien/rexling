@@ -23,7 +23,7 @@ internal fun connectionMessage(phase: String,network: Boolean?): String? = when 
 }
 @Composable internal fun ConnectionNotice(phase: String,network: Boolean?,onRetry: ()->Unit,modifier: Modifier=Modifier) {
     connectionMessage(phase,network)?.let {message->
-        Row(modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(start=12.dp,end=6.dp),
+        Row(modifier.fillMaxWidth().clip(Kit.row).background(MaterialTheme.colorScheme.surfaceVariant).padding(start=12.dp,end=6.dp),
             verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
             Text(message,Modifier.weight(1f),fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick=onRetry,enabled=network!=false,contentPadding=PaddingValues(horizontal=8.dp,vertical=0.dp)) {Text("Retry now",fontSize=11.sp)}

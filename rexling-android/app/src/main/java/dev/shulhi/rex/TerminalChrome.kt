@@ -622,7 +622,7 @@ internal interface TitleHold {
                         }
                         Spacer(Modifier.height(2.dp))
                     }
-                    androidx.compose.material3.DropdownMenu(menuId==w.id,{menuId=null},containerColor=MaterialTheme.colorScheme.surface,tonalElevation=0.dp) {
+                    androidx.compose.material3.DropdownMenu(menuId==w.id,{menuId=null},containerColor=MaterialTheme.colorScheme.surface,tonalElevation=0.dp,shape=Kit.group) {
                         TerminalMenuItem(leftLabel,ChromeIcon.LEFT,enabled=enabled && windowIndex>0,onClick={menuId=null;moveBy(-1)})
                         TerminalMenuItem(rightLabel,ChromeIcon.RIGHT,enabled=enabled && windowIndex<windows.lastIndex,onClick={menuId=null;moveBy(1)})
                         TerminalMenuItem("Close tab",ChromeIcon.CLOSE,enabled=enabled,onClick={menuId=null;onClose(w)})
@@ -736,7 +736,7 @@ internal interface TitleHold {
 }
 
 /** A keycap in the keyboard's own shape, so the row reads as part of the keyboard below it. */
-internal val KeyCapShape=RoundedCornerShape(6.dp)
+internal val KeyCapShape=Kit.key
 /** How many keys wide a toolbar key is. */
 internal fun keyUnits(key: ToolbarKey)=if(key==ToolbarKey.ARROWS) 2f else 1f
 @Composable internal fun KeyCapLabel(label: String,color: Color,active: Boolean=false) {

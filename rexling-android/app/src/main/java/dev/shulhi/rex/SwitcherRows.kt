@@ -72,7 +72,7 @@ import kotlin.math.roundToInt
 
 /** How far a row slides to show its Close button. */
 private val RevealWidth=84.dp
-private val RowShape=RoundedCornerShape(14.dp)
+private val RowShape=Kit.row
 
 /**
  * A list whose rows are managed in place. Holding a row opens its menu; dragging the held row

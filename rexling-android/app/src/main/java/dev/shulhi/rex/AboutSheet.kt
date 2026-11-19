@@ -60,7 +60,7 @@ internal data class AppBuildInfo(val version: String,val number: Int,val type: S
                 Text(stringResource(R.string.app_subtitle),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f)).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.fillMaxWidth().clip(Kit.row).background(Kit.groupFill()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             BuildInfoRow("Version",info.version)
             BuildInfoRow("Build","${info.number} · ${info.type}")
             BuildInfoRow("Commit",info.commit)

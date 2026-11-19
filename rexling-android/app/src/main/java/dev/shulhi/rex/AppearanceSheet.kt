@@ -50,8 +50,8 @@ import kotlin.math.roundToInt
                 LazyColumn(Modifier.fillMaxWidth().weight(1f,fill=false),contentPadding=PaddingValues(horizontal=16.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                     items(options,key={it.id}) {theme->
                         val active=theme.id==selected.id
-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f))
-                            .then(if(active) Modifier.border(1.dp,MaterialTheme.colorScheme.primary,RoundedCornerShape(12.dp)) else Modifier)
+                        Row(Modifier.fillMaxWidth().clip(Kit.row).background(Kit.groupFill())
+                            .then(if(active) Modifier.border(1.dp,MaterialTheme.colorScheme.primary,Kit.row) else Modifier)
                             .semantics(mergeDescendants=true) {contentDescription="Theme ${theme.name}";this.selected=active;role=Role.RadioButton}
                             .clickable {onTheme(theme.id);editing=null}.padding(12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                             ThemeSwatch(theme)

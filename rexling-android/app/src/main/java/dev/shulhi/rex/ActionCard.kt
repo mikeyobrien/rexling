@@ -37,7 +37,7 @@ internal class ActionCardModel(val overline: String,val title: String,
     /** "Release" or "Take over". */
     val ownership: CardAction?,val tiles: List<CardAction>,val places: List<CardAction>,val preferences: ()->Unit)
 
-private val CardGroupShape=RoundedCornerShape(22.dp)
+private val CardGroupShape=Kit.group
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun ActionCard(model: ActionCardModel,onClose: ()->Unit,hazeState: HazeState?=null) {
@@ -46,7 +46,7 @@ private val CardGroupShape=RoundedCornerShape(22.dp)
     // Every action leaves the card first, so what it opens is not stacked on top of it.
     fun leave(run: ()->Unit): ()->Unit={onClose();run()}
     // Built outside the sheet: inside, the frost's host would be the sheet's own window and redraw it every frame.
-    val frost=Modifier.sheetSurface(hazeState,RoundedCornerShape(30.dp))
+    val frost=Modifier.sheetSurface(hazeState,Kit.card)
     SheetWindow(onClose,card=true) {
         Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)).padding(horizontal=10.dp).padding(bottom=10.dp)
             .then(frost).dockedCardEdge().padding(12.dp).semantics {contentDescription="Terminal actions"},verticalArrangement=Arrangement.spacedBy(10.dp)) {
@@ -55,8 +55,8 @@ private val CardGroupShape=RoundedCornerShape(22.dp)
                     if(model.overline.isNotBlank()) Text(model.overline,fontSize=12.sp,fontWeight=FontWeight.Medium,color=scheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
                     Text(model.title,fontSize=20.sp,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)
                 }
-                RoundButton(ChromeIcon.SETTINGS,"Preferences",leave(model.preferences))
-                RoundButton(ChromeIcon.CLOSE,"Close actions",onClose)
+                KitRoundButton(ChromeIcon.SETTINGS,"Preferences",onClick=leave(model.preferences))
+                KitRoundButton(ChromeIcon.CLOSE,"Close actions",onClick=onClose)
             }
             Row(Modifier.fillMaxWidth().heightIn(min=36.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 val tint=if(model.controlled) scheme.primary else scheme.onSurfaceVariant
@@ -100,12 +100,5 @@ private val CardGroupShape=RoundedCornerShape(22.dp)
                 }
             }
         }
-    }
-}
-
-@Composable private fun RoundButton(icon: ChromeIcon,description: String,onClick: ()->Unit) {
-    Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.6f))
-        .clickable(role=Role.Button,onClick=onClick).semantics {contentDescription=description},contentAlignment=Alignment.Center) {
-        ChromeSymbol(icon,Modifier.size(18.dp))
     }
 }

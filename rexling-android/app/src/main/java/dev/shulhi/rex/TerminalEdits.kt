@@ -20,7 +20,7 @@ private fun editableTerminalLabel(label: String)=label.takeUnless {
     var label by remember(target) {mutableStateOf(editableTerminalLabel(target.label))}
     var rejected by remember {mutableStateOf(false)}
     val error=terminalLabelError(label)
-    AlertDialog(onDismissRequest=onClose,title={Text(if(target.tab) "Rename tab" else "Rename pane")},text={
+    KitDialog(onDismissRequest=onClose,title={Text(if(target.tab) "Rename tab" else "Rename pane")},text={
         Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(label,{label=it;rejected=false},Modifier.fillMaxWidth(),label={Text("Name")},singleLine=true,isError=error!=null)
             Text(error ?: if(rejected) "This terminal changed. Review it and try again." else "Leave empty to use the automatic title.",style=SettingsType.detail,
@@ -38,7 +38,7 @@ private fun editableTerminalLabel(label: String)=label.takeUnless {
     var rejected by remember {mutableStateOf(false)}
     LaunchedEffect(anchors.map {it.id}) {if(anchors.none {it.id==anchor}) anchor=anchors.firstOrNull()?.id.orEmpty()}
     fun title(block: BlockItem)=(programs[block.id] ?: ProgramIdentity.Loading).paneTitle(block.label,titles[block.id].orEmpty())
-    AlertDialog(onDismissRequest=onClose,title={Text("Dock pane")},text={
+    KitDialog(onDismissRequest=onClose,title={Text("Dock pane")},text={
         Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Text("Place beside",style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Box {

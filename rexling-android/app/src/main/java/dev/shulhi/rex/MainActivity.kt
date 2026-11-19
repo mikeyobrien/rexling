@@ -115,7 +115,7 @@ class MainActivity : ComponentActivity() {
         }
         ForwardLinkUi(Modifier.align(Alignment.BottomEnd).windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(end=12.dp,bottom=116.dp),hazeState=noticeHaze)
     }
-    if(model.notificationNotice.isNotBlank()) AlertDialog(onDismissRequest={model.notificationNotice=""},title={Text("Notification")},text={Text(model.notificationNotice)},confirmButton={TextButton(onClick={model.notificationNotice=""}) {Text("OK")}})
+    if(model.notificationNotice.isNotBlank()) KitDialog(onDismissRequest={model.notificationNotice=""},title={Text("Notification")},text={Text(model.notificationNotice)},confirmButton={TextButton(onClick={model.notificationNotice=""}) {Text("OK")}})
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -472,7 +472,7 @@ class MainActivity : ComponentActivity() {
         enabled=model.neovimShortcutsEnabled,onEnabled=model::enableNeovimShortcuts,
         layout=model.neovimShortcutLayout,onLayout=model::changeNeovimShortcutLayout,effect=model.neovimShortcutEffect,onEffect=model::changeNeovimShortcutEffect,
         hapticsEnabled=model.neovimShortcutHaptics,onHaptics=model::changeNeovimShortcutHaptics,hazeState=workspaceHaze)
-    if(model.images.notice.isNotEmpty()) AlertDialog(onDismissRequest={model.images.notice=""},title={Text("Image upload")},text={Text(model.images.notice)},confirmButton={TextButton(onClick={model.images.notice=""}) {Text("OK")}})
+    if(model.images.notice.isNotEmpty()) KitDialog(onDismissRequest={model.images.notice=""},title={Text("Image upload")},text={Text(model.images.notice)},confirmButton={TextButton(onClick={model.images.notice=""}) {Text("OK")}})
     if(about) AboutSheet(hazeState=workspaceHaze) {about=false}
     if(alerts) BackgroundAlertsDialog(model,hazeState=workspaceHaze) {alerts=false}
     if(forwards) PortForwardSheet(model.forwardServers(),model.activeServerId,workspaceHaze,onClose={forwards=false},onStart={id->

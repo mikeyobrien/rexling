@@ -30,7 +30,7 @@ internal fun sessionNameError(raw: String): String? {
     val canSave=enabled && error==null && value.text.trim()!=target.session.label
     val focus=remember {FocusRequester()}
     LaunchedEffect(target.key) {focus.requestFocus()}
-    AlertDialog(onDismissRequest=onDismiss,title={Text("Rename session")},text={
+    KitDialog(onDismissRequest=onDismiss,title={Text("Rename session")},text={
         Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
             Text(target.server.label,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(value,{value=it},Modifier.fillMaxWidth().focusRequester(focus),label={Text("Session name")},singleLine=true,

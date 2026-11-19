@@ -172,7 +172,7 @@ internal fun tailscalePeers(status: org.json.JSONObject?): List<TailscalePeerSta
             source=String(output.toByteArray());pasted=false;passphrase="";error=null
         }}.onFailure {error=it.message}
     }
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.5f)).padding(12.dp),verticalArrangement=Arrangement.spacedBy(2.dp)) {
+    Column(Modifier.fillMaxWidth().clip(Kit.row).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.5f)).padding(12.dp),verticalArrangement=Arrangement.spacedBy(2.dp)) {
         Text("SSH key",style=SettingsType.row)
         Text(if(imported) "Saved securely on this phone" else "Optional for Tailscale SSH.",style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(2.dp)) {
@@ -192,7 +192,7 @@ internal fun tailscalePeers(status: org.json.JSONObject?): List<TailscalePeerSta
         }
         if(source==null) error?.let {Text(it,color=MaterialTheme.colorScheme.error,style=SettingsType.detail)}
     }
-    if(source!=null) AlertDialog(onDismissRequest={dismiss()},title={Text(if(pasted) "Paste SSH key" else "Import SSH key",style=SettingsType.title)},text={
+    if(source!=null) KitDialog(onDismissRequest={dismiss()},title={Text(if(pasted) "Paste SSH key" else "Import SSH key",style=SettingsType.title)},text={
         Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Text("The key stays encrypted on this phone. Enter its passphrase if required.",style=SettingsType.detail)
             if(pasted) OutlinedTextField(source.orEmpty(),{text->
@@ -220,7 +220,7 @@ internal fun tailscalePeers(status: org.json.JSONObject?): List<TailscalePeerSta
     val host=status.optJSONArray("hosts")?.optJSONObject(0)
     var hidden by remember {mutableStateOf("")}
     val signature=host?.toString().orEmpty()
-    if(host!=null && hidden!=signature) AlertDialog(onDismissRequest={hidden=signature},title={Text(if(host.optString("previous").isEmpty()) "Trust SSH host?" else "SSH host key changed")},text={
+    if(host!=null && hidden!=signature) KitDialog(onDismissRequest={hidden=signature},title={Text(if(host.optString("previous").isEmpty()) "Trust SSH host?" else "SSH host key changed")},text={
         Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Text(host.optString("host"));Text(host.optString("type"),style=SettingsType.detail);Text(host.optString("fingerprint"),style=SettingsType.detail)
             if(host.optString("previous").isNotEmpty()) Text("Previous: ${host.optString("previous")}",style=SettingsType.detail)
@@ -229,7 +229,7 @@ internal fun tailscalePeers(status: org.json.JSONObject?): List<TailscalePeerSta
     },confirmButton={TextButton(onClick={scope.launch {NetworkSettings.trust(host.getString("host"),host.getString("fingerprint"))}}) {Text("Trust host")}},dismissButton={TextButton(onClick={hidden=signature}) {Text("Cancel")}})
     else {
         val banners=status.optJSONObject("banners");val endpoint=banners?.keys()?.asSequence()?.firstOrNull();val message=endpoint?.let {banners.optString(it)}.orEmpty()
-        if(message.isNotBlank() && hidden!=message) AlertDialog(onDismissRequest={hidden=message},title={Text("SSH sign-in")},text={Text(message)},confirmButton={
+        if(message.isNotBlank() && hidden!=message) KitDialog(onDismissRequest={hidden=message},title={Text("SSH sign-in")},text={Text(message)},confirmButton={
             TextButton(onClick={(context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("SSH sign-in",message))}) {Text("Copy message")}
         },dismissButton={
             val link=Regex("https?://[^\\s<>]+").find(message)?.value

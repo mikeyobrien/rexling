@@ -87,4 +87,4 @@ internal val LocalSheetDock=staticCompositionLocalOf<SheetDock?> {null}
 
 /** A docked card has no glass behind it, so it gets an edge to stand off the terminal. */
 @Composable internal fun Modifier.dockedCardEdge(): Modifier =
-    if(sheetDocks()) border(1.dp,MaterialTheme.colorScheme.outline.copy(alpha=.3f),RoundedCornerShape(30.dp)) else this
+    if(sheetDocks()) border(1.dp,MaterialTheme.colorScheme.outline.copy(alpha=.3f),Kit.card) else this

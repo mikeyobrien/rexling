@@ -54,7 +54,7 @@ internal val WideRailWidth=72.dp
         Column(Modifier.fillMaxSize().clip(WideCardShape).background(MaterialTheme.colorScheme.surface)) {
             // Header: the session is the title; the app name adds nothing here.
             Row(Modifier.fillMaxWidth().heightIn(min=56.dp).padding(start=6.dp,end=4.dp),verticalAlignment=Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).clickable(enabled=model.enabled,role=Role.Button,onClick=onSessions)
+                Column(Modifier.weight(1f).clip(Kit.row).clickable(enabled=model.enabled,role=Role.Button,onClick=onSessions)
                     .semantics {contentDescription="Switch session"}.padding(horizontal=10.dp,vertical=6.dp)) {
                     Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
                         Text(model.session,Modifier.weight(1f,fill=false),fontSize=20.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)

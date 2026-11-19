@@ -83,7 +83,7 @@ import dev.chrisbanes.haze.HazeState
                 Row(Modifier.fillMaxWidth().height(48.dp).onGloballyPositioned {toolbarBounds=it.boundsInRoot()}
                     .semantics {contentDescription="Your toolbar drop area"},horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.CenterVertically) {
                     if(draft.isEmpty()) Box(Modifier.weight(1f).fillMaxHeight().clip(KeyCapShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f)),contentAlignment=Alignment.Center) {
+                        .background(Kit.groupFill()),contentAlignment=Alignment.Center) {
                         Text("Drag buttons here",style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     draft.forEachIndexed {index,item->key(item.id) {
@@ -114,7 +114,7 @@ import dev.chrisbanes.haze.HazeState
                 }
                 LazyVerticalGrid(columns=GridCells.Fixed(4),modifier=Modifier.fillMaxWidth().weight(1f,fill=false).heightIn(min=96.dp,max=240.dp)
                     .onGloballyPositioned {paletteBounds=it.boundsInRoot()}
-                    .clip(RoundedCornerShape(12.dp)).background(if(overPalette && fromToolbar) MaterialTheme.colorScheme.errorContainer.copy(alpha=.4f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f))
+                    .clip(RoundedCornerShape(12.dp)).background(if(overPalette && fromToolbar) MaterialTheme.colorScheme.errorContainer.copy(alpha=.4f) else Kit.groupFill())
                     .semantics {contentDescription="Available toolbar buttons"},contentPadding=PaddingValues(8.dp),horizontalArrangement=Arrangement.spacedBy(6.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                     items(ToolbarKey.entries.filter {it !in draft},key={it.id}) {item->
                         DisposableEffect(item) {onDispose {availableBounds.remove(item)}}

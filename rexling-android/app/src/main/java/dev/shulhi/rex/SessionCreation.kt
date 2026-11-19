@@ -10,13 +10,13 @@ import androidx.compose.ui.unit.dp
 
 @Composable internal fun NewSessionDialog(serverLabel: String,enabled: Boolean,onCreate: (String)->Boolean,onDismiss: ()->Unit) {
     var name by rememberSaveable {mutableStateOf("")}
-    AlertDialog(onDismissRequest=onDismiss,containerColor=MaterialTheme.colorScheme.surface,
+    KitDialog(onDismissRequest=onDismiss,
         title={Text("New session",style=SettingsType.title)},text={
             Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 Text("On $serverLabel",style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(name,{name=it},Modifier.fillMaxWidth(),singleLine=true,
                     textStyle=SettingsType.row,label={Text("Name (optional)",style=SettingsType.detail)},
-                    supportingText={Text("Leave blank for a name from Rex.",style=SettingsType.detail)})
+                    )
             }
         },confirmButton={Button(onClick={if(onCreate(name)) onDismiss()},enabled=enabled) {Text("Create",style=SettingsType.row)}},
         dismissButton={TextButton(onClick=onDismiss) {Text("Cancel",style=SettingsType.row)}})
