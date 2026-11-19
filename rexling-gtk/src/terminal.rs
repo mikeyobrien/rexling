@@ -566,7 +566,21 @@ impl Inner {
                 let color = crate::theme::legible(color, behind);
                 let alpha = if cell.attributes & palette::FAINT != 0 { 0.6 } else { 1.0 };
                 set_color(cr, color, alpha);
-                if text.bytes().any(|b| b != b' ') {
+                // Block characters are drawn as the shapes they are, edge to edge, so bars and meters have no seams.
+                let blocks = if cell.width == 1 { cell.text.chars().next().filter(|_| cell.text.chars().count() == 1).and_then(block) } else { None };
+                if let Some((parts, shade)) = blocks {
+                    set_color(cr, color, alpha * shade);
+                    let _ = cr.save();
+                    cr.set_antialias(gtk::cairo::Antialias::None);
+                    for [left, up, wide, high] in parts {
+                        // Edges land on whole pixels, the same ones the neighbouring cell uses.
+                        let (x0, x1) = ((x + left * metrics.width).round(), (x + (left + wide) * metrics.width).round());
+                        let (y0, y1) = ((top + up * metrics.height).round(), (top + (up + high) * metrics.height).round());
+                        cr.rectangle(x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0));
+                    }
+                    let _ = cr.fill();
+                    let _ = cr.restore();
+                } else if text.bytes().any(|b| b != b' ') {
                     let cell_style = cell.attributes & (palette::BOLD | palette::ITALIC);
                     if cell_style != style {
                         layout.set_font_description(Some(&self.description(cell_style)));
@@ -1058,3 +1072,36 @@ mod timing {
         });
     }
 }
+/// The rectangles of a block element, as shares of its cell, and how solid it is.
+fn block(character: char) -> Option<(Vec<[f64; 4]>, f64)> {
+    const UPPER_LEFT: [f64; 4] = [0.0, 0.0, 0.5, 0.5];
+    const UPPER_RIGHT: [f64; 4] = [0.5, 0.0, 0.5, 0.5];
+    const LOWER_LEFT: [f64; 4] = [0.0, 0.5, 0.5, 0.5];
+    const LOWER_RIGHT: [f64; 4] = [0.5, 0.5, 0.5, 0.5];
+    let code = character as u32;
+    let solid = |parts: Vec<[f64; 4]>| Some((parts, 1.0));
+    match code {
+        0x2580 => solid(vec![[0.0, 0.0, 1.0, 0.5]]),
+        0x2581..=0x2588 => {
+            let eighths = (code - 0x2580) as f64 / 8.0;
+            solid(vec![[0.0, 1.0 - eighths, 1.0, eighths]])
+        }
+        0x2589..=0x258f => solid(vec![[0.0, 0.0, (0x2590 - code) as f64 / 8.0, 1.0]]),
+        0x2590 => solid(vec![[0.5, 0.0, 0.5, 1.0]]),
+        0x2591..=0x2593 => Some((vec![[0.0, 0.0, 1.0, 1.0]], (code - 0x2590) as f64 / 4.0)),
+        0x2594 => solid(vec![[0.0, 0.0, 1.0, 0.125]]),
+        0x2595 => solid(vec![[0.875, 0.0, 0.125, 1.0]]),
+        0x2596 => solid(vec![LOWER_LEFT]),
+        0x2597 => solid(vec![LOWER_RIGHT]),
+        0x2598 => solid(vec![UPPER_LEFT]),
+        0x2599 => solid(vec![UPPER_LEFT, LOWER_LEFT, LOWER_RIGHT]),
+        0x259a => solid(vec![UPPER_LEFT, LOWER_RIGHT]),
+        0x259b => solid(vec![UPPER_LEFT, UPPER_RIGHT, LOWER_LEFT]),
+        0x259c => solid(vec![UPPER_LEFT, UPPER_RIGHT, LOWER_RIGHT]),
+        0x259d => solid(vec![UPPER_RIGHT]),
+        0x259e => solid(vec![UPPER_RIGHT, LOWER_LEFT]),
+        0x259f => solid(vec![UPPER_RIGHT, LOWER_LEFT, LOWER_RIGHT]),
+        _ => None,
+    }
+}
+

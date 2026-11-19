@@ -24,6 +24,11 @@ const SHELLS: &[&str] = &["fish", "zsh", "bash", "sh", "dash", "ash", "ksh", "mk
 /// Programs a shell runs for an instant to draw its prompt. They are never what a pane is "running".
 const HELPERS: &[&str] = &["zoxide", "starship", "direnv", "atuin", "mise", "fnm", "vivid", "tput", "dircolors", "lesspipe", "lesspipe.sh", "oh-my-posh", "omp"];
 
+/// Whether a program, by the name it is shown under, is a shell.
+pub fn shell(name: &str) -> bool {
+    SHELLS.contains(&name.to_lowercase().as_str())
+}
+
 /// Whether a program is only a shell's prompt helper, caught in the moment it ran.
 pub fn helper(candidate: &str) -> bool {
     HELPERS.contains(&executable(candidate).as_str())

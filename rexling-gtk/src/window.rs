@@ -231,38 +231,47 @@ fn branch_mark() -> gtk::DrawingArea {
     area
 }
 
-/// A tab's panes in miniature: each program's icon where its pane is, as large as its pane allows,
-/// so the picture is the real layout. With many small panes it grows a little rather than rearranging them.
-/// Only panes that float over others are set out in a grid, since their icons would cover the rest.
+/// Where each pane's icon goes in a tab's miniature, as shares of it. The arrangement is the real
+/// one: the same rows and columns, the same pane beside or above the same pane. Only the sizes are
+/// evened out, so a pane an eighth of the window wide still has room for an icon.
+fn miniature(rects: &[[f64; 4]]) -> Vec<[f64; 4]> {
+    // Every edge where one pane ends and another begins, across and down.
+    let edges = |from: usize| {
+        let mut edges: Vec<f64> = rects.iter().flat_map(|r| [r[from], r[from] + r[from + 2]]).collect();
+        edges.sort_by(f64::total_cmp);
+        edges.dedup_by(|a, b| (*a - *b).abs() < 0.004);
+        edges
+    };
+    let (columns, rows) = (edges(0), edges(1));
+    let at = |edges: &[f64], value: f64| edges.iter().position(|edge| (*edge - value).abs() < 0.004).unwrap_or(0) as f64 / (edges.len().max(2) - 1) as f64;
+    rects.iter().map(|r| {
+        let (left, top, right, bottom) = (at(&columns, r[0]), at(&rows, r[1]), at(&columns, r[0] + r[2]), at(&rows, r[1] + r[3]));
+        [left, top, right - left, bottom - top]
+    }).collect()
+}
+
+/// A tab's panes in miniature: each program's icon where its pane is, all one size, in a box the
+/// same size on every row. Panes that float over others are set out in a grid, since their icons would cover the rest.
 fn minimap(panes: &[PaneRow], scale: i32) -> gtk::Fixed {
-    const LEGIBLE: f64 = 10.0;
+    const WIDTH: f64 = 50.0;
+    const HEIGHT: f64 = 40.0;
+    let map = gtk::Fixed::builder().width_request(WIDTH as i32).height_request(HEIGHT as i32).valign(gtk::Align::Center).build();
     let shown: Vec<&PaneRow> = panes.iter().filter(|pane| pane.rect[2] > 0.0 && pane.rect[3] > 0.0).collect();
-    let mut cells: Vec<[f64; 4]> = shown.iter().map(|pane| pane.rect).collect();
-    // The height an icon can have in its share of a miniature of this size, keeping its shape.
-    let fit = |rect: &[f64; 4], width: f64, height: f64| (rect[3] * height - 2.0).min((rect[2] * width - 2.0) * 48.0 / 61.0).floor();
-    let least = |cells: &[[f64; 4]], width: f64, height: f64| cells.iter().map(|rect| fit(rect, width, height)).fold(f64::MAX, f64::min);
-    let (mut width, mut height) = (50.0, 40.0);
-    let covered = shown.iter().any(|pane| pane.floating);
-    if covered {
-        let columns = (cells.len() as f64).sqrt().ceil().min(3.0);
-        let rows = (cells.len() as f64 / columns).ceil();
-        cells = (0..cells.len()).map(|at| [(at as f64 % columns) / columns, (at as f64 / columns).floor() / rows, 1.0 / columns, 1.0 / rows]).collect();
-    }
-    let smallest = least(&cells, width, height);
-    if smallest < LEGIBLE && !cells.is_empty() {
-        // Room for the smallest icon to be told apart, as far as the row allows.
-        let grow = ((LEGIBLE + 2.0) / (smallest + 2.0).max(1.0)).min(1.6);
-        (width, height) = ((width * grow).round(), (height * grow).round());
-    }
-    let map = gtk::Fixed::builder().width_request(width as i32).height_request(height as i32).valign(gtk::Align::Center).build();
-    // Sizes follow the panes, but stay within sight of one another, so the picture reads as one thing.
-    let most = (least(&cells, width, height).max(6.0) * 1.8).clamp(12.0, 26.0);
+    let rects: Vec<[f64; 4]> = shown.iter().map(|pane| pane.rect).collect();
+    let cells = if shown.iter().any(|pane| pane.floating) {
+        let columns = (rects.len() as f64).sqrt().ceil().min(3.0);
+        let rows = (rects.len() as f64 / columns).ceil();
+        (0..rects.len()).map(|at| [(at as f64 % columns) / columns, (at as f64 / columns).floor() / rows, 1.0 / columns, 1.0 / rows]).collect()
+    } else {
+        miniature(&rects)
+    };
+    // The height an icon can have in the smallest share, keeping its shape.
+    let high = cells.iter().map(|rect| (rect[3] * HEIGHT - 1.0).min((rect[2] * WIDTH - 1.0) * 48.0 / 61.0).floor()).fold(f64::MAX, f64::min).clamp(6.0, 26.0);
+    let wide = (high * 61.0 / 48.0).round();
     for (pane, rect) in shown.iter().zip(cells) {
-        let high = fit(&rect, width, height).clamp(6.0, most);
-        let wide = (high * 61.0 / 48.0).round();
         if let Some(texture) = tiles::texture(&pane.tile, high as i32 * scale) {
             let icon = gtk::Picture::builder().paintable(&texture).can_shrink(true).width_request(wide as i32).height_request(high as i32).build();
-            map.put(&icon, ((rect[0] + rect[2] / 2.0) * width - wide / 2.0).round(), ((rect[1] + rect[3] / 2.0) * height - high / 2.0).round());
+            map.put(&icon, ((rect[0] + rect[2] / 2.0) * WIDTH - wide / 2.0).round(), ((rect[1] + rect[3] / 2.0) * HEIGHT - high / 2.0).round());
         }
     }
     map
@@ -2017,7 +2026,7 @@ impl Ui {
                                 "failed" => 1,
                                 "done" => 2,
                                 "working" => 3,
-                                _ if programs::tile(state.programs.get(&b.id).map_or(&[][..], |p| p.as_slice()), tiles::exists) != "shell" => 4,
+                                _ if !programs::shell(&identity(&state, b)) => 4,
                                 _ => 5,
                             };
                             (rank, identity(&state, b))
@@ -2130,7 +2139,7 @@ impl Ui {
             }
             content.append(&text);
             if row.status_class == "working" && row.panes.is_empty() {
-                content.append(&adw::Spinner::builder().valign(gtk::Align::Center).build());
+                content.append(&gtk::Box::builder().css_classes(["rexling-pane-dot", "working"]).valign(gtk::Align::Center).build());
             }
             // Its place in the list tells apart tabs that are otherwise alike.
             if next.len() > 1 {
@@ -2680,5 +2689,24 @@ impl Ui {
             Event::Upload(path) => self.upload(block, &path),
             Event::OpenLink(link) => gtk::UriLauncher::new(&link).launch(Some(&self.window), gio::Cancellable::NONE, |_| {}),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::miniature;
+
+    #[test]
+    fn miniature_keeps_the_arrangement_and_evens_the_sizes() {
+        // One pane on the left; on the right a half, a quarter and a quarter stacked.
+        let cells = miniature(&[[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 0.5], [0.5, 0.5, 0.5, 0.25], [0.5, 0.75, 0.5, 0.25]]);
+        assert_eq!(cells[0], [0.0, 0.0, 0.5, 1.0], "the left pane still spans every row");
+        let third = 1.0 / 3.0;
+        for (cell, row) in cells[1..].iter().zip(0..) {
+            assert!((cell[1] - row as f64 * third).abs() < 1e-9 && (cell[3] - third).abs() < 1e-9, "three even rows on the right: {cell:?}");
+        }
+        // Four columns of a half, a quarter and two eighths become four even columns, in the same order.
+        let columns = miniature(&[[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.25, 1.0], [0.75, 0.0, 0.125, 1.0], [0.875, 0.0, 0.125, 1.0]]);
+        assert!(columns.iter().zip(0..).all(|(cell, at)| (cell[0] - at as f64 * 0.25).abs() < 1e-9 && (cell[2] - 0.25).abs() < 1e-9));
     }
 }
