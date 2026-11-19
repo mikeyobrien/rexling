@@ -139,7 +139,8 @@ import dev.chrisbanes.haze.hazeSource
                                 view.onKeyboardFocus={keyboardFocus=it}
                                 keyboardFocus=view.keyboardFocus
                                 view.onDimensions=if(center && block.id==liveBlock) onDimensions else {_,_->}
-                                view.setTerminalPaddingDp(12,8,if(bottomControlsInset>0.dp || blocks.size>1) 28 else 6)
+                                // Room under the last row for the pane pill, so it never sits on the prompt.
+                view.setTerminalPaddingDp(12,8,if(blocks.size>1 && paneIndicator) 52 else if(bottomControlsInset>0.dp) 28 else 6)
                                 view.palette=palette;view.textSp=fontSize
                                 if(retiring || block.id!=liveBlock || bindLiveView?.invoke(block.id,view)!=true) view.screen=frame
                                 view.interactive=center
@@ -173,7 +174,7 @@ import dev.chrisbanes.haze.hazeSource
                         }
                     }
                     if(center && (frame?.scroll?.below ?: 0)>0) {
-                        Text("↓ Latest",Modifier.align(Alignment.BottomEnd).padding(end=12.dp,bottom=(if(blocks.size>1 && paneIndicator) 46.dp else 10.dp)+bottomControlsInset)
+                        Text("↓ Latest",Modifier.align(Alignment.BottomEnd).padding(end=12.dp,bottom=(if(blocks.size>1 && paneIndicator) 58.dp else 10.dp)+bottomControlsInset)
                             .clip(Kit.row).background(MaterialTheme.colorScheme.surface)
                             .clickable(role=Role.Button,onClick=onBottom).padding(horizontal=12.dp,vertical=7.dp),
                             fontSize=11.sp,color=MaterialTheme.colorScheme.primary)
@@ -186,16 +187,16 @@ import dev.chrisbanes.haze.hazeSource
         if(blocks.size>1 && paneIndicator) {
             // One program icon per pane in a pill over the bottom of the pane, the shown pane lit, as Rex for iOS
             // draws it. It never moves with the title. Tap an icon to go to that pane; tap the shown one for the switcher.
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(40.dp)
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(52.dp)
                 .clickable(role=Role.Button,onClick=onPanes)
                 .semantics {contentDescription="Pane position indicator";stateDescription="Pane ${candidate+1} of ${blocks.size}"},contentAlignment=Alignment.Center) {
-                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     // More panes than fit as icons fall back to dots.
                     if(blocks.size>7) PanePositionIndicator(index,blocks.size,offset={-drag/stride})
-                    else Row(Modifier.paneFrost(haze,CircleShape).padding(3.dp),verticalAlignment=Alignment.CenterVertically) {
+                    else Row(Modifier.paneFrost(haze,CircleShape).padding(4.dp),verticalAlignment=Alignment.CenterVertically) {
                         blocks.forEachIndexed {i,block->
                             val shown=i==candidate
-                            Box(Modifier.size(34.dp,24.dp).clip(CircleShape)
+                            Box(Modifier.size(38.dp,26.dp).clip(CircleShape)
                                 .background(if(shown) MaterialTheme.colorScheme.primary.copy(alpha=.38f) else Color.Transparent)
                                 .clickable(role=Role.Button) {if(shown) onPanes() else onSelect(block.id)},contentAlignment=Alignment.Center) {
                                 ProgramIcon(programs[block.id] ?: ProgramIdentity.Loading,Modifier.size(15.dp),
@@ -203,7 +204,7 @@ import dev.chrisbanes.haze.hazeSource
                             }
                         }
                     }
-                    if(onNewPane!=null) Box(Modifier.paneFrost(haze,CircleShape).size(36.dp,30.dp).clip(CircleShape)
+                    if(onNewPane!=null) Box(Modifier.paneFrost(haze,CircleShape).size(38.dp,34.dp).clip(CircleShape)
                         .clickable(role=Role.Button,onClick=onNewPane).semantics {contentDescription="New pane"},contentAlignment=Alignment.Center) {
                         ChromeSymbol(ChromeIcon.ADD,Modifier.size(14.dp))
                     }
