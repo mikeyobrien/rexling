@@ -143,7 +143,10 @@ fn terminal_edit_call(windows:&Value,session:&str,value:&Value)->Result<(&'stati
         let anchor=value["anchor"].as_str().context("Choose a docked pane")?;
         ensure!(anchor!=id && tiled.iter().any(|p|p["id"]==anchor),"Choose an existing docked pane in this tab");
         let direction=match value["direction"].as_str() {Some("right")=>"horizontal",Some("below")=>"vertical",_=>anyhow::bail!("Choose right or below")};
-        Ok(("session.move_block",json!({"session_id":session,"block_id":id,"anchor_block_id":anchor,"direction":direction,"side":"after","ratio":0.5})))
+        // Clients that remember where a pane floated from can put it back on the same side at the same size.
+        let side=if value["side"]=="before" {"before"} else {"after"};
+        let ratio=value["ratio"].as_f64().filter(|r|r.is_finite()).map_or(0.5,|r|r.clamp(0.1,0.9));
+        Ok(("session.move_block",json!({"session_id":session,"block_id":id,"anchor_block_id":anchor,"direction":direction,"side":side,"ratio":ratio})))
     }
 }
 

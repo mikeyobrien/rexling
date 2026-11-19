@@ -98,6 +98,19 @@ pub struct Ui {
     was_connected: Cell<bool>,
     notice: RefCell<String>,
     refused: RefCell<String>,
+    /// The connection's latest state, connected or not. `state` keeps the last connected one, so
+    /// what was on screen stays there, dimmed, while the server is away.
+    link: RefCell<Rc<State>>,
+    stale_lists: Cell<bool>,
+    offline: Cell<bool>,
+    /// Whether this server has been reached since it was chosen.
+    reached: Cell<bool>,
+    recovering: Cell<bool>,
+    connect_page: adw::StatusPage,
+    /// Where each floating pane sat before it was lifted: its neighbour, the split's direction,
+    /// which side it was on, and its share.
+    floated_from: RefCell<HashMap<String, (String, bool, bool, f64)>>,
+    known_blocks: RefCell<HashSet<String>>,
 }
 
 #[derive(PartialEq, Clone)]
@@ -111,6 +124,22 @@ struct TabRow {
     current: bool,
 }
 
+thread_local! {
+    /// The session a window being opened should start on.
+    static NEXT_WINDOW_SESSION: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// The forms of address the connect page accepts.
+const CONNECT_HINT: &str = "https://host:7297 · ssh://user@host · unix:///path/to/server.sock";
+
+/// Actions that need a connected server, and those that also need a tab on screen.
+const SERVER_ACTIONS: &[&str] = &["new-session", "sessions", "forwards"];
+const TAB_ACTIONS: &[&str] = &[
+    "new-tab", "split-right", "split-below", "close-pane", "close-tab", "close-session", "rename-tab", "rename-session",
+    "move-tab-up", "move-tab-down", "next-tab", "previous-tab", "next-pane", "previous-pane", "zoom-pane", "float-pane",
+    "dock-pane", "attach-image",
+];
+
 /// A palette entry: what it is called, a hint beside it, and what it does.
 pub type Command = (String, String, Box<dyn Fn(&Rc<Ui>)>);
 
@@ -122,17 +151,28 @@ pub fn home_relative(path: &str) -> String {
     }
 }
 
+/// A pane outline with the half a split would add filled in. No stock icon says "split below".
+fn split_icon(below: bool) -> gtk::DrawingArea {
+    let icon = gtk::DrawingArea::builder().content_width(16).content_height(16).build();
+    icon.set_draw_func(move |area, cr, width, height| {
+        let color = area.color();
+        let (w, h) = (width as f64, height as f64);
+        cr.set_source_rgba(color.red() as f64, color.green() as f64, color.blue() as f64, color.alpha() as f64);
+        cr.set_line_width(1.5);
+        cr.rectangle(1.5, 2.5, w - 3.0, h - 5.0);
+        let _ = cr.stroke();
+        if below { cr.rectangle(1.5, h / 2.0, w - 3.0, h / 2.0 - 2.5) } else { cr.rectangle(w / 2.0, 2.5, w / 2.0 - 1.5, h - 5.0) }
+        let _ = cr.fill();
+    });
+    icon
+}
+
 fn icon_button(icon: &str, tooltip: &str, action: &str) -> gtk::Button {
     gtk::Button::builder().icon_name(icon).tooltip_text(tooltip).action_name(action).build()
 }
 
 fn scrolled_back(frame: &Frame) -> bool {
     frame.scroll_total.saturating_sub(frame.scroll_visible) > frame.scroll_offset
-}
-
-fn capitalised(text: &str) -> String {
-    let mut characters = text.chars();
-    characters.next().map(|first| first.to_uppercase().chain(characters).collect()).unwrap_or_default()
 }
 
 pub fn build(app: &adw::Application) {
@@ -182,8 +222,9 @@ pub fn build(app: &adw::Application) {
     application.append(Some("About Rexling"), Some("win.about"));
     menu.append_section(None, &application);
     header.pack_end(&gtk::MenuButton::builder().icon_name("open-menu-symbolic").tooltip_text("Menu").menu_model(&menu).primary(true).build());
-    header.pack_end(&icon_button("view-paged-symbolic", "Split Below", "win.split-below"));
-    header.pack_end(&icon_button("view-dual-symbolic", "Split Right", "win.split-right"));
+    for (below, tooltip, action) in [(true, "Split Below", "win.split-below"), (false, "Split Right", "win.split-right")] {
+        header.pack_end(&gtk::Button::builder().child(&split_icon(below)).tooltip_text(tooltip).action_name(action).build());
+    }
 
     let banner = adw::Banner::new("");
     let latest = gtk::Button::builder()
@@ -200,12 +241,13 @@ pub fn build(app: &adw::Application) {
     let overlay = gtk::Overlay::builder().child(&grid).build();
     overlay.add_overlay(&latest);
 
-    let server_entry = adw::EntryRow::builder().title("Server URL").text(config.server.as_str()).show_apply_button(true).build();
+    let server_entry = adw::EntryRow::builder().title("Server address").text(config.server.as_str()).show_apply_button(true).build();
     let server_group = adw::PreferencesGroup::new();
     server_group.add(&server_entry);
     let connect = adw::StatusPage::builder()
         .icon_name("dev.shulhi.Rexling")
         .title("Connect to Rex")
+        .description(CONNECT_HINT)
         .child(&adw::Clamp::builder().maximum_size(420).child(&server_group).build())
         .build();
     let stack = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).transition_duration(160).build();
@@ -273,6 +315,14 @@ pub fn build(app: &adw::Application) {
         was_connected: Cell::new(false),
         notice: RefCell::default(),
         refused: RefCell::default(),
+        link: RefCell::default(),
+        stale_lists: Cell::new(false),
+        offline: Cell::new(false),
+        reached: Cell::new(false),
+        recovering: Cell::new(false),
+        connect_page: connect.clone(),
+        floated_from: RefCell::default(),
+        known_blocks: RefCell::default(),
     });
     ui.apply_appearance();
     ui.actions();
@@ -283,10 +333,10 @@ pub fn build(app: &adw::Application) {
             if !ui.problem.borrow().is_empty() {
                 let server = ui.config.borrow().server.clone();
                 ui.connect(&server);
-            } else if ui.chrome.state().connected() {
+            } else if ui.link.borrow().connected() {
                 ui.interact()
             } else {
-                ui.chrome.retry()
+                ui.recover()
             }
             ui.focus_terminal();
         }
@@ -302,8 +352,24 @@ pub fn build(app: &adw::Application) {
     });
     let weak = Rc::downgrade(&ui);
     ui.server_entry.connect_apply(move |entry| {
-        if let Some(ui) = weak.upgrade() {
-            ui.connect(entry.text().trim());
+        let Some(ui) = weak.upgrade() else { return };
+        match tunnel::address(&entry.text()) {
+            Ok(address) => {
+                entry.remove_css_class("error");
+                ui.connect(&address);
+            }
+            Err(problem) => {
+                entry.add_css_class("error");
+                ui.connect_page.set_description(Some(problem));
+            }
+        }
+    });
+    let weak = Rc::downgrade(&ui);
+    ui.server_entry.connect_changed(move |entry| {
+        // Typing again clears the complaint about what was there before.
+        if let Some(ui) = weak.upgrade().filter(|_| entry.has_css_class("error")) {
+            entry.remove_css_class("error");
+            ui.connect_page.set_description(Some(CONNECT_HINT));
         }
     });
     let weak = Rc::downgrade(&ui);
@@ -379,6 +445,13 @@ pub fn build(app: &adw::Application) {
         }
     });
 
+    // Closing the session menu hands the keyboard back to the terminal.
+    let weak = Rc::downgrade(&ui);
+    session_popover.connect_closed(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.focus_terminal();
+        }
+    });
     let weak = Rc::downgrade(&ui);
     ui.grid.connect_float(move |layer, bounds| {
         if let Some(ui) = weak.upgrade() {
@@ -466,7 +539,9 @@ impl Ui {
         add("rename-tab", |ui| {
             let (tab, state) = (ui.tab.borrow().clone(), ui.state.borrow().clone());
             let Some(current) = state.windows.iter().find(|t| t.id == tab) else { return };
-            let label = current.name().unwrap_or("").to_owned();
+            // Start from what the tab is called now, whether that name was given or derived.
+            let shown = ui.shown_tabs.borrow().iter().find(|row| row.id == tab).map(|row| row.title.clone());
+            let label = current.name().map(str::to_owned).or(shown).unwrap_or_default();
             dialogs::rename(ui, "Rename Tab", &label, move |ui, name| ui.chrome.rename_tab(&tab, name));
         });
         add("rename-session", |ui| {
@@ -481,6 +556,13 @@ impl Ui {
         add("forwards", dialogs::forwards);
         add("float-pane", |ui| {
             let focused = ui.focused.borrow().clone();
+            let state = ui.state.borrow().clone();
+            // Remember the pane's place: its nearest split, which side it was on, and its share.
+            if let Some(split) = state.tab_of(&focused).and_then(|tab| tab.splits.iter().rev().find(|s| s.before == focused || s.after == focused)) {
+                let before = split.before == focused;
+                let anchor = if before { split.after.clone() } else { split.before.clone() };
+                ui.floated_from.borrow_mut().insert(focused.clone(), (anchor, split.direction == "vertical", before, split.ratio));
+            }
             ui.interact();
             ui.zoomed.set(false);
             ui.chrome.float_pane(&focused);
@@ -491,7 +573,10 @@ impl Ui {
         });
         add("attach-image", |ui| ui.choose_image());
         add("new-window", |ui| {
-            // Another window shows another session, or another server, beside this one.
+            // Another window is for another session: it opens on one this window is not showing, when there is one.
+            let state = ui.state.borrow().clone();
+            let other = state.sessions.iter().find(|s| s.session_id != state.selected_session).map(|s| s.session_id.clone());
+            NEXT_WINDOW_SESSION.with(|next| next.replace(other));
             if let Some(app) = ui.window.application().and_downcast::<adw::Application>() {
                 build(&app);
             }
@@ -570,10 +655,15 @@ impl Ui {
             } else {
                 config.theme_light = id.to_owned();
             }
-            if chosen.palette.dark != adw::StyleManager::default().is_dark() {
+            let switched = chosen.palette.dark != adw::StyleManager::default().is_dark();
+            if switched {
                 config.appearance = if chosen.palette.dark { "dark" } else { "light" }.into();
             }
             config.save();
+            if switched {
+                // A theme of the other brightness can only show if the style follows it; say that it changed.
+                self.toasts.add_toast(adw::Toast::new(if chosen.palette.dark { "Style set to Dark" } else { "Style set to Light" }));
+            }
         }
         self.apply_appearance();
     }
@@ -597,15 +687,22 @@ impl Ui {
         {
             let mut config = self.config.borrow_mut();
             config.server = server.clone();
-            config.servers.retain(|s| *s != server);
-            config.servers.insert(0, server.clone());
             config.save();
-            self.chrome.remembered_session.replace(config.sessions.get(&server).cloned().unwrap_or_default());
+            let preferred = NEXT_WINDOW_SESSION.with(|next| next.take());
+            self.chrome.remembered_session.replace(preferred.or_else(|| config.sessions.get(&server).cloned()).unwrap_or_default());
         }
         // Nothing from the previous server may linger: its panes, its tunnel, or its last state.
         self.tunnel.replace(None);
         self.endpoint.replace(String::new());
         self.problem.replace(String::new());
+        self.link.replace(Rc::default());
+        self.offline.set(false);
+        self.tab_list.set_sensitive(true);
+        self.session_button.set_sensitive(true);
+        self.reached.set(false);
+        self.floated_from.borrow_mut().clear();
+        self.known_blocks.borrow_mut().clear();
+        self.created.replace(String::new());
         self.state.replace(Rc::default());
         self.tab.replace(String::new());
         self.focused.replace(String::new());
@@ -614,7 +711,11 @@ impl Ui {
         self.show_sessions();
         self.show_tabs();
         self.arrange();
-        self.stack.set_visible_child_name("terminal");
+        // The address stays on screen, editable, until the server has answered.
+        self.server_entry.set_text(&server);
+        self.connect_page.set_description(Some("Connecting…"));
+        self.stack.set_visible_child_name("connect");
+        self.sync_actions();
         if !server.starts_with("ssh://") {
             self.attach(&server);
             return;
@@ -753,10 +854,15 @@ impl Ui {
     }
     fn dock_pane(self: &Rc<Self>, block: &str) {
         let state = self.state.borrow().clone();
-        let anchor = state.tab_of(block).and_then(|tab| tab.placements().into_iter().find(|p| !p.floating && p.id != block));
-        if let Some(anchor) = anchor {
+        let Some(tab) = state.tab_of(block) else { return };
+        let tiled: Vec<_> = tab.placements().into_iter().filter(|p| !p.floating && p.id != block).collect();
+        // Back where it came from when that neighbour is still there; otherwise beside the largest pane.
+        let origin = self.floated_from.borrow_mut().remove(block).filter(|(anchor, ..)| tiled.iter().any(|p| p.id == *anchor));
+        let fallback = tiled.iter().max_by(|a, b| (a.rect[2] * a.rect[3]).total_cmp(&(b.rect[2] * b.rect[3]))).map(|p| (p.id.clone(), false, false, 0.5));
+        if let Some((anchor, below, before, ratio)) = origin.or(fallback) {
             self.interact();
-            self.chrome.dock_pane(block, &anchor.id);
+            self.focused.replace(block.to_owned());
+            self.chrome.dock_pane(block, &anchor, below, before, ratio);
         }
     }
     pub fn open_tab(self: &Rc<Self>, id: &str) {
@@ -931,8 +1037,8 @@ impl Ui {
         if let Some(activity) = update.activity {
             self.activity.replace(activity);
             self.notify();
-            self.shown_tabs.borrow_mut().clear();
-            self.shown_sessions.borrow_mut().clear();
+            // Status lives outside the state these lists are compared by, so rebuild them.
+            self.stale_lists.set(true);
         } else if !update.state_changed {
             return;
         }
@@ -941,64 +1047,180 @@ impl Ui {
         if state.connected() && !self.live(&state) {
             return;
         }
-        self.state.replace(state.clone());
-
-        let connected = self.live(&state);
-        if connected && !self.was_connected.replace(true) {
-            self.chrome.watch_activity();
-        } else if !connected {
-            self.was_connected.set(false);
+        self.link.replace(state.clone());
+        if !state.connected() {
+            self.went_offline(&state);
+            return;
         }
+        self.state.replace(state.clone());
+        self.came_online();
+
         if let Some(text) = self.chrome.take_clipboard(&state) {
             self.window.clipboard().set_text(&text);
         }
         // While connected, an error is a command the server refused: say so once, and carry on.
-        let refused = if connected { state.error.clone() } else { String::new() };
-        if self.refused.replace(refused.clone()) != refused && !refused.is_empty() {
+        let refused = tunnel::explain(&state.error);
+        if self.refused.replace(refused.clone()) != refused && !state.error.is_empty() {
             self.toasts.add_toast(adw::Toast::new(&refused));
         }
-        // Control changes and closed or created panes are already visible, so only other notices are toasted.
+        // Control changes, reconnects and closed or created panes are already visible, so only other notices are toasted.
         let notice = state.notice.clone();
-        if self.notice.replace(notice.clone()) != notice && !notice.is_empty() && !["control", "closed", "created"].iter().any(|word| notice.contains(word)) {
+        let visible_already = ["control", "closed", "created", "Reconnect", "renamed"].iter().any(|word| notice.contains(word));
+        if self.notice.replace(notice.clone()) != notice && !notice.is_empty() && !visible_already {
             self.toasts.add_toast(adw::Toast::new(&notice));
         }
 
-        // The sessions connection lands on a pane only when the server just created it.
+        // The sessions connection lands on a pane the window has not seen only when the server just created it.
+        let blocks: HashSet<String> = state.windows.iter().flat_map(|tab| &tab.blocks).map(|b| b.id.clone()).collect();
+        let known = self.known_blocks.replace(blocks);
         if !state.selected_block.is_empty() && self.created.replace(state.selected_block.clone()) != state.selected_block
-            && let Some(tab) = state.tab_of(&state.selected_block) {
-                self.tab.replace(tab.id.clone());
-                self.focused.replace(state.selected_block.clone());
-                self.zoomed.set(false);
-            }
-        if connected && !state.windows.iter().any(|tab| tab.id == *self.tab.borrow()) {
+            && !known.contains(&state.selected_block)
+            && let Some(tab) = state.tab_of(&state.selected_block)
+        {
+            self.tab.replace(tab.id.clone());
+            self.focused.replace(state.selected_block.clone());
+            self.zoomed.set(false);
+        }
+        if !state.windows.iter().any(|tab| tab.id == *self.tab.borrow()) {
             let remembered = self.config.borrow().tabs.get(&state.selected_session).cloned().unwrap_or_default();
             let tab = state.windows.iter().find(|tab| tab.id == remembered).or(state.windows.first());
             self.tab.replace(tab.map(|tab| tab.id.clone()).unwrap_or_default());
         }
 
-        if !self.config.borrow().server.is_empty() {
-            self.stack.set_visible_child_name(if connected && state.sessions.is_empty() { "empty" } else { "terminal" });
-        }
+        self.stack.set_visible_child_name(if state.sessions.is_empty() { "empty" } else { "terminal" });
         self.show_sessions();
         self.show_tabs();
         self.arrange();
         self.refresh_banner();
+        self.sync_actions();
+    }
+
+    /// The server answered. The first time, it becomes a saved server.
+    fn came_online(self: &Rc<Self>) {
+        if !self.reached.replace(true) {
+            let mut config = self.config.borrow_mut();
+            let server = config.server.clone();
+            if config.servers.first() != Some(&server) {
+                config.servers.retain(|s| *s != server);
+                config.servers.insert(0, server);
+                config.save();
+            }
+            drop(config);
+            self.server_entry.remove_css_class("error");
+            self.connect_page.set_description(Some(CONNECT_HINT));
+        }
+        if !self.was_connected.replace(true) {
+            self.chrome.watch_activity();
+        }
+        if self.offline.replace(false) {
+            self.tab_list.set_sensitive(true);
+            self.session_button.set_sensitive(true);
+        }
+    }
+
+    /// The server is not answering. What was on screen stays, dimmed and inert, and the window keeps trying.
+    fn went_offline(self: &Rc<Self>, state: &State) {
+        self.was_connected.set(false);
+        if !self.reached.get() {
+            // Never reached: the address may simply be wrong, so it stays on screen to be fixed.
+            let waiting = state.error.is_empty();
+            self.connect_page.set_description(Some(&if waiting { "Connecting…".to_owned() } else { format!("{}. Trying again…", tunnel::explain(&state.error)) }));
+            self.stack.set_visible_child_name("connect");
+        } else if !self.offline.replace(true) {
+            self.tab_list.set_sensitive(false);
+            self.session_button.set_sensitive(false);
+            for pane in self.panes.borrow().values() {
+                pane.terminal.set_dimmed(true);
+            }
+        }
+        self.refresh_banner();
+        self.sync_actions();
+        if self.recovering.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        gtk::glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
+            let Some(ui) = weak.upgrade() else { return gtk::glib::ControlFlow::Break };
+            let link = ui.link.borrow().clone();
+            if link.connected() || ui.endpoint.borrow().is_empty() {
+                ui.recovering.set(false);
+                return gtk::glib::ControlFlow::Break;
+            }
+            ui.recover();
+            gtk::glib::ControlFlow::Continue
+        });
+    }
+
+    /// One attempt to get back to the server.
+    fn recover(self: &Rc<Self>) {
+        let link = self.link.borrow().clone();
+        let gone = tunnel::explain(&link.error) == "That session no longer exists";
+        if gone {
+            // The server is back without the session this window had open: start over on what it has now.
+            let server = self.config.borrow().server.clone();
+            self.config.borrow_mut().sessions.remove(&server);
+            self.recovering.set(false);
+            self.connect(&server);
+            return;
+        }
+        // The engine retries on its own while it says it is reconnecting; nudge it only when it has given up.
+        let waiting = |phase: &str| matches!(phase, "connecting" | "reconnecting");
+        if !waiting(&link.phase) {
+            self.chrome.retry();
+        }
+        for pane in self.panes.borrow().values() {
+            let state = pane.client.state();
+            if !state.connected() && !waiting(&state.phase) {
+                pane.client.retry();
+            }
+        }
+    }
+
+    /// Turns commands on and off with what they need, so nothing on screen is a dead control.
+    fn sync_actions(&self) {
+        let state = self.state.borrow().clone();
+        let online = self.link.borrow().connected() && !self.offline.get();
+        let on_tab = online && !self.visible.borrow().is_empty();
+        let enable = |name: &str, enabled: bool| {
+            if let Some(action) = self.window.lookup_action(name).and_downcast::<gio::SimpleAction>() {
+                action.set_enabled(enabled);
+            }
+        };
+        SERVER_ACTIONS.iter().for_each(|name| enable(name, online));
+        TAB_ACTIONS.iter().for_each(|name| enable(name, on_tab));
+        if on_tab {
+            let tab = self.tab.borrow().clone();
+            let at = state.windows.iter().position(|t| t.id == tab);
+            let panes = state.windows.iter().find(|t| t.id == tab).map(|t| t.placements()).unwrap_or_default();
+            let focused = self.focused.borrow().clone();
+            let floating = panes.iter().any(|p| p.id == focused && p.floating);
+            enable("move-tab-up", at.is_some_and(|at| at > 0));
+            enable("move-tab-down", at.is_some_and(|at| at + 1 < state.windows.len()));
+            enable("next-tab", state.windows.len() > 1);
+            enable("previous-tab", state.windows.len() > 1);
+            enable("next-pane", panes.len() > 1);
+            enable("previous-pane", panes.len() > 1);
+            enable("zoom-pane", panes.len() > 1);
+            enable("float-pane", !floating && panes.iter().filter(|p| !p.floating).count() > 1);
+            enable("dock-pane", floating);
+        }
     }
 
     fn refresh_banner(&self) {
-        let state = self.state.borrow().clone();
+        let link = self.link.borrow().clone();
         // One status line: a problem, a connection in progress, or that this window is only watching.
         let problem = self.problem.borrow().clone();
         let (text, button) = if !problem.is_empty() {
             (problem, Some("Retry"))
         } else if self.endpoint.borrow().is_empty() && !self.config.borrow().server.is_empty() {
             ("Opening SSH tunnel…".to_owned(), None)
-        } else if !state.error.is_empty() && !state.connected() {
-            (state.error.clone(), Some("Retry"))
-        } else if !state.connected() && !state.phase.is_empty() && state.phase != "disconnected" {
-            (format!("{}…", capitalised(&state.phase)), None)
-        } else if state.connected() && !self.visible.borrow().is_empty() && !self.control.get() {
-            ("Viewing only".to_owned(), Some("Take Control"))
+        } else if !self.reached.get() {
+            // The connect page says what is happening.
+            (String::new(), None)
+        } else if !link.connected() {
+            ("Reconnecting…".to_owned(), Some("Retry"))
+        } else if !self.visible.borrow().is_empty() && !self.control.get() {
+            ("Viewing only. Click or type to take control.".to_owned(), Some("Take Control"))
         } else {
             (String::new(), None)
         };
@@ -1054,7 +1276,7 @@ impl Ui {
         drop(watchers);
         drop(config);
         self.session_dot.set_visible(elsewhere || waiting_elsewhere);
-        if *self.shown_sessions.borrow() == next {
+        if !self.stale_lists.get() && *self.shown_sessions.borrow() == next {
             return;
         }
         self.session_list.remove_all();
@@ -1080,11 +1302,14 @@ impl Ui {
 
     fn show_tabs(&self) {
         let state = self.state.borrow().clone();
+        // Tabs belong to a session; a server with none has no tabs, whatever was open before.
+        let open = state.sessions.iter().any(|s| s.session_id == state.selected_session);
         let current_tab = self.tab.borrow().clone();
         let config = self.config.borrow();
         let next: Vec<TabRow> = state
             .windows
             .iter()
+            .filter(|_| open)
             .map(|tab| {
                 let current = tab.id == current_tab;
                 let focused = if current { self.focused.borrow().clone() } else { config.panes.get(&tab.id).cloned().unwrap_or_default() };
@@ -1092,8 +1317,8 @@ impl Ui {
                 let title = tab.name().map(str::to_owned).or_else(|| lead.map(|b| state.title(b))).unwrap_or_else(|| tab.label.clone());
                 let directory = lead.and_then(|b| state.directories.get(&b.id)).map(|d| home_relative(d)).unwrap_or_default();
                 let detail = match tab.blocks.len() {
-                    // A shell is already titled by its folder; the full path only helps when it says more.
-                    0 | 1 if directory == title => String::new(),
+                    // A shell is already titled by its folder; say which shell instead of repeating it.
+                    0 | 1 if directory == title => lead.map(|b| state.program(b)).unwrap_or_default(),
                     0 | 1 => directory,
                     count if directory.is_empty() => format!("{count} panes"),
                     count => format!("{count} panes · {directory}"),
@@ -1105,7 +1330,8 @@ impl Ui {
             })
             .collect();
         drop(config);
-        if *self.shown_tabs.borrow() == next {
+        // Tabs are shown after sessions, so this is where a forced rebuild ends.
+        if !self.stale_lists.replace(false) && *self.shown_tabs.borrow() == next {
             return;
         }
         self.tab_list.remove_all();
@@ -1199,10 +1425,20 @@ impl Ui {
         client.watch(move |update| {
             let (Some(ui), Some(client)) = (weak.upgrade(), weak_client.upgrade()) else { return };
             let showing = client.showing();
-            let frame = if showing { update.frame } else { None };
-            view.set_frame(frame.clone());
+            if update.state.connected() {
+                let frame = if showing { update.frame } else { None };
+                view.set_frame(frame.clone());
+                latest.replace(frame);
+            } else {
+                // Offline: the last screen stays, dimmed, instead of going blank.
+                view.set_dimmed(true);
+            }
             view.set_controlled(showing && update.state.controlled);
-            latest.replace(frame);
+            // Another client took this pane: say so, and stop claiming the keyboard until the user acts again.
+            if showing && !update.state.controlled && update.state.other_owner && ui.control.get() && ui.visible.borrow().contains(&id) && client.take_was_sent() {
+                ui.control.set(false);
+                ui.refresh_banner();
+            }
             if update.state.connected() && !themed.replace(true) {
                 client.set_theme(ui.theme().palette.theme());
             } else if !update.state.connected() {
@@ -1250,7 +1486,8 @@ impl Ui {
     /// Puts the current tab's panes on screen and retires connections that are no longer needed.
     fn arrange(self: &Rc<Self>) {
         let state = self.state.borrow().clone();
-        let tab = state.windows.iter().find(|tab| tab.id == *self.tab.borrow()).filter(|_| self.live(&state));
+        let open = state.sessions.iter().any(|s| s.session_id == state.selected_session);
+        let tab = state.windows.iter().find(|tab| tab.id == *self.tab.borrow()).filter(|_| open && self.live(&state));
         let mut placements = tab.map(|tab| tab.placements()).unwrap_or_default();
         if !placements.iter().any(|p| p.id == *self.focused.borrow()) {
             let remembered = tab.and_then(|tab| self.config.borrow().panes.get(&tab.id).cloned()).unwrap_or_default();
@@ -1304,7 +1541,8 @@ impl Ui {
         }
         let single = shown.len() < 2;
         for (id, pane) in self.panes.borrow().iter() {
-            pane.terminal.set_dimmed(!single && shown.contains(id) && *id != focused);
+            pane.terminal.set_dimmed(self.offline.get() || (!single && shown.contains(id) && *id != focused));
+            pane.terminal.set_marked(!single && *id == focused);
         }
         let first = self.visible.borrow().is_empty() && !shown.is_empty();
         let changed = self.visible.replace(shown) != *self.visible.borrow();
@@ -1330,10 +1568,16 @@ impl Ui {
         drop(panes);
 
         let block = tab.and_then(|tab| tab.blocks.iter().find(|b| b.id == focused));
-        let heading = block.map(|b| state.title(b)).unwrap_or_else(|| "Rexling".into());
+        let pane_title = block.map(|b| state.title(b));
+        let heading = tab.and_then(|tab| tab.name()).map(str::to_owned).or(pane_title).unwrap_or_else(|| "Rexling".into());
         self.title.set_title(&heading);
         let directory = state.directories.get(&focused).map(|d| home_relative(d)).unwrap_or_default();
-        self.title.set_subtitle(if directory == heading { "" } else { &directory });
+        let zoomed = self.zoomed.get() && tab.is_some_and(|tab| tab.blocks.len() > 1);
+        self.title.set_subtitle(&match (zoomed, directory == heading) {
+            (true, _) => format!("Zoomed · 1 of {} panes", tab.map_or(1, |tab| tab.blocks.len())),
+            (false, true) => String::new(),
+            (false, false) => directory,
+        });
         self.window.set_title(Some(&heading));
         self.remember(&state);
     }

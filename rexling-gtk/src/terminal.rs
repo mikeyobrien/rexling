@@ -90,6 +90,10 @@ struct Inner {
     grid: Cell<(u16, u16)>,
     controlled: Cell<bool>,
     dimmed: Cell<bool>,
+    /// Marks this pane as the one with the keyboard, when there are several.
+    marked: Cell<bool>,
+    /// How much the grid is shrunk to fit: a pane this client does not size is shown whole, not clipped.
+    view_scale: Cell<f64>,
     cursor_lit: Cell<bool>,
     blink: RefCell<Option<glib::SourceId>>,
     selection: RefCell<Option<Selection>>,
@@ -142,6 +146,8 @@ impl Terminal {
             grid: Cell::new((0, 0)),
             controlled: Cell::new(false),
             dimmed: Cell::new(false),
+            marked: Cell::new(false),
+            view_scale: Cell::new(1.0),
             cursor_lit: Cell::new(true),
             blink: RefCell::default(),
             selection: RefCell::default(),
@@ -188,6 +194,11 @@ impl Terminal {
     /// Panes without the keyboard step back a little so the active one stands out.
     pub fn set_dimmed(&self, dimmed: bool) {
         if self.0.dimmed.replace(dimmed) != dimmed {
+            self.0.area.queue_draw();
+        }
+    }
+    pub fn set_marked(&self, marked: bool) {
+        if self.0.marked.replace(marked) != marked {
             self.0.area.queue_draw();
         }
     }
@@ -459,6 +470,12 @@ impl Inner {
         }
         let metrics = self.metrics.get();
         let layout = pango::Layout::new(&context);
+        let needed = (PADDING * 2.0 + frame.columns as f64 * metrics.width, PADDING * 2.0 + frame.rows as f64 * metrics.height);
+        let fit = if self.controlled.get() { 1.0 } else { (width / needed.0).min(height / needed.1).clamp(0.2, 1.0) };
+        self.view_scale.set(fit);
+        let _ = cr.save();
+        cr.scale(fit, fit);
+        let (width, height) = (width / fit, height / fit);
         let columns = (frame.columns as f64).min(((width - PADDING) / metrics.width).ceil()) as u16;
         let visible = rows.len().min(((height - PADDING) / metrics.height).ceil().max(1.0) as usize);
         let mut style = u32::MAX;
@@ -593,9 +610,25 @@ impl Inner {
         } else if let Some((cursor_x, cursor_y)) = frame.cursor {
             self.draw_cursor(cr, frame, rows, &layout, cursor_x, cursor_y);
         }
+        // How far back the view is scrolled, as a thin thumb on the right edge.
+        let hidden = frame.scroll_total.saturating_sub(frame.scroll_visible);
+        if hidden > 0 && frame.scroll_offset < hidden {
+            let thumb = (height * frame.scroll_visible as f64 / frame.scroll_total.max(1) as f64).max(24.0);
+            let top = (height - thumb) * frame.scroll_offset as f64 / hidden as f64;
+            set_color(cr, palette.foreground, 0.35);
+            cr.rectangle(width - 4.0, top, 3.0, thumb);
+            let _ = cr.fill();
+        }
+        let _ = cr.restore();
+        let (width, _) = (width * fit, height * fit);
         if self.dimmed.get() {
-            set_color(cr, palette.background, 0.24);
+            set_color(cr, palette.background, 0.38);
             let _ = cr.paint();
+        }
+        if self.marked.get() {
+            set_color(cr, crate::theme::accent(&palette), 1.0);
+            cr.rectangle(0.0, 0.0, width, 2.0);
+            let _ = cr.fill();
         }
     }
 
@@ -710,7 +743,8 @@ impl Inner {
 
     fn cell_at(&self, x: f64, y: f64) -> (i32, i32) {
         let metrics = self.metrics.get();
-        (((x - PADDING) / metrics.width).floor() as i32, ((y - PADDING) / metrics.height).floor() as i32)
+        let scale = self.view_scale.get();
+        (((x / scale - PADDING) / metrics.width).floor() as i32, ((y / scale - PADDING) / metrics.height).floor() as i32)
     }
     fn in_grid(frame: &Frame, cell: (i32, i32)) -> bool {
         (0..frame.columns as i32).contains(&cell.0) && (0..frame.rows as i32).contains(&cell.1)

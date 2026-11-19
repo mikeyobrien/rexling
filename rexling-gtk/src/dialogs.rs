@@ -25,7 +25,7 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("Attach Image…", "attach-image", ""),
     ("Port Forwards…", "forwards", ""),
     ("Zoom Pane", "zoom-pane", "<Ctrl><Shift>Return"),
-    ("Float Pane", "float-pane", ""),
+    ("Float Pane", "float-pane", "<Ctrl><Shift>f"),
     ("Dock Pane", "dock-pane", ""),
     ("Next Pane", "next-pane", "<Ctrl><Alt>Right"),
     ("Previous Pane", "previous-pane", "<Ctrl><Alt>Left"),
@@ -50,24 +50,52 @@ const TERMINAL_KEYS: &[(&str, &str)] = &[
     ("Reset Text Size", "<Ctrl>0"),
 ];
 
+/// Keys the way they are written everywhere else: Ctrl+Shift+P, Ctrl+PageUp, Ctrl+Shift+Enter.
 fn keys(accelerator: &str) -> String {
-    gtk::accelerator_parse(accelerator).map(|(key, modifiers)| gtk::accelerator_get_label(key, modifiers).to_string()).unwrap_or_default()
+    let Some((key, modifiers)) = gtk::accelerator_parse(accelerator) else { return String::new() };
+    let mut parts = Vec::new();
+    for (modifier, name) in [(gdk::ModifierType::CONTROL_MASK, "Ctrl"), (gdk::ModifierType::ALT_MASK, "Alt"), (gdk::ModifierType::SHIFT_MASK, "Shift")] {
+        if modifiers.contains(modifier) {
+            parts.push(name.to_owned());
+        }
+    }
+    parts.push(match key {
+        gdk::Key::Return => "Enter".into(),
+        gdk::Key::Page_Up => "PageUp".into(),
+        gdk::Key::Page_Down => "PageDown".into(),
+        gdk::Key::comma => ",".into(),
+        gdk::Key::question => "?".into(),
+        gdk::Key::plus => "+".into(),
+        gdk::Key::minus => "−".into(),
+        other => match other.to_unicode().filter(|c| c.is_alphanumeric()) {
+            Some(character) => character.to_uppercase().to_string(),
+            None => other.name().map(|name| name.to_string()).unwrap_or_default(),
+        },
+    });
+    parts.join("+")
 }
 
-/// Letters of `query` appear in `text` in order; earlier and tighter matches score lower (better).
-fn score(text: &str, query: &str) -> Option<usize> {
-    let text = text.to_lowercase();
-    if let Some(at) = text.find(query) {
-        return Some(at);
+/// How well `query` matches a command, lower being better: the start of its name, the start of a
+/// word in it, anywhere inside it, its kind ("theme", "tab"), then the initials of its words.
+fn score(text: &str, kind: &str, query: &str) -> Option<usize> {
+    let (text, kind) = (text.to_lowercase(), kind.to_lowercase());
+    if query.is_empty() {
+        return Some(0);
     }
-    let mut position = 0;
-    let mut spread = 0;
-    for wanted in query.chars().filter(|c| !c.is_whitespace()) {
-        let found = text[position..].find(wanted)?;
-        spread += found;
-        position += found + wanted.len_utf8();
+    if text.starts_with(query) {
+        return Some(0);
     }
-    Some(100 + spread)
+    if text.split_whitespace().any(|word| word.starts_with(query)) {
+        return Some(1);
+    }
+    if text.contains(query) {
+        return Some(2);
+    }
+    if kind.starts_with(query) {
+        return Some(3);
+    }
+    let initials: String = text.split_whitespace().filter_map(|word| word.chars().next()).collect();
+    initials.starts_with(query).then_some(4)
 }
 
 pub fn palette(ui: &Rc<Ui>) {
@@ -88,20 +116,23 @@ pub fn palette(ui: &Rc<Ui>) {
     commands.extend(ui.destinations());
     let commands = Rc::new(commands);
 
-    let entry = gtk::SearchEntry::builder().placeholder_text("Search commands, tabs, sessions and themes").margin_top(12).margin_start(12).margin_end(12).margin_bottom(6).build();
+    let entry = gtk::SearchEntry::builder().search_delay(0).placeholder_text("Search commands, tabs, sessions and themes").margin_top(12).margin_start(12).margin_end(12).margin_bottom(6).build();
     let list = gtk::ListBox::builder().selection_mode(gtk::SelectionMode::Browse).css_classes(["navigation-sidebar", "rexling-palette"]).build();
-    let scroller = gtk::ScrolledWindow::builder().child(&list).hscrollbar_policy(gtk::PolicyType::Never).propagate_natural_height(true).max_content_height(420).build();
+    let scroller = gtk::ScrolledWindow::builder().child(&list).hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).build();
     let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).width_request(560).margin_bottom(8).build();
     content.append(&entry);
     content.append(&scroller);
-    let dialog = adw::Dialog::builder().child(&content).content_width(560).follows_content_size(true).build();
+    // A fixed size: the box must not jump about as the results change.
+    let dialog = adw::Dialog::builder().child(&content).content_width(560).content_height(460).build();
 
     let fill = {
         let (list, commands) = (list.clone(), commands.clone());
         move |query: &str| {
             list.remove_all();
             let query = query.trim().to_lowercase();
-            let mut matches: Vec<(usize, usize)> = commands.iter().enumerate().filter_map(|(index, (label, _, _))| score(label, &query).map(|s| (s, index))).collect();
+            // Only themes, tabs, sessions and servers have a kind; a command's hint is its keys.
+            let kind = |hint: &str| if matches!(hint, "Theme" | "Tab" | "Session" | "Server") { hint.to_owned() } else { String::new() };
+            let mut matches: Vec<(usize, usize)> = commands.iter().enumerate().filter_map(|(index, (label, hint, _))| score(label, &kind(hint), &query).map(|s| (s, index))).collect();
             matches.sort();
             for (_, index) in matches.into_iter().take(60) {
                 let (label, hint, _) = &commands[index];
@@ -134,8 +165,10 @@ pub fn palette(ui: &Rc<Ui>) {
         move |_, row| run(row)
     });
     entry.connect_activate({
-        let (list, run) = (list.clone(), run.clone());
-        move |_| {
+        let (list, run, fill) = (list.clone(), run.clone(), fill.clone());
+        move |entry| {
+            // The list follows typing after a short pause; Enter must act on what is typed now.
+            fill(&entry.text());
             if let Some(row) = list.selected_row() {
                 run(&row);
             }
@@ -187,7 +220,7 @@ pub fn palette(ui: &Rc<Ui>) {
 
 /// A miniature terminal in the theme's colours.
 fn swatch(palette: Palette) -> gtk::DrawingArea {
-    let area = gtk::DrawingArea::builder().content_width(148).content_height(88).build();
+    let area = gtk::DrawingArea::builder().content_width(128).content_height(80).build();
     area.set_draw_func(move |_, cr, width, height| {
         let colour = |c: [u8; 3]| (c[0] as f64 / 255.0, c[1] as f64 / 255.0, c[2] as f64 / 255.0);
         let (width, height, radius) = (width as f64, height as f64, 9.0);
@@ -227,7 +260,7 @@ fn swatch(palette: Palette) -> gtk::DrawingArea {
 }
 
 fn theme_gallery(ui: &Rc<Ui>, dark: bool) -> gtk::FlowBox {
-    let gallery = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).max_children_per_line(4).min_children_per_line(2).column_spacing(6).row_spacing(6).homogeneous(true).build();
+    let gallery = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).max_children_per_line(4).min_children_per_line(3).column_spacing(0).row_spacing(2).homogeneous(true).build();
     let current = ui.theme().id.clone();
     let cards: Rc<RefCell<Vec<(String, gtk::Box)>>> = Rc::default();
     for theme in theme::all().iter().filter(|t| t.palette.dark == dark) {
@@ -276,7 +309,11 @@ pub fn preferences(ui: &Rc<Ui>) {
     });
     look.add(&mode);
 
-    let font = gtk::FontDialogButton::builder().dialog(&gtk::FontDialog::builder().modal(true).build()).valign(gtk::Align::Center).use_font(false).use_size(false).build();
+    // A terminal needs every character the same width.
+    let monospace = gtk::CustomFilter::new(|item| {
+        item.downcast_ref::<pango::FontFace>().map(|face| face.family()).or_else(|| item.downcast_ref::<pango::FontFamily>().cloned()).is_some_and(|family| family.is_monospace())
+    });
+    let font = gtk::FontDialogButton::builder().dialog(&gtk::FontDialog::builder().modal(true).filter(&monospace).build()).valign(gtk::Align::Center).use_font(false).use_size(false).build();
     let described = {
         let config = ui.config.borrow();
         // The setting is a fallback list; the picker shows its first family.
@@ -380,15 +417,32 @@ pub fn preferences(ui: &Rc<Ui>) {
 pub fn shortcuts(ui: &Rc<Ui>) {
     let page = adw::PreferencesPage::new();
     let row = |group: &adw::PreferencesGroup, label: &str, accelerator: &str| {
-        let row = adw::ActionRow::builder().title(label).build();
-        row.add_suffix(&gtk::Label::builder().label(keys(accelerator)).css_classes(["rexling-key"]).build());
+        let row = adw::ActionRow::builder().title(label.trim_end_matches('…')).build();
+        // Each key is drawn as a key.
+        let caps = gtk::Box::builder().spacing(4).valign(gtk::Align::Center).build();
+        for key in keys(accelerator).split('+').filter(|key| !key.is_empty()) {
+            caps.append(&gtk::Label::builder().label(key).css_classes(["rexling-cap"]).build());
+        }
+        if accelerator.ends_with("plus") {
+            caps.append(&gtk::Label::builder().label("+").css_classes(["rexling-cap"]).build());
+        }
+        row.add_suffix(&caps);
         group.add(&row);
     };
-    let window = adw::PreferencesGroup::builder().title("Window").build();
-    for (label, _, accelerator) in ACTIONS.iter().filter(|(_, _, accelerator)| !accelerator.is_empty()) {
-        row(&window, label, accelerator);
+    let groups: [(&str, &[&str]); 3] = [
+        ("Tabs", &["new-tab", "next-tab", "previous-tab", "move-tab-up", "move-tab-down", "rename-tab"]),
+        ("Panes", &["split-right", "split-below", "next-pane", "previous-pane", "zoom-pane", "float-pane", "close-pane"]),
+        ("Window", &["palette", "sessions", "new-window", "toggle-sidebar", "preferences", "shortcuts"]),
+    ];
+    for (title, actions) in groups {
+        let group = adw::PreferencesGroup::builder().title(title).build();
+        for wanted in actions {
+            if let Some((label, _, accelerator)) = ACTIONS.iter().find(|(_, action, accelerator)| action == wanted && !accelerator.is_empty()) {
+                row(&group, label, accelerator);
+            }
+        }
+        page.add(&group);
     }
-    page.add(&window);
     let terminal = adw::PreferencesGroup::builder().title("Terminal").build();
     for (label, accelerator) in TERMINAL_KEYS {
         row(&terminal, label, accelerator);
@@ -396,7 +450,14 @@ pub fn shortcuts(ui: &Rc<Ui>) {
     page.add(&terminal);
     let view = adw::ToolbarView::builder().content(&page).build();
     view.add_top_bar(&adw::HeaderBar::new());
-    adw::Dialog::builder().title("Keyboard Shortcuts").child(&view).content_width(460).content_height(640).build().present(Some(&ui.window));
+    let dialog = adw::Dialog::builder().title("Keyboard Shortcuts").child(&view).content_width(460).content_height(640).build();
+    let weak = Rc::downgrade(ui);
+    dialog.connect_closed(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.focus_terminal();
+        }
+    });
+    dialog.present(Some(&ui.window));
 }
 
 pub fn about(ui: &Rc<Ui>) {
@@ -407,6 +468,7 @@ pub fn about(ui: &Rc<Ui>) {
         .developer_name("Rexling contributors")
         .comments("An unofficial native client for Superlogical Rex.")
         .website("https://github.com/shulhi/rexling")
+        .issue_url("https://github.com/shulhi/rexling/issues")
         .license_type(gtk::License::Apache20)
         .build()
         .present(Some(&ui.window));
@@ -415,7 +477,7 @@ pub fn about(ui: &Rc<Ui>) {
 /// Asks before ending a session: every program in it stops.
 pub fn confirm_close_session(ui: &Rc<Ui>, label: &str, close: impl Fn(&Rc<Ui>) + 'static) {
     let dialog = adw::AlertDialog::builder().heading(format!("Close “{label}”?")).body("Every program in this session will be stopped.").close_response("cancel").default_response("cancel").build();
-    dialog.add_responses(&[("cancel", "Cancel"), ("close", "Close Session")]);
+    dialog.add_responses(&[("cancel", "Cancel"), ("close", "Close")]);
     dialog.set_response_appearance("close", adw::ResponseAppearance::Destructive);
     let weak = Rc::downgrade(ui);
     dialog.connect_response(None, move |_, response| {
@@ -442,6 +504,7 @@ pub fn rename(ui: &Rc<Ui>, heading: &str, current: &str, apply: impl Fn(&Rc<Ui>,
     });
     dialog.present(Some(&ui.window));
     entry.grab_focus();
+    entry.select_region(0, -1);
 }
 
 /// Lists the remote ports reachable on this computer and adds new ones.
@@ -525,11 +588,12 @@ mod tests {
     use super::score;
 
     #[test]
-    fn palette_ranks_direct_matches_first() {
-        assert_eq!(score("Split Right", "split"), Some(0));
-        assert!(score("Split Right", "sr").is_some());
-        assert!(score("New Tab", "split").is_none());
-        assert!(score("Toggle Sidebar", "rght").is_none());
-        assert!(score("Split Right", "right") < score("Split Right", "srt"), "a whole word outranks scattered letters");
+    fn palette_ranks_names_before_kinds_and_initials() {
+        assert_eq!(score("Split Right", "", "split"), Some(0));
+        assert_eq!(score("Split Right", "", "right"), Some(1));
+        assert_eq!(score("Split Right", "", "sr"), Some(4));
+        assert_eq!(score("Cathode Amber", "Theme", "theme"), Some(3), "searching a kind lists everything of that kind");
+        assert_eq!(score("Split Right", "", "light"), None, "scattered letters do not match");
+        assert_eq!(score("New Tab", "", "split"), None);
     }
 }

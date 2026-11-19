@@ -127,6 +127,8 @@ pub struct State {
     pub selected_session: String,
     pub selected_block: String,
     pub controlled: bool,
+    /// Another client holds this connection's pane.
+    pub other_owner: bool,
     pub creating: bool,
     pub navigation_id: u64,
     pub connection_epoch: u64,
@@ -383,6 +385,11 @@ impl Client {
             self.follow(&self.state());
         }
     }
+    /// Whether this connection has asked for its pane since it last opened it.
+    pub fn take_was_sent(&self) -> bool {
+        let state = self.state();
+        *self.last_take.borrow() == (state.selected_block.clone(), state.navigation_id, state.connection_epoch)
+    }
     /// Whether this connection currently streams its pane.
     pub fn showing(&self) -> bool {
         let state = self.state();
@@ -450,10 +457,12 @@ impl Client {
         }
     }
     /// Puts a floating pane back into the layout, beside `anchor`.
-    pub fn dock_pane(&self, block: &str, anchor: &str) {
+    /// `below` stacks it under `anchor`, otherwise beside it; `before` puts it on the leading side.
+    pub fn dock_pane(&self, block: &str, anchor: &str, below: bool, before: bool, ratio: f64) {
         let state = self.state();
         if let Some(tab) = state.tab_of(block) {
-            self.command(json!({"type":"dock_pane","session":state.selected_session,"window":tab.id,"id":block,"anchor":anchor,"direction":"right"}));
+            self.command(json!({"type":"dock_pane","session":state.selected_session,"window":tab.id,"id":block,"anchor":anchor,
+                "direction":if below {"below"} else {"right"},"side":if before {"before"} else {"after"},"ratio":ratio}));
         }
     }
     pub fn move_layer(&self, layer: &str, bounds: [f64; 4]) {

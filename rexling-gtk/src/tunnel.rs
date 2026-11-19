@@ -97,6 +97,46 @@ pub fn open(server: &str) -> Result<(Tunnel, String)> {
     Ok((tunnel, format!("unix://{}", socket.display())))
 }
 
+/// Checks an address someone typed and completes it: a bare host is taken to be HTTPS.
+pub fn address(text: &str) -> Result<String, &'static str> {
+    let text = text.trim().trim_end_matches('/');
+    if text.is_empty() || text.chars().any(char::is_whitespace) {
+        return Err("Enter an address without spaces");
+    }
+    let Some((scheme, rest)) = text.split_once("://") else {
+        return if text.starts_with('/') { Ok(format!("unix://{text}")) } else { Ok(format!("https://{text}")) };
+    };
+    match scheme {
+        "https" | "http" | "wss" | "ws" if !rest.is_empty() => Ok(text.to_owned()),
+        "ssh" if target(text).is_ok() => Ok(text.to_owned()),
+        "ssh" => Err("Use ssh://user@host"),
+        "unix" if rest.starts_with('/') => Ok(text.to_owned()),
+        "unix" => Err("Use unix:///path/to/server.sock"),
+        _ => Err("Use https://, ssh:// or unix://"),
+    }
+}
+
+/// What went wrong, in words for a person. The engine's own messages name calls, IDs and status codes.
+pub fn explain(error: &str) -> String {
+    let lower = error.to_lowercase();
+    if lower.contains("session_not_found") || (lower.contains("session") && lower.contains("not found")) {
+        "That session no longer exists".into()
+    } else if lower.contains("enter a complete") || lower.contains("unsupported server scheme") || lower.contains("explicit unix") {
+        "That is not a server address".into()
+    } else if ["connect unix socket", "websocket", "connection refused", "timed out", "timeout", "dns", "tcp connect", "network", "not connected", "connection reset", "closed"].iter().any(|word| lower.contains(word)) {
+        "Can't reach the server".into()
+    } else {
+        // Drop a leading "namespace.method:" and a trailing "(code=…)".
+        let text = error.split(" (code=").next().unwrap_or(error);
+        let text = match text.split_once(": ") {
+            Some((call, rest)) if call.contains('.') && !call.contains(' ') => rest,
+            _ => text,
+        };
+        let mut characters = text.chars();
+        characters.next().map(|first| first.to_uppercase().chain(characters).collect()).unwrap_or_default()
+    }
+}
+
 /// A short name for a server address: the host, or "This Computer" for the local socket.
 pub fn label(server: &str) -> String {
     if let Some(path) = server.strip_prefix("unix://") {
@@ -126,6 +166,25 @@ mod tests {
         assert!(target("ssh://build").is_err(), "a user is required");
         assert!(target("ssh://-oProxyCommand=x@host").is_err(), "options cannot be smuggled in as a user");
         assert!(target("ssh://ada@ho st").is_err());
+    }
+
+    #[test]
+    fn completes_and_rejects_typed_addresses() {
+        assert_eq!(address(" host.example.ts.net:7297/ ").unwrap(), "https://host.example.ts.net:7297");
+        assert_eq!(address("/run/user/1000/rex/server.sock").unwrap(), "unix:///run/user/1000/rex/server.sock");
+        assert_eq!(address("ssh://ada@build").unwrap(), "ssh://ada@build");
+        assert!(address("foo bar").is_err());
+        assert!(address("ssh://build").is_err());
+        assert!(address("ftp://host").is_err());
+        assert!(address("").is_err());
+    }
+
+    #[test]
+    fn explains_errors_without_internals() {
+        assert_eq!(explain("connect Unix socket"), "Can't reach the server");
+        assert_eq!(explain("session.attach: session session:01a1 not found (code=session_not_found, status=404)"), "That session no longer exists");
+        assert_eq!(explain("session.new_split: the window is full (code=limit, status=409)"), "The window is full");
+        assert_eq!(explain("Keep one docked pane in this tab"), "Keep one docked pane in this tab");
     }
 
     #[test]

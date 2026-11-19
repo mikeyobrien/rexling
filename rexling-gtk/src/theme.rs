@@ -94,7 +94,8 @@ pub fn css(palette: &Palette) -> String {
     let on_accent = if contrast(accent, [255, 255, 255]) >= contrast(accent, [0, 0, 0]) { [255, 255, 255] } else { [0, 0, 0] };
     let sidebar = mix(bg, fg, if palette.dark { 0.035 } else { 0.045 });
     let raised = mix(bg, fg, 0.08);
-    let line = mix(bg, fg, 0.12);
+    // Light themes need a firmer line for the same visibility.
+    let line = mix(bg, fg, if palette.dark { 0.16 } else { 0.22 });
     format!(
         r#"
 @define-color window_bg_color {bg};
@@ -133,7 +134,7 @@ pub fn css(palette: &Palette) -> String {
   --accent-bg-color: {accent}; --accent-fg-color: {on_accent}; --accent-color: {accent_text};
 }}
 panegrid {{ background: {line}; }}
-.rexling-float {{ border-radius: 10px; border: 1px solid alpha({fg}, 0.22); box-shadow: 0 10px 30px alpha(black, 0.45); background: {bg}; }}
+.rexling-float {{ border-radius: 10px; border: 2px solid alpha({accent}, 0.7); background: {bg}; }}
 .rexling-float-bar {{ padding: 0 4px 0 12px; background: {sidebar}; border-bottom: 1px solid {line}; }}
 .rexling-tabs row {{ border-radius: 10px; margin: 1px 6px; padding: 6px 8px; transition: background 120ms ease; }}
 .rexling-tabs row:selected {{ background: alpha({fg}, 0.09); }}
@@ -148,6 +149,7 @@ panegrid {{ background: {line}; }}
 .rexling-swatch {{ border-radius: 12px; border: 2px solid transparent; padding: 3px; transition: border-color 120ms ease; }}
 .rexling-swatch.current {{ border-color: {accent}; }}
 .rexling-palette row {{ border-radius: 8px; margin: 0 6px; padding: 8px 10px; }}
+.rexling-cap {{ border: 1px solid alpha({fg}, 0.25); border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px; font-size: 0.85em; background: alpha({fg}, 0.06); }}
 .rexling-key {{ font-family: monospace; font-size: 0.85em; color: alpha({fg}, 0.6); }}
 "#,
         bg = hex(bg),
