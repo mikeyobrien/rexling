@@ -25,6 +25,8 @@ pub struct Config {
     pub tabs: HashMap<String, String>,
     /// Last pane focused in each tab.
     pub panes: HashMap<String, String>,
+    /// Finished and failed reports the user has already looked at, by what they were about.
+    pub seen: HashMap<String, String>,
 }
 
 impl Default for Config {
@@ -42,6 +44,7 @@ impl Default for Config {
             sessions: HashMap::new(),
             tabs: HashMap::new(),
             panes: HashMap::new(),
+            seen: HashMap::new(),
         }
     }
 }

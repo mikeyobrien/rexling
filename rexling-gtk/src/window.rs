@@ -74,6 +74,8 @@ pub struct Ui {
     grid: PaneGrid,
     state: RefCell<Rc<State>>,
     activity: RefCell<Rc<Vec<Activity>>>,
+    /// Everything the server reports, including what the user has already looked at.
+    reported: RefCell<Rc<Vec<Activity>>>,
     /// Reports already announced, by server. A server's first list is history, not news.
     notified: RefCell<HashMap<String, HashSet<String>>>,
     tab: RefCell<String>,
@@ -143,6 +145,8 @@ struct PaneRow {
     place: String,
     /// "Needs approval" and the like.
     waiting: String,
+    /// Its program's icon.
+    tile: String,
     rect: [f64; 4],
     /// "attention", "failed", "done", "working" or nothing.
     status: &'static str,
@@ -199,36 +203,33 @@ fn branch_mark() -> gtk::DrawingArea {
     area
 }
 
-/// A tab's panes in miniature: where each one is, which has the keyboard, and which want the user.
-fn minimap(panes: &[PaneRow], palette: &crate::palette::Palette) -> gtk::DrawingArea {
-    let area = gtk::DrawingArea::builder().content_width(30).content_height(30).valign(gtk::Align::Center).build();
-    let panes: Vec<([f64; 4], &'static str, bool)> = panes.iter().map(|p| (p.rect, p.status, p.focused)).collect();
-    let (accent, warm, red, green) = (theme::accent(palette), palette.ansi[3], palette.ansi[1], palette.ansi[2]);
-    area.set_draw_func(move |area, cr, width, height| {
-        let ink = area.color();
-        let (width, height) = (width as f64, height as f64 - 6.0);
-        for (rect, status, focused) in panes.iter().filter(|(rect, ..)| rect[2] > 0.0 && rect[3] > 0.0) {
-            let (x, y, w, h) = (rect[0] * width, 3.0 + rect[1] * height, rect[2] * width, rect[3] * height);
-            let colour = |rgb: [u8; 3], alpha: f64| cr.set_source_rgba(rgb[0] as f64 / 255.0, rgb[1] as f64 / 255.0, rgb[2] as f64 / 255.0, alpha);
-            match (*status, *focused) {
-                ("attention", _) => colour(warm, 1.0),
-                ("failed", _) => colour(red, 1.0),
-                ("done", _) => colour(green, 1.0),
-                (_, true) => colour(accent, 0.95),
-                _ => cr.set_source_rgba(ink.red() as f64, ink.green() as f64, ink.blue() as f64, 0.22),
-            }
-            // A hair of space between neighbours, and softened corners.
-            let (x, y, w, h, r) = (x + 0.75, y + 0.75, (w - 1.5).max(1.0), (h - 1.5).max(1.0), 2.0);
-            cr.new_sub_path();
-            cr.arc(x + w - r, y + r, r, -std::f64::consts::FRAC_PI_2, 0.0);
-            cr.arc(x + w - r, y + h - r, r, 0.0, std::f64::consts::FRAC_PI_2);
-            cr.arc(x + r, y + h - r, r, std::f64::consts::FRAC_PI_2, std::f64::consts::PI);
-            cr.arc(x + r, y + r, r, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2);
-            cr.close_path();
-            let _ = cr.fill();
+/// A tab's panes in miniature: each program's icon where its pane is, ringed when it has the
+/// keyboard and tinted when it wants the user.
+fn minimap(panes: &[PaneRow], scale: i32) -> gtk::Fixed {
+    const WIDTH: f64 = 50.0;
+    const HEIGHT: f64 = 40.0;
+    let map = gtk::Fixed::builder().width_request(WIDTH as i32).height_request(HEIGHT as i32).valign(gtk::Align::Center).build();
+    for pane in panes.iter().filter(|pane| pane.rect[2] > 0.0 && pane.rect[3] > 0.0) {
+        let (x, y) = ((pane.rect[0] * WIDTH).round(), (pane.rect[1] * HEIGHT).round());
+        let (w, h) = (((pane.rect[0] + pane.rect[2]) * WIDTH).round() - x - 1.0, ((pane.rect[1] + pane.rect[3]) * HEIGHT).round() - y - 1.0);
+        let cell = gtk::Box::builder().width_request(w.max(3.0) as i32).height_request(h.max(3.0) as i32).css_classes(["rexling-mini"]).build();
+        if !pane.status.is_empty() {
+            cell.add_css_class(pane.status);
         }
-    });
-    area
+        if pane.focused {
+            cell.add_css_class("focused");
+        }
+        // The icon keeps its shape, as large as the cell allows.
+        let size = (h - 4.0).min((w - 4.0) * 48.0 / 61.0).floor();
+        if size >= 7.0 && let Some(texture) = tiles::texture(&pane.tile, size as i32 * scale) {
+            // Centred by hand: an expanding child would stretch the whole miniature.
+            let wide = (size * 61.0 / 48.0).round();
+            let icon = gtk::Picture::builder().paintable(&texture).can_shrink(true).width_request(wide as i32).height_request(size as i32).valign(gtk::Align::Center).margin_start(((w - wide) / 2.0).max(0.0).floor() as i32).build();
+            cell.append(&icon);
+        }
+        map.put(&cell, x, y);
+    }
+    map
 }
 
 #[derive(PartialEq, Clone)]
@@ -447,6 +448,7 @@ pub fn build(app: &adw::Application) {
         grid,
         state: RefCell::default(),
         activity: RefCell::default(),
+        reported: RefCell::default(),
         notified: RefCell::default(),
         tab: RefCell::default(),
         focused: RefCell::default(),
@@ -705,6 +707,12 @@ pub fn build(app: &adw::Application) {
     });
     window.add_controller(guard);
 
+    let weak = Rc::downgrade(&ui);
+    window.connect_is_active_notify(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.mark_seen();
+        }
+    });
     // The sidebar appearing or folding away must not carry the keyboard off with it.
     for property in ["collapsed", "show-sidebar"] {
         let weak = Rc::downgrade(&ui);
@@ -1483,7 +1491,8 @@ impl Ui {
             return;
         }
         if let Some(activity) = update.activity {
-            self.activity.replace(activity);
+            self.reported.replace(activity);
+            self.sift();
             self.notify();
             // Status lives outside the state these lists are compared by, so rebuild them.
             self.stale_lists.set(true);
@@ -1828,6 +1837,7 @@ impl Ui {
                             title: report.map(|a| a.title.clone()).filter(|t| !t.is_empty()).unwrap_or(program),
                             place: if shell { state.title(b) } else { String::new() },
                             waiting: report.map(|a| a.label().to_owned()).unwrap_or_default(),
+                            tile: programs::tile(state.programs.get(&b.id).map_or(&[][..], |p| p.as_slice()), tiles::exists),
                             // Zoomed, the miniature is the one pane on screen.
                             rect: match (zoomed, b.id == focused) {
                                 (true, true) => [0.0, 0.0, 1.0, 1.0],
@@ -1883,7 +1893,7 @@ impl Ui {
             if row.panes.is_empty() {
                 content.append(&picture);
             } else {
-                content.append(&minimap(&row.panes, &self.theme().palette));
+                content.append(&minimap(&row.panes, scale));
             }
             content.append(&text);
             if row.status_class == "working" {
@@ -1967,7 +1977,7 @@ impl Ui {
         let selected = self.state.borrow().selected_session.clone();
         let mut found: Vec<(u8, Waiting)> = Vec::new();
         for (server, activity) in sources {
-            for report in activity.iter().filter(|a| a.needs_attention()) {
+            for report in activity.iter().filter(|a| a.needs_attention() && self.unseen(a)) {
                 // This session's tabs already say so in their own rows.
                 if server == current && (visible.contains(&report.block) || report.session == selected) {
                     continue;
@@ -2033,8 +2043,42 @@ impl Ui {
     }
 
     /// Tells the desktop when a program starts waiting on the user while they are looking elsewhere.
+    /// Whether a report is still news: a finished or failed one stops being news once it has been looked at.
+    fn unseen(&self, report: &Activity) -> bool {
+        report.state == "blocked" || report.attention_key.is_empty() || self.config.borrow().seen.get(&report.attention_key) != Some(&report.attention_version)
+    }
+    /// Keeps the reports that are still news.
+    fn sift(&self) {
+        let kept: Vec<Activity> = self.reported.borrow().iter().filter(|a| !a.needs_attention() || self.unseen(a)).cloned().collect();
+        self.activity.replace(Rc::new(kept));
+    }
+    /// Looking at a pane that finished or failed is enough: its report is cleared.
+    fn mark_seen(&self) {
+        if !self.window.is_active() {
+            return;
+        }
+        let visible = self.visible.borrow().clone();
+        let looked: Vec<(String, String)> = self.activity.borrow().iter().filter(|a| matches!(a.state.as_str(), "done" | "error") && visible.contains(&a.block) && !a.attention_key.is_empty()).map(|a| (a.attention_key.clone(), a.attention_version.clone())).collect();
+        if looked.is_empty() {
+            return;
+        }
+        {
+            let mut config = self.config.borrow_mut();
+            // Old entries are for reports long gone.
+            if config.seen.len() > 400 {
+                config.seen.clear();
+            }
+            config.seen.extend(looked);
+            config.save();
+        }
+        self.sift();
+        self.stale_lists.set(true);
+        self.show_sessions();
+        self.show_tabs();
+    }
+
     fn notify(&self) {
-        let mut sources: Vec<(String, Rc<Vec<Activity>>)> = vec![(self.config.borrow().server.clone(), self.activity.borrow().clone())];
+        let mut sources: Vec<(String, Rc<Vec<Activity>>)> = vec![(self.config.borrow().server.clone(), self.reported.borrow().clone())];
         sources.extend(self.watchers.borrow().iter().map(|(server, watcher)| (server.clone(), watcher.activity.clone())));
         let enabled = self.config.borrow().notifications;
         let current = self.config.borrow().server.clone();
@@ -2250,6 +2294,12 @@ impl Ui {
         let pane = panes.get(&focused);
         self.latest.set_visible(pane.is_some_and(|p| p.frame.borrow().as_deref().is_some_and(scrolled_back)));
         self.place_latest();
+        let weak = Rc::downgrade(self);
+        gtk::glib::idle_add_local_once(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.mark_seen();
+            }
+        });
         // The server hears which pane the user is in, so other clients and the command line act on the same one.
         if self.control.get() && !focused.is_empty() && *self.synced_focus.borrow() != focused {
             self.synced_focus.replace(focused.clone());

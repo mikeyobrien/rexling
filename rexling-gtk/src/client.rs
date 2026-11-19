@@ -131,6 +131,7 @@ pub struct Activity {
     pub state: String,
     pub kind: String,
     pub attention_version: String,
+    pub attention_key: String,
 }
 impl Activity {
     pub fn needs_attention(&self) -> bool {
