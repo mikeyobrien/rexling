@@ -50,8 +50,9 @@ signing separately before publishing. SDK paths and caches remain ignored.
   queued plain text can be combined without delaying the first keystroke.
 - The one-row keyboard dock offers modifiers, a hold-and-slide arrow joystick, a dedicated Enter key,
   hold/repeat, Ctrl shortcuts and an expandable panel with F1–F12.
-- **⋮ → Preferences → Appearance** saves independent light/dark presets, including the
-  Rexling defaults. Font size changes in 1-sp steps. Theme requests are sent
+- **⋮ → Preferences** shows each setting's choices in its own row: Theme, Text size
+  (1-sp steps), Keep awake, Arrows, Ctrl menu and Floating panes. **Colors** saves
+  independent light/dark presets, including the Rexling defaults. Theme requests are sent
   while owning the pane; programs may override their own colorscheme.
 - Reconnect notices expose input-paused state and Retry now. Network changes
   trigger retry; uncertain input is never automatically resent.

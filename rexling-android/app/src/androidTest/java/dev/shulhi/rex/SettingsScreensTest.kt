@@ -24,13 +24,13 @@ class SettingsScreensTest {
         ui.setContent {
             RexTheme(dark,ThemeCatalog.defaults[if(dark) 0 else 1]) {
                 Surface(Modifier.fillMaxSize()) {
-                    PreferencesSheet({},{},{},{},{})
+                    PreferencesSheet({})
                 }
             }
         }
         for(isDark in listOf(false,true)) {
             ui.runOnIdle {dark=isDark}
-            ui.onNodeWithText("Background alerts").performScrollTo().assertIsDisplayed()
+            ui.onNodeWithText("Alerts").performScrollTo().assertIsDisplayed()
             ui.onNodeWithText("Portside").assertDoesNotExist()
             capture("preferences",isDark)
 

@@ -46,11 +46,10 @@ private val CardGroupShape=RoundedCornerShape(22.dp)
     // Every action leaves the card first, so what it opens is not stacked on top of it.
     fun leave(run: ()->Unit): ()->Unit={onClose();run()}
     // Built outside the sheet: inside, the frost's host would be the sheet's own window and redraw it every frame.
-    val frost=Modifier.drawerFrost(hazeState,RoundedCornerShape(30.dp))
-    ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Color.Transparent,
-        contentColor=scheme.onSurface,tonalElevation=0.dp,dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
+    val frost=Modifier.sheetSurface(hazeState,RoundedCornerShape(30.dp))
+    SheetWindow(onClose,card=true) {
         Column(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)).padding(horizontal=10.dp).padding(bottom=10.dp)
-            .then(frost).padding(12.dp).semantics {contentDescription="Terminal actions"},verticalArrangement=Arrangement.spacedBy(10.dp)) {
+            .then(frost).dockedCardEdge().padding(12.dp).semantics {contentDescription="Terminal actions"},verticalArrangement=Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f).padding(start=10.dp)) {
                     if(model.overline.isNotBlank()) Text(model.overline,fontSize=12.sp,fontWeight=FontWeight.Medium,color=scheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)

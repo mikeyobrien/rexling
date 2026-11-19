@@ -35,7 +35,7 @@ class ServerIconPickerTest {
         val server=ServerProfile.create("Work Mac","https://work.example","work",ServerIcon.MAC_MINI)
         var saved: Triple<String,String,ServerIcon>?=null;var closed=0
         ui.setContent {RexTheme(true,ThemeCatalog.defaults[0]) {
-            ServerEditor(server,{closed++}) {name,url,icon->saved=Triple(name,url,icon);null}
+            ServerEditor(server,{closed++},{name,url,icon->saved=Triple(name,url,icon);null})
         }}
         ui.onNodeWithContentDescription("Choose server icon").performClick()
         ui.onNode(hasText("MacBook") and hasAnyAncestor(isPopup())).performClick()

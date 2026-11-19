@@ -12,15 +12,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ExperimentalPreferenceTest {
     @get:Rule val ui=createComposeRule()
-    @Test fun codexOptionIsClearlyExperimentalAndTogglesIndependently() {
+    @Test fun codexOptionTogglesIndependently() {
         val enabled=mutableStateOf(false);var calls=0
         ui.setContent {RexTheme(true,ThemeCatalog.defaults[0]) {
-            PreferencesSheet({},{},{},{},{},codexTitleAttention=enabled.value,onCodexTitleAttention={enabled.value=it;calls++})
+            PreferencesSheet({},codexTitleAttention=enabled.value,onCodexTitleAttention={enabled.value=it;calls++})
         }}
         val toggle=ui.onNode(hasText("Codex title attention") and isToggleable())
         toggle.performScrollTo().assertIsOff().performClick().assertIsOn()
-        ui.onNodeWithText("Experimental").assertIsDisplayed()
-        ui.onNodeWithText("Use Codex’s explicit Action Required title when its status stays Working. Depends on Codex’s title format.").assertIsDisplayed()
         ui.runOnIdle {assertEquals(1,calls)}
         toggle.performClick().assertIsOff()
     }

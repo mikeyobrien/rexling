@@ -24,7 +24,7 @@ import dev.chrisbanes.haze.HazeState
     hazeState: HazeState?=null,onBack: (() -> Unit)?=null,swipeToDismiss: Boolean=true,content: @Composable ColumnScope.()->Unit) {
     val localHaze=remember {HazeState()}
     @Composable fun Body(modifier: Modifier=Modifier) {
-        val frost=if(swipeToDismiss) Modifier.drawerFrost(hazeState,BottomSheetDefaults.ExpandedShape)
+        val frost=if(swipeToDismiss || sheetDocks()) Modifier.sheetSurface(hazeState,BottomSheetDefaults.ExpandedShape)
             else Modifier.paneFrost(hazeState ?: localHaze,BottomSheetDefaults.ExpandedShape,edge=false,opacity=.72f,blur=24.dp)
         Column(modifier.then(frost).fillMaxWidth()
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))) {
@@ -37,7 +37,7 @@ import dev.chrisbanes.haze.HazeState
             content()
         }
     }
-    if(!swipeToDismiss) {
+    if(!swipeToDismiss && !sheetDocks()) {
         // Editors with drag-and-drop must not compete with a sheet's draggable
         // or nested-scroll dismiss handlers. Retain the same drawer chrome in a
         // fixed bottom dialog; the palette owns its normal scrolling/flinging.
@@ -50,8 +50,6 @@ import dev.chrisbanes.haze.HazeState
             }
         }
     } else {
-        ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),
-            containerColor=Color.Transparent,contentColor=MaterialTheme.colorScheme.onSurface,tonalElevation=0.dp,
-            dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {Body()}
+        SheetWindow(onClose) {Body()}
     }
 }

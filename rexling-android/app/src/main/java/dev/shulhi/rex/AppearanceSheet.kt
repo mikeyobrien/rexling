@@ -73,18 +73,3 @@ import kotlin.math.roundToInt
         Row(horizontalArrangement=Arrangement.spacedBy(3.dp)) {for(i in listOf(1,2,3,4,5)) Box(Modifier.size(7.dp,3.dp).background(Color(palette.ansi[i]),RoundedCornerShape(1.dp)))}
     }
 }
-
-@Composable internal fun FontSizeDialog(size: Int,onSize: (Int)->Unit,hazeState: dev.chrisbanes.haze.HazeState?=null,onClose: ()->Unit) {
-    SettingsDrawer("Font size","Close font size",onClose,hazeState) {
-        Column(Modifier.fillMaxWidth().padding(horizontal=16.dp).padding(top=8.dp,bottom=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween) {
-                IconButton(onClick={onSize(size-1)},enabled=size>8,modifier=Modifier.semantics {contentDescription="Decrease font size"}) {Text("−",fontSize=24.sp)}
-                Text("$size sp",fontFamily=MonoUi,fontSize=16.sp)
-                IconButton(onClick={onSize(size+1)},enabled=size<20,modifier=Modifier.semantics {contentDescription="Increase font size"}) {Text("+",fontSize=24.sp)}
-            }
-            Slider(value=size.toFloat(),onValueChange={onSize(it.roundToInt())},valueRange=8f..20f,steps=11,modifier=Modifier.semantics {contentDescription="Font size"})
-            Text("Aa 0123 / ~",fontFamily=MonoUi,fontSize=size.sp)
-        }
-            TextButton(onClick=onClose,modifier=Modifier.align(Alignment.End)){Text("Done")}
-    }
-}

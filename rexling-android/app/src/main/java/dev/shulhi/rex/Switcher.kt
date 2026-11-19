@@ -60,11 +60,10 @@ private val GroupShape=RoundedCornerShape(22.dp)
     LaunchedEffect(level) {rows.settle();if(level==SwitcherLevel.SESSIONS) refresh()}
     // Built out here on purpose: the frost redraws when its host window draws, and inside the sheet
     // the host would be the sheet's own window, which would then redraw itself every frame.
-    val frost=Modifier.drawerFrost(hazeState,RoundedCornerShape(30.dp))
-    ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Color.Transparent,
-        contentColor=MaterialTheme.colorScheme.onSurface,tonalElevation=0.dp,dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
+    val frost=Modifier.sheetSurface(hazeState,RoundedCornerShape(30.dp))
+    SheetWindow(onClose,card=true) {
         Box(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)).padding(horizontal=10.dp).padding(bottom=10.dp)) {
-            Box(Modifier.fillMaxWidth().then(frost).padding(12.dp)) {
+            Box(Modifier.fillMaxWidth().then(frost).dockedCardEdge().padding(12.dp)) {
                 AnimatedContent(level,transitionSpec={
                     // Sessions sit above tabs: going up comes in from the left, going down from the right.
                     val down=targetState==SwitcherLevel.TABS

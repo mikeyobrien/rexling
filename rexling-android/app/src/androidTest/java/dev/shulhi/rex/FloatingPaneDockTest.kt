@@ -78,9 +78,11 @@ class FloatingPaneDockTest {
     @Test fun preferenceCanBeEnabledAndDisabled() {
         val enabled=mutableStateOf(false)
         ui.setContent {RexTheme(true,ThemeCatalog.defaults[0]) {
-            PreferencesSheet({},{},{},{},{},minimizeFloatingPanes=enabled.value,onMinimizeFloatingPanes={enabled.value=it})
+            PreferencesSheet({},minimizeFloatingPanes=enabled.value,onMinimizeFloatingPanes={enabled.value=it})
         }}
-        val toggle=ui.onNode(hasText("Minimize floating panes") and isToggleable())
-        toggle.performScrollTo().assertIsOff().performClick().assertIsOn().performClick().assertIsOff()
+        ui.onNodeWithText("Swipe").performScrollTo().assertIsSelected()
+        ui.onNodeWithText("Dock").performClick().assertIsSelected()
+        ui.runOnIdle {assertTrue(enabled.value)}
+        ui.onNodeWithText("Swipe").performClick().assertIsSelected()
     }
 }

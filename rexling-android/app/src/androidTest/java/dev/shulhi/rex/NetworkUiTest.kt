@@ -105,14 +105,20 @@ class NetworkUiTest {
         compose.onNodeWithText("Sign in").assertDoesNotExist()
         compose.onNodeWithText("Sign in again").assertDoesNotExist()
     }
-    @Test fun emptyServerStateOpensAddServerInsteadOfQuickTailscaleSetup() {
-        var added=0
-        compose.setContent {MaterialTheme {EmptyServerContent {added++}}}
-        compose.onNodeWithText("Welcome to Rexling").assertIsDisplayed()
-        compose.onNodeWithText("Rex server URL").assertDoesNotExist()
-        compose.onNodeWithText("Connect over Tailscale").assertDoesNotExist()
-        compose.onNodeWithText("Add server").performClick()
-        compose.runOnIdle {assertEquals(1,added)}
+    @Test fun firstRunConnectsFromTheAddressAloneAndKeepsTheRestBehindOneRow() {
+        val connected=mutableListOf<String>();val more=mutableListOf<String>()
+        compose.setContent {MaterialTheme {EmptyServerContent(onConnect={connected+=it;if(it.endsWith("bad")) "No such server" else null},onMore={more+=it})}}
+        compose.onNodeWithText("Connect to Rex").assertIsDisplayed()
+        compose.onNodeWithText("Connect").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Server address").performTextInput("rex.example.ts.net")
+        compose.onNodeWithText("Connect").performClick()
+        compose.runOnIdle {assertEquals(listOf("https://rex.example.ts.net"),connected)}
+        compose.onNodeWithText("Name, icon, network").performClick()
+        compose.runOnIdle {assertEquals(listOf("https://rex.example.ts.net"),more)}
+        compose.onNodeWithContentDescription("Server address").performTextReplacement("ssh://me@bad")
+        compose.onNodeWithText("Connect").performClick()
+        compose.onNodeWithText("No such server").assertIsDisplayed()
+        compose.runOnIdle {assertEquals("ssh://me@bad",connected.last())}
     }
     @Test fun connectedDevicesAndRoutesShareTheTailnetStatusCard() {
         var dark by androidx.compose.runtime.mutableStateOf(false)

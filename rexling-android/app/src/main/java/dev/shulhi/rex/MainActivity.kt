@@ -62,7 +62,10 @@ class MainActivity : ComponentActivity() {
             SideEffect {WindowCompat.getInsetsController(window,window.decorView).apply {
                 isAppearanceLightStatusBars=!dark;isAppearanceLightNavigationBars=!dark
             }}
-            RexTheme(dark,model.theme(dark)) {RexApp(model)}
+            RexTheme(dark,model.theme(dark)) {
+                val dock=remember {SheetDock()}
+                CompositionLocalProvider(LocalSheetDock provides dock) {RexApp(model)}
+            }
         }
     }
     private fun consumeAlert(intent: Intent?) {
@@ -142,6 +145,7 @@ class MainActivity : ComponentActivity() {
     var showServer by rememberSaveable {mutableStateOf(true)}
     var servers by remember {mutableStateOf(false)}
     var addServer by remember {mutableStateOf(false)}
+    var addEndpoint by remember {mutableStateOf("")}
     var forwards by remember {mutableStateOf(false)}
     var connectionError by remember {mutableStateOf<String?>(null)}
     var picker by remember {mutableStateOf("")}
@@ -155,7 +159,6 @@ class MainActivity : ComponentActivity() {
     var toolbarSettings by remember {mutableStateOf(false)}
     var alerts by remember {mutableStateOf(false)}
     val fontSize=model.fontSize
-    var fontPicker by remember {mutableStateOf(false)}
     var terminalView by remember {mutableStateOf<TerminalView?>(null)}
     val context=LocalContext.current
     var networkAction by remember {mutableStateOf<(() ->Unit)?>(null)}
@@ -231,7 +234,7 @@ class MainActivity : ComponentActivity() {
     val floatingActive=floating.any {it.id==chosen}
     var hiddenFloating by rememberSaveable(displayedSession,window?.id) {mutableStateOf("")}
     val controlled=state.controlled && ready && client.hasScreen && (!floatingActive || hiddenFloating!=chosen)
-    SideEffect {model.setPaneObscured((floatingActive && hiddenFloating==chosen) || model.activityVisible || picker.isNotEmpty() || preferencesOpen || networkSettings || servers || addServer || forwards || newSession || appearance || about || neovimSettings || toolbarSettings || alerts || fontPicker)}
+    SideEffect {model.setPaneObscured((floatingActive && hiddenFloating==chosen) || model.activityVisible || picker.isNotEmpty() || preferencesOpen || networkSettings || servers || addServer || forwards || newSession || appearance || about || neovimSettings || toolbarSettings || alerts)}
     fun openPane(id: String) {hiddenFloating="";client.selectBlock(id)}
     fun minimizeFloating() {
         hiddenFloating=chosen
@@ -240,7 +243,7 @@ class MainActivity : ComponentActivity() {
     LaunchedEffect(navigation.id) {if(navigation.pending) hiddenFloating=""}
     LaunchedEffect(model.minimizeFloatingPanes) {if(model.minimizeFloatingPanes && floatingActive) minimizeFloating()}
     SideEffect {window?.let {client.floatingNavigation.remember(displayedSession,it,chosen)}}
-    BackHandler(enabled=ready && model.minimizeFloatingPanes && !newSession && !appearance && !about && !neovimSettings && !alerts && !fontPicker && floatingActive && hiddenFloating!=chosen && picker.isEmpty() && !preferencesOpen && !model.activityVisible) {minimizeFloating()}
+    BackHandler(enabled=ready && model.minimizeFloatingPanes && !newSession && !appearance && !about && !neovimSettings && !alerts && floatingActive && hiddenFloating!=chosen && picker.isEmpty() && !preferencesOpen && !model.activityVisible) {minimizeFloating()}
     val liveBlock=state.selectedBlock.ifBlank {if(state.phase=="preview") "preview" else ""}
     // The header's second line states what is wrong, with the one thing to do about it.
     val paused=connectionStatus(state.phase,model.networkAvailable).takeIf {blocks.isNotEmpty()}
@@ -294,20 +297,24 @@ class MainActivity : ComponentActivity() {
             if(client.keyboardRequest==displayedBlock && terminalView!=null) {terminalView?.keyboard();client.keyboardShown()}
         }
     }
-    val workspaceBackdrop=rememberBackdropCapture(menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || fontPicker || alerts || picker.isNotEmpty() || model.activityVisible)
+    val workspaceBackdrop=rememberBackdropCapture(menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || alerts || picker.isNotEmpty() || model.activityVisible)
     Surface(Modifier.fillMaxSize().then(if(workspaceBackdrop) Modifier.hazeSource(workspaceHaze) else Modifier),color=MaterialTheme.colorScheme.background) {
         // Wide screens (an unfolded Fold, tablets): the tab list sits beside the terminal; maximize hides it.
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
         val wide=maxWidth>=WideLayoutMinWidth
         val listWidth=wideListWidth(maxWidth,maxHeight)
+        // Sheets dock over the terminal side while there is a list beside it to keep in reach.
+        val sheetDock=LocalSheetDock.current
+        SideEffect {sheetDock?.active=wide && chromeVisible}
         Row(Modifier.fillMaxSize()) {
         if(wide && !listHidden && chromeVisible) {
             // The list names every session, so it needs their tab counts without opening the switcher.
             LaunchedEffect(state.connected,state.sessions.size) {model.refreshSessionDetails()}
             TabListPanel(listWidth,switcher,onSessions={picker="sessions"},onSettings={preferencesOpen=true},onCollapse={listHidden=true})
-        }
+        } else if(wide && chromeVisible) TabRail(switcher) {listHidden=false}
         // Wide: the terminal side is a card like the list, with its header inside, both starting at the same height.
-        Column(Modifier.weight(1f).fillMaxHeight().then(if(wide && chromeVisible) Modifier.padding(start=4.dp,end=8.dp,bottom=8.dp)
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+        Column(Modifier.fillMaxSize().then(if(wide && chromeVisible) Modifier.padding(start=4.dp,end=8.dp,bottom=8.dp)
             .clip(WideCardShape).background(MaterialTheme.colorScheme.surface) else Modifier)) {
             Box(Modifier.onGloballyPositioned {headerTop=it.positionInRoot().y;headerHeight=it.size.height}) {
             SessionHeader(sessionStrip,currentSessionKey,state.connected,model.sessionTargets.isNotEmpty(),
@@ -322,9 +329,6 @@ class MainActivity : ComponentActivity() {
                 paneDots=if(carouselBlocks.size>1) carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0) to carouselBlocks.size else null,
                 status=headerStatus,
                 subtitle=if(wide && chromeVisible) state.directories[displayedBlock].orEmpty() else null,
-                leading=if(wide && chromeVisible && listHidden) {{
-                    ChromeButton(ChromeIcon.CHEVRON,"Show tab list",modifier=Modifier.graphicsLayer {rotationZ=-90f}) {listHidden=false}
-                }} else null,
                 onTitleSwipe=if(tabsReady && carouselBlocks.size>1) {{step->
                     val index=carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0)
                     openPane(carouselBlocks[Math.floorMod(index+step,carouselBlocks.size)].id)
@@ -344,7 +348,7 @@ class MainActivity : ComponentActivity() {
                 Column(Modifier.fillMaxSize()) {
                     if(showServer || (state.phase=="disconnected"&&!client.hasScreen)) {
                         Surface(Modifier.padding(12.dp),shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.surface) {
-                            if(model.servers.isEmpty()) EmptyServerContent(onAdd={addServer=true}) else Column(Modifier.padding(15.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                            if(model.servers.isEmpty()) EmptyServerContent(onConnect={url->model.saveServer(null,"",url)},onMore={url->addEndpoint=url;addServer=true}) else Column(Modifier.padding(15.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                                 Text(stringResource(R.string.app_name),fontWeight=FontWeight.Bold,fontSize=20.sp)
                                 Text(stringResource(R.string.app_subtitle),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("Connect over Tailscale",fontWeight=FontWeight.SemiBold)
@@ -396,8 +400,7 @@ class MainActivity : ComponentActivity() {
                             ::openPane,::minimizeFloating,Modifier.align(Alignment.BottomEnd).padding(end=6.dp),directories=state.directories,hazeState=terminalHaze,onExpandedChange={floatingBackdrop=it})
                         }
                     } else Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center) {
-                        Text(if(state.connected) "Choose a session, or start a new one." else "Your terminals, anywhere.",
-                            fontFamily=MonoUi,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        if(state.connected) Text("Choose a session, or start a new one.",fontFamily=MonoUi,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     // Tabs and Activity live in the header; the key toolbar appears with the keyboard.
                     if(chromeVisible && keyboardVisible) {
@@ -416,6 +419,8 @@ class MainActivity : ComponentActivity() {
                     LinearProgressIndicator(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(2.dp))
 
             }
+        }
+        sheetDock?.let {SheetDockHost(it,Modifier.padding(start=4.dp,end=8.dp,bottom=8.dp))}
         }
         }
         }
@@ -446,12 +451,14 @@ class MainActivity : ComponentActivity() {
     if(model.activityVisible) ActivitySheet(model.activitySources,model::refreshActivity,model::openActivity,onClose={model.showActivity(false)},onSeen=model::markActivitySeen,onMarkAll=model::markAllActivitySeen,hazeState=workspaceHaze)
     NetworkPrompts()
     if(networkSettings) NetworkSheet(model.activeServer,state.connected,hazeState=workspaceHaze) {networkSettings=false}
-    if(preferencesOpen) PreferencesSheet({preferencesOpen=false;appearance=true},{preferencesOpen=false;fontPicker=true},{preferencesOpen=false;alerts=true},{preferencesOpen=false;about=true},
-        onNetwork={preferencesOpen=false;networkSettings=true},onClose={preferencesOpen=false},shortcutGesture=model.shortcutGesture,onShortcutGesture=model::changeShortcutGesture,
-        onNeovim={preferencesOpen=false;neovimSettings=true},arrowJoystickEnabled=model.arrowJoystickEnabled,onArrowJoystick=model::changeArrowJoystick,
-        codexTitleAttention=model.experimentalCodexAttention,onCodexTitleAttention=model::changeCodexAttention,
+    if(preferencesOpen) PreferencesSheet(onClose={preferencesOpen=false},
+        appearance=model.appearance,onAppearance=model::changeAppearance,onColors={preferencesOpen=false;appearance=true},
+        fontSize=fontSize,onFontSize=model::changeFontSize,keepScreenAwake=model.keepScreenAwake,onKeepScreenAwake=model::changeKeepScreenAwake,
+        arrowJoystickEnabled=model.arrowJoystickEnabled,onArrowJoystick=model::changeArrowJoystick,shortcutGesture=model.shortcutGesture,onShortcutGesture=model::changeShortcutGesture,
+        toolbarKeys=model.toolbarKeys,onToolbar={preferencesOpen=false;toolbarSettings=true},onNeovim={preferencesOpen=false;neovimSettings=true},
         minimizeFloatingPanes=model.minimizeFloatingPanes,onMinimizeFloatingPanes=model::changeMinimizeFloatingPanes,
-        keepScreenAwake=model.keepScreenAwake,onKeepScreenAwake=model::changeKeepScreenAwake,onToolbar={preferencesOpen=false;toolbarSettings=true},hazeState=workspaceHaze)
+        onNetwork={preferencesOpen=false;networkSettings=true},onAlerts={preferencesOpen=false;alerts=true},onForwards={preferencesOpen=false;forwards=true},
+        codexTitleAttention=model.experimentalCodexAttention,onCodexTitleAttention=model::changeCodexAttention,onAbout={preferencesOpen=false;about=true},hazeState=workspaceHaze)
     if(toolbarSettings) KeyboardToolbarSheet(model.toolbarKeys,model::changeToolbar,onClose={toolbarSettings=false},hazeState=workspaceHaze)
     if(neovimSettings) NeovimShortcutsSheet(model.neovimShortcuts,model::saveNeovimShortcuts,onClose={neovimSettings=false},
         enabled=model.neovimShortcutsEnabled,onEnabled=model::enableNeovimShortcuts,
@@ -469,9 +476,8 @@ class MainActivity : ComponentActivity() {
         withUploadNetwork({PortForwards.start(context,target.profile,target.session,host,port,local)})
     }
     if(servers) ServersSheet(model,hazeState=workspaceHaze){servers=false}
-    if(addServer) ServerEditor(null,onClose={addServer=false},onSave={label,url,icon->model.saveServer(null,label,url,icon)})
+    if(addServer) ServerEditor(null,onClose={addServer=false},initialEndpoint=addEndpoint,onSave={label,url,icon->model.saveServer(null,label,url,icon)})
     if(appearance) AppearanceSheet(model.appearance,model.themes,model.theme(false),model.theme(true),model::changeAppearance,model::chooseTheme,hazeState=workspaceHaze) {appearance=false}
-    if(fontPicker) FontSizeDialog(fontSize,model::changeFontSize,hazeState=workspaceHaze) {fontPicker=false}
     if(newSession) NewSessionDialog(model.activeServer.label,ready,client::createSession) {newSession=false}
 
 }

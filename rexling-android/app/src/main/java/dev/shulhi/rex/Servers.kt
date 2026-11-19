@@ -27,6 +27,8 @@ data class ServerProfile(val id: String,val label: String,val endpoint: String,v
             require(name.none {it.isISOControl()}) {"Use a single-line server name"}
             return ServerProfile(id,name,normalized,icon)
         }
+        /** What someone types is a host; a bare one means HTTPS. */
+        fun completeAddress(value: String)=value.trim().let {if(it.isEmpty() || "://" in it) it else "https://$it"}
         fun normalizeEndpoint(value: String): String {
             val uri=runCatching {URI(value.trim())}.getOrElse {throw IllegalArgumentException("Enter a complete server URL")}
             val scheme=uri.scheme?.lowercase(Locale.ROOT)

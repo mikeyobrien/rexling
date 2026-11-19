@@ -31,9 +31,8 @@ import dev.chrisbanes.haze.HazeState
     val context=LocalContext.current
     var editing by remember {mutableStateOf(false)}
     val canAdd=servers.any {it.connected && it.session.isNotBlank()} && PortForwards.items.size<64
-    ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),
-        containerColor=Color.Transparent,contentColor=MaterialTheme.colorScheme.onSurface,tonalElevation=0.dp,dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
-        Column(Modifier.drawerFrost(hazeState,BottomSheetDefaults.ExpandedShape).fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)).padding(bottom=4.dp)) {
+    SheetWindow(onClose) {
+        Column(Modifier.sheetSurface(hazeState,BottomSheetDefaults.ExpandedShape).fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)).padding(bottom=4.dp)) {
             DrawerHandle()
             Row(Modifier.fillMaxWidth().heightIn(min=48.dp).padding(start=16.dp,end=4.dp),verticalAlignment=Alignment.CenterVertically) {
                 Text("Port forwarding",Modifier.weight(1f),style=SettingsType.row,fontWeight=FontWeight.Bold)
@@ -100,6 +99,10 @@ import dev.chrisbanes.haze.HazeState
                         }
                     }
                 }
+            }
+            Row(Modifier.fillMaxWidth().padding(start=16.dp,end=10.dp).heightIn(min=48.dp),verticalAlignment=Alignment.CenterVertically) {
+                Text("Port taken",Modifier.weight(1f),style=SettingsType.row)
+                Segmented(listOf(PortConflictPolicy.ASK to "Ask",PortConflictPolicy.AUTO to "Another port",PortConflictPolicy.REPLACE to "Replace"),PortForwards.policy,PortForwards::changePolicy)
             }
         }
     }
