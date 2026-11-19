@@ -193,6 +193,20 @@ fn collect_pane_layout(node: &Value,ids: &BTreeSet<&str>,layer: usize,floating: 
     }
     for child in ["before","after"] {collect_pane_layout(&node["split"][child],ids,layer,floating,depth+1,out);}
 }
+fn first_block(node: &Value,depth: usize)->Option<&str> {
+    if depth>64 {return None;}
+    node["block_id"].as_str().or_else(||first_block(&node["split"]["before"],depth+1)).or_else(||first_block(&node["split"]["after"],depth+1))
+}
+/// Each border between tiled panes: where it is and a pane on either side, for clients that let it be dragged.
+fn collect_splits(node: &Value,depth: usize,out: &mut Vec<Value>) {
+    let split=&node["split"];
+    if !split.is_object() || depth>64 || out.len()>=256 {return;}
+    if let (Some(direction),Some(ratio),Some(rect),Some(before),Some(after))=(split["direction"].as_str(),split["ratio"].as_f64(),node["rect"].as_array(),
+        first_block(&split["before"],0),first_block(&split["after"],0)) {
+        out.push(json!({"direction":direction,"ratio":ratio,"rect":rect,"before":before,"after":after}));
+    }
+    for child in ["before","after"] {collect_splits(&split[child],depth+1,out);}
+}
 type ConnectTask = Pin<Box<dyn Future<Output = Result<Control>>>>;
 type ProgramTask = Pin<Box<dyn Future<Output = Result<Value>>>>;
 type SummaryTask = Pin<Box<dyn Future<Output = Result<Value>>>>;
@@ -646,7 +660,9 @@ impl Actor {
         for window in view["windows"].as_array().into_iter().flatten() {
             let mut blocks = Vec::new();
             let mut layout=Vec::new();
+            let mut splits=Vec::new();
             for (index,layer) in window["layers"].as_array().into_iter().flatten().enumerate() {
+                if layer["kind"]=="tiled" {collect_splits(&layer["layout"],0,&mut splits);}
                 let ids=layer["blocks"].as_array().into_iter().flatten()
                     .filter(|b|b["creator_name"]=="com.superlogical.terminal")
                     .filter_map(|b|b["block_id"].as_str()).collect();
@@ -667,7 +683,7 @@ impl Actor {
                     );
                 }
             }
-            windows.push(json!({"id":window["window_id"],"label":window["label"],"blocks":blocks,"layout":layout}));
+            windows.push(json!({"id":window["window_id"],"label":window["label"],"blocks":blocks,"layout":layout,"splits":splits}));
         }
         let next = json!(windows);
         let ids = |windows: &Value| -> BTreeSet<String> {
@@ -928,7 +944,9 @@ impl Actor {
                         || server.starts_with("http://")
                         || server.starts_with("wss://")
                         || server.starts_with("ws://")
-                        || server.starts_with("ssh://"),
+                        || server.starts_with("ssh://")
+                        // Desktop clients can reach a Rex server on the same machine through its socket.
+                        || (cfg!(not(target_os = "android")) && server.starts_with("unix:///")),
                     "Enter a complete HTTP(S), WS(S), or SSH server URL"
                 );
                 let endpoint = Endpoint::new(&server, Duration::from_secs(10))?;
@@ -1140,6 +1158,16 @@ impl Actor {
                 self.error.clear();
                 // Send once: never repeat a layout mutation after an uncertain reply.
                 self.control.as_mut().context("not connected")?.call(method,args).await?;
+                self.refresh_view().await?;
+            }
+            "resize_pane" => {
+                ensure!(self.visible && !self.paused && self.phase=="connected" && !self.creating,"Connect before resizing panes");
+                ensure!(value["session"].as_str()==Some(self.selected_session.as_str()),"The selected session changed");
+                let direction=value["direction"].as_str().filter(|d|matches!(*d,"horizontal"|"vertical")).context("split direction required")?;
+                let ratio=value["ratio"].as_f64().filter(|r|r.is_finite()).context("split ratio required")?.clamp(0.05,0.95);
+                let (before,after)=(value["before"].as_str().context("pane required")?,value["after"].as_str().context("pane required")?);
+                self.control.as_mut().context("not connected")?.call("session.resize_pane",json!({"session_id":self.selected_session,
+                    "direction":direction,"before_block_id":before,"after_block_id":after,"ratio":ratio})).await?;
                 self.refresh_view().await?;
             }
             "move_tab" => {

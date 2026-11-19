@@ -1,9 +1,9 @@
 mod activity;
 mod progress;
-mod engine;
-mod updates;
-mod uploads;
-mod forwards;
+pub mod engine;
+pub mod updates;
+pub mod uploads;
+pub mod forwards;
 use engine::Session;
 use jni::{
     JNIEnv,
