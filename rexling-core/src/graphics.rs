@@ -71,6 +71,31 @@ unsafe extern "C" {
     ) -> i32;
 }
 const MAX_BYTES: usize = 32 * 1024 * 1024;
+/// JPEG in the PNG slot is a Rexling extension for streamed video and windows, where lossless
+/// frames are too large to send. Senders must opt in; other terminals reject such data.
+fn decode_jpeg(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    use zune_jpeg::zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
+    let options = DecoderOptions::default()
+        .jpeg_set_out_colorspace(ColorSpace::RGBA)
+        .set_max_width(8192)
+        .set_max_height(8192);
+    let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(bytes), options);
+    decoder.decode_headers().ok()?;
+    let info = decoder.info()?;
+    let (w, h) = (u32::from(info.width), u32::from(info.height));
+    if w == 0 || h == 0 || (w as usize) * (h as usize) * 4 > 16 * 1024 * 1024 {
+        return None;
+    }
+    let pixels = decoder.decode().ok()?;
+    (pixels.len() == (w as usize) * (h as usize) * 4).then_some((w, h, pixels))
+}
+fn decode_image(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        decode_jpeg(bytes)
+    } else {
+        decode_png(bytes)
+    }
+}
 fn decode_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let mut decoder = png::Decoder::new_with_limits(
         std::io::Cursor::new(bytes),
@@ -151,7 +176,7 @@ pub(crate) fn init() -> Result<()> {
                 return false;
             }
             let Some((width, height, pixels)) =
-                decode_png(unsafe { std::slice::from_raw_parts(data, len) })
+                decode_image(unsafe { std::slice::from_raw_parts(data, len) })
             else {
                 return false;
             };
@@ -280,6 +305,17 @@ impl Images {
 mod tests {
     use super::*;
     use crate::ghostty::Terminal;
+    /// An 8 by 8 block of one red, saved as a baseline JPEG.
+    const JPEG: &str = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDwSiiivz8/uA//2Q==";
+    #[test]
+    fn jpeg_in_the_png_slot_decodes_to_opaque_pixels_and_damaged_data_is_refused() {
+        let jpeg = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, JPEG).unwrap();
+        let (width, height, rgba) = decode_image(&jpeg).unwrap();
+        assert_eq!((width, height, rgba.len()), (8, 8, 8 * 8 * 4));
+        assert!(rgba.as_chunks::<4>().0.iter().all(|p| p[0] > 180 && p[1] < 60 && p[2] < 70 && p[3] == 255));
+        assert!(decode_image(&[0xff, 0xd8, 0xff, 0, 1, 2, 3]).is_none());
+        assert!(decode_image(&jpeg[..40]).is_none());
+    }
     use base64::Engine;
     fn image(terminal: &mut Terminal, id: u32, pixels: &[u8], png: bool) {
         let payload = base64::engine::general_purpose::STANDARD.encode(pixels);

@@ -92,6 +92,11 @@ class TerminalView(context: Context) : View(context) {
     var onWheel: (Int,Int,Int,Int,Int) -> Unit = {lines,_,_,_,_->onScroll(lines)}
     var onActivate: () -> Unit = {}
     var onMouseClick: (Int,Int,Int,Int) -> Unit = {_,_,_,_->}
+    /** A pointer event on a picture: phase (click, press, move, release), button (1 left, 2 right), pixel from the grid corner, cell size. */
+    var onPointer: (String,Int,Float,Float,Int,Int) -> Unit = {_,_,_,_,_,_->}
+    // A long press on a picture holds the pointer: moving drags with the left button, lifting in place right-clicks.
+    private var pointerHeld=false
+    private var pointerDragging=false
     internal var onFrameDrawn: ((String)->Unit)?=null
     internal var onSemanticCopy: ((TerminalScreen,Int,Int,Boolean)->Boolean)?=null
     internal var onCursorTap: ()->Unit = {}
@@ -103,6 +108,9 @@ class TerminalView(context: Context) : View(context) {
     private var wheelCol=0
     private var wheelRow=0
     var onPaneSwipe: (Int) -> Unit = {}
+    /** Cell size in pixels, reported so pictures can be sent at this screen's resolution. */
+    var onCellPixels: (Int,Int)->Unit = {_,_->}
+        set(value) {field=value;value(desiredCellWidth.roundToInt(),desiredCellHeight.roundToInt())}
     var onDimensions: (Int, Int) -> Unit = { _, _ -> }
         set(value) {val changed=field!=value;field=value;if(changed && width>0 && height>0) reportDimensions(force=true)}
     private var currentScreen: TerminalScreen?=null
@@ -163,6 +171,7 @@ class TerminalView(context: Context) : View(context) {
      * the overscan rows at the edges.
      */
     private val scrollMotion=TerminalScrollMotion()
+    private val mediaMetrics=MediaMetrics()
     private var slideClamped=false
     private val scrollMetrics=ScrollMetrics(System::nanoTime,
         {(1_000_000_000.0/(display?.refreshRate?.takeIf {it>0f} ?: 60f)).toLong()},ScrollMetricsLog::record)
@@ -214,6 +223,7 @@ class TerminalView(context: Context) : View(context) {
         clearRows();advances.clear()
         val grid = fonts.configure(paint, textSp)
         desiredCellWidth=grid.cellWidth;desiredCellHeight=grid.cellHeight;desiredTextSize=paint.textSize
+        onCellPixels(desiredCellWidth.roundToInt(),desiredCellHeight.roundToInt())
         configureRendering();reportDimensions();reportCursorViewport()
     }
     private fun configureRendering() {
@@ -295,6 +305,7 @@ class TerminalView(context: Context) : View(context) {
                 }
             }
             images(0);rows(1);images(1);rows(2);images(2)
+            mediaMetrics.drawn(frame)
         }
         if(slide!=0f) canvas.restore()
         canvas.save()
@@ -473,7 +484,7 @@ class TerminalView(context: Context) : View(context) {
         scrollMetrics.flingFinished();scrollMetrics.end()
         if(scrollMotion.remainder!=0f || scrollPixels!=0f) {scrollPixels=0f;scrollMotion.settle();invalidate()}
     }
-    override fun onDetachedFromWindow() {removeCallbacks(cursorTick);awake.detach();terminalImages.clear();clearRows();clearSelection();scrollFling.abortAnimation();touchVelocity?.recycle();touchVelocity=null;super.onDetachedFromWindow()}
+    override fun onDetachedFromWindow() {removeCallbacks(cursorTick);awake.detach();clearRows();clearSelection();scrollFling.abortAnimation();touchVelocity?.recycle();touchVelocity=null;super.onDetachedFromWindow()}
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if(selection!=null && event.actionMasked==MotionEvent.ACTION_SCROLL) return true
         if(interactive && event.actionMasked==MotionEvent.ACTION_SCROLL) {
@@ -539,6 +550,7 @@ class TerminalView(context: Context) : View(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if(!interactive) return false
         if(selectionTouch || selection!=null) return selectionEvent(event)
+        if(pointerHeld) return pointerEvent(event)
         if(event.actionMasked==MotionEvent.ACTION_DOWN) {touchVelocity?.recycle();touchVelocity=VelocityTracker.obtain()}
         val sample=MotionEvent.obtain(event)
         sample.offsetLocation(event.rawX-event.x,event.rawY-event.y)
@@ -580,7 +592,7 @@ class TerminalView(context: Context) : View(context) {
             } else when (paneGesture.finish(event.x, event.y)) {
                 PaneGesture.Result.TAP -> {val link=pressedLink
                     tapLog {"tap suppressed=$suppressScrollTap link=${link!=null} controlled=$controlled interactive=$interactive mouse=${screen?.mouseTracking} pressedMouse=$pressedMouse semantic=${screen?.hasSemanticPrompt} below=${screen?.scroll?.below}"}
-                    if(suppressScrollTap) Unit else if(link==null) terminalTap(event.x,event.y) else if(link==linkAt(event.x,event.y)) onOpenLink(link.url)}
+                    if(suppressScrollTap) Unit else if(link==null) {mediaMetrics.touched(event.eventTime);terminalTap(event.x,event.y)} else if(link==linkAt(event.x,event.y)) onOpenLink(link.url)}
                 PaneGesture.Result.NEXT -> onPaneSwipe(1)
                 PaneGesture.Result.PREVIOUS -> onPaneSwipe(-1)
                 PaneGesture.Result.NONE -> Unit
@@ -591,6 +603,33 @@ class TerminalView(context: Context) : View(context) {
     }
     /** Why a tap did or didn't open the keyboard. Off unless: adb shell setprop log.tag.RexlingTap DEBUG */
     private inline fun tapLog(message: ()->String) {if(android.util.Log.isLoggable("RexlingTap",android.util.Log.DEBUG)) android.util.Log.d("RexlingTap",message())}
+    /** Whether a streamed picture covers this point. Pictures take pointer input as a desktop would. */
+    private fun pictureAt(x: Float,y: Float): Boolean {
+        val frame=screen ?: return false
+        if(!frame.mouseTracking || frame.scroll.below>0 || frame.images.isEmpty()) return false
+        val sx=cellWidth/frame.imageCellWidth.coerceAtLeast(1);val sy=cellHeight/frame.imageCellHeight.coerceAtLeast(1)
+        return frame.images.any {p->
+            val left=insetHorizontal+p.col*cellWidth+p.offsetX*sx;val top=insetTop+p.row*cellHeight+p.offsetY*sy
+            x>=left && x<left+p.width*sx && y>=top && y<top+p.height*sy
+        }
+    }
+    private fun pointer(phase: String,button: Int,x: Float,y: Float)=
+        onPointer(phase,button,x-insetHorizontal,y-insetTop,cellWidth.roundToInt().coerceAtLeast(1),cellHeight.roundToInt().coerceAtLeast(1))
+    private fun pointerEvent(event: MotionEvent): Boolean {
+        when(event.actionMasked) {
+            MotionEvent.ACTION_MOVE -> {
+                val slop=ViewConfiguration.get(context).scaledTouchSlop
+                if(!pointerDragging && kotlin.math.hypot(event.x-pressX,event.y-pressY)>slop) {pointerDragging=true;pointer("press",1,pressX,pressY)}
+                if(pointerDragging) pointer("move",1,event.x,event.y)
+            }
+            MotionEvent.ACTION_UP -> {
+                if(pointerDragging) pointer("release",1,event.x,event.y) else {mediaMetrics.touched(event.eventTime);pointer("click",2,pressX,pressY)}
+                pointerHeld=false;pointerDragging=false
+            }
+            MotionEvent.ACTION_CANCEL -> {if(pointerDragging) pointer("release",1,event.x,event.y);pointerHeld=false;pointerDragging=false}
+        }
+        return true
+    }
     private fun terminalTap(x: Float,y: Float) {
         val frame=screen
         if(pressedMouse && pressedControlled && !controlled) {tapLog {"tap: lost control since press"};return}
@@ -603,6 +642,9 @@ class TerminalView(context: Context) : View(context) {
             if(x<insetHorizontal || x>=width-insetHorizontal || y<insetTop || y>=height-insetBottom ||
                 col !in 0 until frame.columns || row !in 0 until frame.rows) return
             super.performClick()
+            // A picture is clicked where it was touched, and the keyboard stays away: it would cover
+            // half of what is being looked at. The terminal menu still opens it.
+            if(pictureAt(x,y)) {pointer("click",1,x,y);return}
             onMouseClick(col,row,cellWidth.roundToInt().coerceAtLeast(1),cellHeight.roundToInt().coerceAtLeast(1))
             if(frame.isSemanticInputRow(row)) keyboard()
             else if(frame.cursorX!=null && row==frame.cursorY) onCursorTap()
@@ -670,6 +712,11 @@ class TerminalView(context: Context) : View(context) {
     override fun performLongClick(): Boolean {
         val frame=screen ?: return false
         if(!interactive) return false
+        if(controlled && pressedMouse && pressedControlled && pictureAt(pressX,pressY)) {
+            removeCallbacks(longPress);paneGesture.cancel();dragging=false;scrolling=false;scrollFling.abortAnimation();onPaneDrag?.invoke(0f,false)
+            pointerHeld=true;pointerDragging=false;parent?.requestDisallowInterceptTouchEvent(true)
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);return true
+        }
         clearSelection()
         selectionLink=linkAt(pressX,pressY)
         pressedLink=null

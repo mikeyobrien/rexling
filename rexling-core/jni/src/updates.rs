@@ -192,6 +192,8 @@ fn encode_frame(out: &mut Vec<u8>, frame: &Frame, previous: Option<&Frame>) {
             previous.is_none_or(|old| !old.images.iter().any(|p| Arc::ptr_eq(&p.image, image)))
         })
         .collect();
+    // Streamed video replaces megabytes of pixels per frame; grow once instead of doubling repeatedly.
+    out.reserve(changed.iter().map(|image| image.rgba.len() + 24).sum::<usize>() + frame.images.len() * 57 + 4);
     u16le(out, changed.len() as u16);
     for image in changed {
         u32le(out, image.id);
@@ -215,12 +217,18 @@ fn encode_frame(out: &mut Vec<u8>, frame: &Frame, previous: Option<&Frame>) {
     }
 }
 pub fn encode(state: &mut Shared, after: u64) -> Vec<u8> {
+    encode_reusing(state, after, Vec::new())
+}
+/// Encode into a buffer the caller keeps between updates. Streamed video carries megabytes of
+/// pixels per update, and a fresh buffer each time is mostly page faults.
+pub fn encode_reusing(state: &mut Shared, after: u64, mut out: Vec<u8>) -> Vec<u8> {
+    out.clear();
     if after >= state.revision {
-        return Vec::new();
+        return out;
     }
     let base = &state.wire;
     let reset = after != base.revision || base.key != state.key;
-    let mut out = b"RXT6".to_vec();
+    out.extend_from_slice(b"RXT6");
     u64le(&mut out, state.revision);
     let previews: Vec<_> = std::mem::take(&mut state.pending_previews)
         .into_iter()

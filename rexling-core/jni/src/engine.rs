@@ -228,6 +228,9 @@ struct Actor {
     screen: Option<Arc<Frame>>,
     selected_session: String,
     selected_block: String,
+    /// This screen's cell size in pixels, sent with every resize so pictures arrive at native resolution.
+    cell_px: Option<(u64,u64)>,
+    cell_px_rejected: bool,
     navigation_id: u64,
     tab_move_id: u64,
     pane_move_id: u64,
@@ -294,6 +297,7 @@ impl Actor {
             screen: None,
             selected_session: String::new(),
             selected_block: String::new(),
+            cell_px: None,cell_px_rejected: false,
             navigation_id: 0,
             tab_move_id: 0,
             pane_move_id: 0,
@@ -422,13 +426,27 @@ impl Actor {
                 chunk=async {match &mut self.data{Some(d)=>d.read().await,None=>pending().await}}=>{
                     match chunk {
                         Ok(chunk)=>{
-                            let result=self.replica.as_mut().context("terminal replica missing").and_then(|r|r.feed(&chunk));
-                            if let Err(e)=result {
-                                self.error=format!("Terminal state could not be decoded: {e}");
-                                self.data=None;self.replica=None;self.data_resume=None;self.phase="error".into();self.controlled=false;self.publish();
-                            } else {
-                                self.dirty=true;
-                                self.update_apcs();
+                            // A numbered picture frame is shown the moment it is complete. Waiting for the
+                            // render timer would often find the next frame half arrived, and skip this one.
+                            let mut input=chunk.as_slice();
+                            loop {
+                                match self.replica.as_mut().context("terminal replica missing").and_then(|r|r.feed_frame(input)) {
+                                    Err(e)=>{
+                                        self.error=format!("Terminal state could not be decoded: {e}");
+                                        self.data=None;self.replica=None;self.data_resume=None;self.phase="error".into();self.controlled=false;self.publish();
+                                        break;
+                                    }
+                                    Ok(frame)=>{
+                                        self.dirty=true;
+                                        self.update_apcs();
+                                        if !frame {break;}
+                                        if self.visible {
+                                            self.dirty=false;
+                                            if let Some(ms)=self.render_ready_frame().await {animation_at=Some(tokio::time::Instant::now()+Duration::from_millis(ms));}
+                                        }
+                                        input=&[];
+                                    }
+                                }
                             }
                         }
                         Err(e)=>self.recover(e),
@@ -506,14 +524,8 @@ impl Actor {
                         self.program_refresh=tokio::time::Instant::now()+Duration::from_secs(4);
                     }
                     if self.visible && (self.dirty || animation_at.is_some_and(|at|at<=now)) {
-                        self.dirty=false;animation_at=None;
-                        if let Some(replica)=self.replica.as_mut().filter(|r|r.ready()) {
-                            match replica.terminal().and_then(|t|if t.render_ready()? {t.frame().map(Some)} else {Ok(None)}) {
-                                Ok(Some(frame))=>{animation_at=frame.next_image_delay_ms.map(|ms|now+Duration::from_millis(ms));self.screen=Some(Arc::new(frame));self.publish_frame();}
-                                Ok(None)=>{self.dirty=true;}
-                                Err(e)=>{self.error=e.to_string();self.publish();}
-                            }
-                        }
+                        self.dirty=false;
+                        animation_at=self.render_ready_frame().await.map(|ms|now+Duration::from_millis(ms));
                     }
                 },
                 _=async {if active {heartbeat.tick().await;}else{pending::<()>().await;}}=>{
@@ -851,6 +863,34 @@ impl Actor {
         if changed {self.publish();}
     }
 
+    /// Publish the replica's screen unless a synchronized update holds it, and acknowledge a
+    /// picture frame it completes. Returns the wait until the next animation frame, if any.
+    async fn render_ready_frame(&mut self) -> Option<u64> {
+        let replica=self.replica.as_mut().filter(|r|r.ready())?;
+        match replica.terminal().and_then(|t|if t.render_ready()? {t.frame().map(Some)} else {Ok(None)}) {
+            Ok(Some(frame))=>{
+                let next=frame.next_image_delay_ms;
+                self.screen=Some(Arc::new(frame));self.publish_frame();
+                if let Some(shown)=self.replica.as_mut().and_then(|r|r.cast_frame.take()) {self.acknowledge_cast(shown).await;}
+                next
+            }
+            Ok(None)=>{self.dirty=true;None}
+            Err(e)=>{self.error=e.to_string();self.publish();None}
+        }
+    }
+    /// Tell a picture sender which frame is on screen, so it sends no faster than frames arrive.
+    /// Only the owner answers, and only with the number it was given.
+    async fn acknowledge_cast(&mut self,frame: u64) {
+        if !self.controlled || self.phase!="connected" || self.paused {return;}
+        let target=self.input_target();
+        let text=format!("\x1b_rexcast;ack={frame}\x1b\\");
+        let payload=json!({"session_id":target.session,"block_id":target.block,"event":input_event(false,&text)});
+        let Some(control)=self.control.as_mut() else {return;};
+        match control.start_call("block.event",payload).await {
+            Ok(reply)=>self.input_acks.push_back(InputAck {target,paste:false,reply:Box::pin(reply.receive())}),
+            Err(error)=>self.recover(error),
+        }
+    }
     fn input_target(&self)->Target {
         Target {session:self.selected_session.clone(),block:self.selected_block.clone(),navigation:self.navigation_id,connection:self.connection_epoch}
     }
@@ -887,11 +927,18 @@ impl Actor {
         let encoded;
         let text=if click {
             let Some(replica)=self.replica.as_mut().filter(|r|r.ready()) else{return Ok(());};
-            encoded=String::from_utf8(replica.terminal()?.click(
-                value["col"].as_i64().unwrap_or(0).clamp(0,65534) as i32,
-                value["row"].as_i64().unwrap_or(0).clamp(0,65534) as i32,
-                value["cw"].as_u64().unwrap_or(1).clamp(1,1024) as u32,
-                value["ch"].as_u64().unwrap_or(1).clamp(1,1024) as u32)?).context("Legacy mouse coordinates cannot be sent as UTF-8 terminal input")?;
+            let cw=value["cw"].as_u64().unwrap_or(1).clamp(1,1024) as u32;
+            let ch=value["ch"].as_u64().unwrap_or(1).clamp(1,1024) as u32;
+            // Taps on text name a cell. Taps and drags on pictures name the exact pixel.
+            let bytes=if let (Some(x),Some(y))=(value["x"].as_f64(),value["y"].as_f64()) {
+                let phase=match value["phase"].as_str() {Some("press")=>1,Some("release")=>2,Some("move")=>3,_=>0};
+                replica.terminal()?.pointer(if value["button"]==2 {2} else {1},phase,x as f32,y as f32,cw,ch)?
+            } else {
+                replica.terminal()?.click(
+                    value["col"].as_i64().unwrap_or(0).clamp(0,65534) as i32,
+                    value["row"].as_i64().unwrap_or(0).clamp(0,65534) as i32,cw,ch)?
+            };
+            encoded=String::from_utf8(bytes).context("Legacy mouse coordinates cannot be sent as UTF-8 terminal input")?;
             if encoded.is_empty() {return Ok(());}
             encoded.as_str()
         } else {value["text"].as_str().context("text required")?};
@@ -1319,9 +1366,12 @@ impl Actor {
                 self.take_selected().await?;
                 if let (Some(columns),Some(rows))=(value["columns"].as_u64(),value["rows"].as_u64())
                     && columns>0 && rows>0 {
-                    self.control.as_mut().context("not connected")?.terminal(&self.selected_session,&self.selected_block,"resize",
-                        json!({"columns":columns.clamp(1,512),"rows":rows.clamp(1,256)})).await?;
+                    self.resize_terminal(columns.clamp(1,512),rows.clamp(1,256)).await?;
                 }
+            }
+            "cell" => {
+                self.cell_px=value["width"].as_u64().zip(value["height"].as_u64())
+                    .filter(|(w,h)|(1..=65535).contains(w) && (1..=65535).contains(h));
             }
             "release" => {
                 if let Some(c) = &mut self.control {
@@ -1350,8 +1400,7 @@ impl Actor {
                     self.take_selected().await?;
                     if let (Some(cols),Some(rows))=(value["columns"].as_u64(),value["rows"].as_u64())
                         && cols>0 && rows>0 {
-                        self.control.as_mut().context("not connected")?.terminal(&self.selected_session,&self.selected_block,"resize",
-                            json!({"columns":cols.clamp(1,512),"rows":rows.clamp(1,256)})).await?;
+                        self.resize_terminal(cols.clamp(1,512),rows.clamp(1,256)).await?;
                     }
                 }
                 if let Err(error)=self.control.as_mut().context("not connected")?.terminal(&self.selected_session,&self.selected_block,"write",json!({"data":text})).await {
@@ -1417,13 +1466,12 @@ impl Actor {
                     replica.terminal()?.scroll_to_bottom();
                     self.dirty = true;
                 }
-                let c = self.control.as_mut().context("not connected")?;
                 let result=match kind {
-                    "input"|"paste"=>c.call("block.event",json!({"session_id":self.selected_session,"block_id":self.selected_block,"event":input_event(kind=="paste",value["text"].as_str().context("text required")?)})).await,
+                    "input"|"paste"=>self.control.as_mut().context("not connected")?.call("block.event",json!({"session_id":self.selected_session,"block_id":self.selected_block,"event":input_event(kind=="paste",value["text"].as_str().context("text required")?)})).await,
                     _=>{
                         let cols=value["columns"].as_u64().context("columns required")?.clamp(1,512);
                         let rows=value["rows"].as_u64().context("rows required")?.clamp(1,256);
-                        c.terminal(&self.selected_session,&self.selected_block,"resize",json!({"columns":cols,"rows":rows})).await
+                        self.resize_terminal(cols,rows).await
                     }
                 };
                 if let Err(e) = result {
@@ -1537,6 +1585,18 @@ impl Actor {
             }
             Err(error)=>Err(error)
         }
+    }
+    /// Servers that predate the cell-size fields reject them; those get the grid alone.
+    async fn resize_terminal(&mut self,columns: u64,rows: u64) -> Result<Value> {
+        if let Some((width,height))=self.cell_px.filter(|_|!self.cell_px_rejected) {
+            let result=self.control.as_mut().context("not connected")?.terminal(&self.selected_session,&self.selected_block,"resize",
+                json!({"columns":columns,"rows":rows,"cell_width_px":width,"cell_height_px":height})).await;
+            match result {
+                Err(error) if error.downcast_ref::<rex_core::control::RpcError>().is_some_and(|e|e.code=="bad_request")=>self.cell_px_rejected=true,
+                other=>return other,
+            }
+        }
+        self.control.as_mut().context("not connected")?.terminal(&self.selected_session,&self.selected_block,"resize",json!({"columns":columns,"rows":rows})).await
     }
     async fn take_selected(&mut self) -> Result<()> {
         ensure!(!self.selected_block.is_empty(),"Choose a terminal first");

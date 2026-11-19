@@ -53,6 +53,10 @@ Studio to work on the app.
 - **Kitty graphics** — display terminal images through libghostty, including
   PNG/RGB/RGBA images, transparency and animation. Images restore with the
   terminal snapshot when reconnecting.
+- **Video, web pages and desktop apps** — `scripts/rexcast` streams a video, a
+  browser or any X11 program into a pane at your screen's resolution. Tap to
+  click, drag to scroll, long-press to drag or right-click, and type with the
+  keyboard. See [evals/media](evals/media/README.md).
 - **Touch terminal controls** — arrow joystick, precise navigation popup,
   Ctrl shortcuts, function keys and customizable Neovim shortcuts in a wheel
   or grid.

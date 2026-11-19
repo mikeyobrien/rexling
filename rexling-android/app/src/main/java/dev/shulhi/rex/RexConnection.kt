@@ -110,6 +110,8 @@ internal class RexConnection(application: Application, private val scope: Corout
         val live=current.selectedBlock.ifBlank {if(current.phase=="preview") "preview" else ""}
         if(block!=live) return false
         view.onFrameDrawn={token->KeystrokeLatency.revisionOf(token)?.let(keystrokes::drawn)}
+        view.onCellPixels=::cellPixels
+        view.onPointer=::pointer
         view.onSemanticCopy={frame,col,row,output->
             val active=state.value
             if(!visible || !foreground || navigationRequest.pending || active.selectedBlock!=block) false
@@ -201,6 +203,7 @@ internal class RexConnection(application: Application, private val scope: Corout
             pollJob = scope.launch(Dispatchers.IO) {
                 val decoder=TerminalUpdates()
                 var lastScreen: TerminalScreen?=null
+                var transfer=java.nio.ByteBuffer.allocateDirect(1 shl 20)
                 while (!closed) {
                     if (!foreground) { delay(500); continue }
                     val update=NativeBridge.awaitUpdate(handle,decoder.revision,250)
@@ -208,7 +211,18 @@ internal class RexConnection(application: Application, private val scope: Corout
                     if(update>decoder.revision) {
                         try {
                             android.os.Trace.beginSection("Rexlet.decodeUpdate")
-                            val next=try {decoder.decode(NativeBridge.readUpdate(handle,decoder.revision))} finally {android.os.Trace.endSection()}
+                            val readAt=System.nanoTime()
+                            // One reused off-heap buffer: streamed video would otherwise allocate megabytes per frame.
+                            var length=NativeBridge.readUpdateInto(handle,decoder.revision,transfer)
+                            if(length<0) {
+                                transfer=java.nio.ByteBuffer.allocateDirect(maxOf(-length,transfer.capacity()*2))
+                                length=NativeBridge.readUpdateInto(handle,decoder.revision,transfer)
+                            }
+                            if(length<=0) {android.os.Trace.endSection();continue}
+                            val packet=transfer.duplicate().apply {position(0);limit(length)}
+                            val decodeAt=System.nanoTime()
+                            val next=try {decoder.decode(packet)} finally {android.os.Trace.endSection()}
+                            val applyAt=System.nanoTime()
                             // Only visible change can be an echo. Some updates carry a new but identical
                             // screen (queueDisplay skips those too), so compare content, and only while a
                             // keystroke is waiting for its echo.
@@ -247,6 +261,7 @@ internal class RexConnection(application: Application, private val scope: Corout
 
                                 openPreferredTerminal();rememberCurrentTerminal();claimActivePane()
                             }
+                            if(next.screen?.images?.isNotEmpty()==true) MediaMetrics.stages(decodeAt-readAt,applyAt-decodeAt,System.nanoTime()-applyAt)
                         } catch (error: Exception) {
                             withContext(Dispatchers.Main.immediate) {
                                 navigationRequest = NavigationRequest()
@@ -470,6 +485,13 @@ internal class RexConnection(application: Application, private val scope: Corout
             command("click","session" to current.selectedSession,"block" to current.selectedBlock,"navigationId" to current.navigationId,
                 "connectionEpoch" to current.connectionEpoch,"col" to col,"row" to row,"cw" to cw,"ch" to ch)
     }
+    private fun pointer(phase: String,button: Int,x: Float,y: Float,cw: Int,ch: Int) {
+        if(phase!="move") flushImeComposition()
+        val current=state.value
+        if(visible && foreground && current.connected && current.controlled && !current.creating && !navigationRequest.pending && current.screen?.mouseTracking==true)
+            command("click","session" to current.selectedSession,"block" to current.selectedBlock,"navigationId" to current.navigationId,
+                "connectionEpoch" to current.connectionEpoch,"phase" to phase,"button" to button,"x" to x.toDouble(),"y" to y.toDouble(),"cw" to cw,"ch" to ch)
+    }
     fun wheel(lines: Int,col: Int,row: Int,cw: Int,ch: Int) {
         val current=state.value
         if(visible && current.connected && !current.creating && !navigationRequest.pending && current.screen!=null)
@@ -520,6 +542,13 @@ internal class RexConnection(application: Application, private val scope: Corout
     fun scrollToBottom() {if(!navigationRequest.pending && state.value.screen!=null) command("scroll","block" to state.value.selectedBlock,"bottom" to true)}
     fun key(name: String) = type(TerminalInput.key(name))
     fun paste(text: String) { if (visible && state.value.controlled && !navigationRequest.pending) {flushImeComposition();command("paste", "text" to text,"session" to state.value.selectedSession,"block" to state.value.selectedBlock,"navigationId" to state.value.navigationId,"connectionEpoch" to state.value.connectionEpoch)} }
+    private var cellSize=0 to 0
+    private fun cellPixels(width: Int,height: Int) {
+        if(width<=0 || height<=0 || cellSize==(width to height)) return
+        cellSize=width to height
+        command("cell","width" to width,"height" to height)
+        if(lastSize.first>0 && lastSize.second>0) applySize()
+    }
     fun resize(columns: Int, rows: Int) {
         val size = columns.coerceIn(1, 512) to rows.coerceIn(1, 256)
         lastSize = size

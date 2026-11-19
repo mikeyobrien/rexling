@@ -58,6 +58,8 @@ unsafe extern "C" {
     fn rp_render_hold_state(term: *mut c_void,held: *mut u8,generation: *mut u64) -> i32;
     fn rp_wheel(term: *mut c_void, down: i32, col: i32, row: i32, cw: u32, ch: u32, out: *mut u8, capacity: usize, len: *mut usize) -> i32;
     fn rp_click(term: *mut c_void, col: i32, row: i32, cw: u32, ch: u32, out: *mut u8, capacity: usize, len: *mut usize) -> i32;
+    #[allow(clippy::too_many_arguments)]
+    fn rp_pointer(term: *mut c_void, button: i32, phase: i32, x: f32, y: f32, cw: u32, ch: u32, out: *mut u8, capacity: usize, len: *mut usize) -> i32;
     fn rp_frame(
         term: *mut c_void,
         frame: *mut RawFrame,
@@ -313,6 +315,14 @@ impl Terminal {
         check(unsafe {rp_wheel(self.handle.as_ptr(),i32::from(down),col,row,cw,ch,bytes.as_mut_ptr(),bytes.len(),&mut len)},"wheel encoding")?;
         ensure!(len<=bytes.len(),"mouse encoder exceeded buffer");Ok(bytes[..len].to_vec())
     }
+    /// Encode a pointer event at an exact pixel: phase 0 is a whole click, 1 press, 2 release,
+    /// 3 motion with the button held. Programs that asked for pixel reports get the pixel.
+    pub fn pointer(&mut self,button: i32,phase: i32,x: f32,y: f32,cw: u32,ch: u32) -> Result<Vec<u8>> {
+        if self.input_flags()?&1==0 {return Ok(Vec::new());}
+        let mut bytes=[0u8;128];let mut len=0;
+        check(unsafe {rp_pointer(self.handle.as_ptr(),button,phase,x,y,cw,ch,bytes.as_mut_ptr(),bytes.len(),&mut len)},"pointer encoding")?;
+        ensure!(len<=bytes.len(),"mouse encoder exceeded buffer");Ok(bytes[..len].to_vec())
+    }
     /// Encode a whole tap atomically using the application's negotiated mouse mode.
     pub fn click(&mut self,col: i32,row: i32,cw: u32,ch: u32) -> Result<Vec<u8>> {
         if self.input_flags()?&1==0 {return Ok(Vec::new());}
@@ -485,6 +495,11 @@ pub struct Replica {
     snapshot: SnapshotBuffer,
     terminal: Option<Terminal>,
     pub events: Vec<Value>,
+    /// The newest frame number a picture sender announced and that has not been acknowledged.
+    pub cast_frame: Option<u64>,
+    stop_at_frames: bool,
+    stopped: bool,
+    unread: Vec<u8>,
     pub snapshot_bytes: usize,
     pub clipboard_write: Option<String>,
 }
@@ -495,6 +510,10 @@ impl Replica {
             snapshot: SnapshotBuffer::default(),
             terminal: None,
             events: Vec::new(),
+            cast_frame: None,
+            stop_at_frames: false,
+            stopped: false,
+            unread: Vec::new(),
             snapshot_bytes: 0,
             clipboard_write: None,
         }
@@ -521,8 +540,24 @@ impl Replica {
         }
         self.live(bytes)
     }
-    fn live(&mut self, mut bytes: &[u8]) -> Result<()> {
+    /// Like `feed`, but stops right after a picture sender's frame number and returns true, with
+    /// the unread bytes kept for the next call. The screen then holds exactly that frame, so
+    /// it can be shown before the next one starts to arrive. Returns false once all is read.
+    pub fn feed_frame(&mut self, bytes: &[u8]) -> Result<bool> {
+        self.stop_at_frames = true;
+        let result = self.feed(bytes);
+        self.stop_at_frames = false;
+        result.map(|()| std::mem::take(&mut self.stopped))
+    }
+    fn live(&mut self, bytes: &[u8]) -> Result<()> {
+        let held = std::mem::take(&mut self.unread);
+        let joined;
+        let mut bytes = if held.is_empty() {bytes} else {joined = [held.as_slice(), bytes].concat();joined.as_slice()};
         while !bytes.is_empty() {
+            if self.stopped {
+                self.unread = bytes.to_vec();
+                return Ok(());
+            }
             let (n, apcs) = self.terminal()?.step(bytes)?;
             bytes = &bytes[n..];
             for (kind,apc) in apcs {
@@ -533,6 +568,12 @@ impl Replica {
                 let Ok(apc) = std::str::from_utf8(&apc) else {
                     continue;
                 };
+                // A picture sender numbers its frames so the viewer can report which one it has shown.
+                if let Some(frame) = apc.strip_prefix("rexcast;frame=") {
+                    self.cast_frame = frame.parse().ok().or(self.cast_frame);
+                    self.stopped = self.stop_at_frames;
+                    continue;
+                }
                 let Some(json) = apc.strip_prefix(&format!("rex1;{};", self.nonce)) else {
                     continue;
                 };
@@ -881,6 +922,46 @@ mod tests {
         assert!(terminal.render_ready_at(1810).unwrap());
     }
 
+    #[test] fn pointers_report_the_exact_pixel_button_and_drag_to_programs_that_ask() {
+        let mut terminal=Terminal::new(80,24).unwrap();
+        assert!(terminal.pointer(1,0,123.0,45.0,10,20).unwrap().is_empty());
+        terminal.write(b"\x1b[?1002h\x1b[?1006h").unwrap();
+        // Without pixel reports a pointer still names its cell.
+        assert_eq!(terminal.pointer(1,0,123.0,45.0,10,20).unwrap(),b"\x1b[<0;13;3M\x1b[<0;13;3m");
+        terminal.write(b"\x1b[?1016h").unwrap();
+        assert_eq!(terminal.pointer(1,0,123.0,45.0,10,20).unwrap(),b"\x1b[<0;123;45M\x1b[<0;123;45m");
+        // A drag is a press, motion with the button held, and a release where the finger lifted.
+        assert_eq!(terminal.pointer(1,1,123.0,45.0,10,20).unwrap(),b"\x1b[<0;123;45M");
+        assert_eq!(terminal.pointer(1,3,300.0,46.0,10,20).unwrap(),b"\x1b[<32;300;46M");
+        assert_eq!(terminal.pointer(1,2,300.0,46.0,10,20).unwrap(),b"\x1b[<0;300;46m");
+        // The right button, with a position outside the grid pulled back to its edge.
+        assert_eq!(terminal.pointer(2,0,5000.0,-3.0,10,20).unwrap(),b"\x1b[<2;799;0M\x1b[<2;799;0m");
+    }
+    #[test] fn feeding_can_stop_at_each_numbered_frame_without_losing_bytes() {
+        let mut replica=Replica::new(7);
+        replica.feed(&Terminal::new(40,5).unwrap().encode().unwrap()).unwrap();
+        let stream=b"one\x1b_rexcast;frame=1\x1b\\ two\x1b_rexcast;frame=2\x1b\\ three";
+        assert!(replica.feed_frame(stream).unwrap());
+        assert_eq!((replica.cast_frame,replica.terminal().unwrap().text().unwrap().trim_end().to_owned()),(Some(1),"one".to_owned()));
+        assert!(replica.feed_frame(b"").unwrap());
+        assert_eq!((replica.cast_frame,replica.terminal().unwrap().text().unwrap().trim_end().to_owned()),(Some(2),"one two".to_owned()));
+        assert!(!replica.feed_frame(b"").unwrap());
+        assert_eq!(replica.terminal().unwrap().text().unwrap().trim_end(),"one two three");
+        // Plain feeding reads through frame numbers and anything a stop left behind.
+        assert!(replica.feed_frame(b"\x1b_rexcast;frame=3\x1b\\ four").unwrap());
+        replica.feed(b" five").unwrap();
+        assert_eq!(replica.terminal().unwrap().text().unwrap().trim_end(),"one two three four five");
+    }
+    #[test] fn a_picture_senders_frame_number_is_kept_for_acknowledgement() {
+        let mut replica=Replica::new(7);
+        replica.feed(&Terminal::new(20,5).unwrap().encode().unwrap()).unwrap();
+        assert_eq!(replica.cast_frame,None);
+        replica.feed(b"\x1b_rexcast;frame=41\x1b\\\x1b_rexcast;frame=42\x1b\\").unwrap();
+        assert_eq!(replica.cast_frame,Some(42));
+        replica.feed(b"\x1b_rexcast;frame=type this\x1b\\").unwrap();
+        assert_eq!(replica.cast_frame,Some(42));
+        assert!(replica.events.is_empty());
+    }
     #[test] fn clicks_obey_mouse_modes_and_pair_press_with_release() {
         let mut terminal=Terminal::new(80,24).unwrap();
         assert!(terminal.click(4,5,10,20).unwrap().is_empty());
