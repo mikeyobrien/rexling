@@ -76,10 +76,10 @@ internal data class TabEntry(val id: String,val title: String,val detail: String
                     Text(server,fontSize=12.sp,fontWeight=FontWeight.Medium,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
                     Text(session,fontSize=20.sp,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis)
                 }
-                // Reorder, rename, close and split live in the full switcher.
+                // Reorder, rename, close and float live in the full switcher; the split icon belongs to the split buttons below.
                 Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.6f))
                     .clickable(enabled=enabled,role=Role.Button,onClick=onManage).semantics {contentDescription="Tabs and panes"},contentAlignment=Alignment.Center) {
-                    ChromeSymbol(ChromeIcon.SPLIT,Modifier.size(18.dp))
+                    ChromeSymbol(ChromeIcon.EDIT,Modifier.size(18.dp))
                 }
                 Spacer(Modifier.width(8.dp))
                 Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.6f))
