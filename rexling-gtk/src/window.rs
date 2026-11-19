@@ -26,6 +26,18 @@ struct Pane {
     client: Rc<Client>,
     terminal: Terminal,
     frame: Rc<RefCell<Option<Arc<Frame>>>>,
+    /// What the grid places: the terminal, under a bar that only a floating pane shows.
+    shell: gtk::Box,
+    bar: gtk::Box,
+    caption: gtk::Label,
+}
+
+/// A saved server that is not open: its sessions and what they report, for the switcher.
+struct Watcher {
+    /// Held so the connection stays open.
+    _client: Rc<Client>,
+    state: Rc<State>,
+    activity: Rc<Vec<Activity>>,
 }
 
 /// A remote port made reachable on this computer.
@@ -54,13 +66,15 @@ pub struct Ui {
     pub forwards: RefCell<Vec<Forward>>,
     pub forwards_changed: RefCell<Option<Rc<dyn Fn()>>>,
     panes: RefCell<HashMap<String, Pane>>,
+    watchers: RefCell<HashMap<String, Watcher>>,
     /// Panes by how recently they were shown, oldest first.
     recent: RefCell<Vec<String>>,
     visible: RefCell<Vec<String>>,
     grid: PaneGrid,
     state: RefCell<Rc<State>>,
     activity: RefCell<Rc<Vec<Activity>>>,
-    notified: RefCell<Option<HashSet<String>>>,
+    /// Reports already announced, by server. A server's first list is history, not news.
+    notified: RefCell<HashMap<String, HashSet<String>>>,
     tab: RefCell<String>,
     focused: RefCell<String>,
     zoomed: Cell<bool>,
@@ -83,6 +97,7 @@ pub struct Ui {
     shown_tabs: RefCell<Vec<TabRow>>,
     was_connected: Cell<bool>,
     notice: RefCell<String>,
+    refused: RefCell<String>,
 }
 
 #[derive(PartialEq, Clone)]
@@ -229,6 +244,7 @@ pub fn build(app: &adw::Application) {
         forwards: RefCell::default(),
         forwards_changed: RefCell::default(),
         panes: RefCell::default(),
+        watchers: RefCell::default(),
         recent: RefCell::default(),
         visible: RefCell::default(),
         grid,
@@ -256,6 +272,7 @@ pub fn build(app: &adw::Application) {
         shown_tabs: RefCell::default(),
         was_connected: Cell::new(false),
         notice: RefCell::default(),
+        refused: RefCell::default(),
     });
     ui.apply_appearance();
     ui.actions();
@@ -296,14 +313,39 @@ pub fn build(app: &adw::Application) {
             ui.open_tab(&row.widget_name());
         }
     });
+    // Right-click a tab for its own commands. One menu serves the whole list, so rebuilding rows cannot orphan it.
+    let tab_menu = gio::Menu::new();
+    tab_menu.append(Some("Rename…"), Some("win.rename-tab"));
+    tab_menu.append(Some("Move Up"), Some("win.move-tab-up"));
+    tab_menu.append(Some("Move Down"), Some("win.move-tab-down"));
+    tab_menu.append(Some("Close"), Some("win.close-tab"));
+    let tab_popover = gtk::PopoverMenu::builder().menu_model(&tab_menu).has_arrow(false).halign(gtk::Align::Start).build();
+    // Parented outside the list: a list box treats every child as a row.
+    tab_popover.set_parent(&ui.toasts);
+    let secondary = gtk::GestureClick::builder().button(gdk::BUTTON_SECONDARY).build();
+    let weak = Rc::downgrade(&ui);
+    secondary.connect_pressed(move |_, _, x, y| {
+        let Some(ui) = weak.upgrade() else { return };
+        let Some(row) = ui.tab_list.row_at_y(y as i32) else { return };
+        ui.interact();
+        ui.open_tab(&row.widget_name());
+        let at = ui.tab_list.compute_point(&ui.toasts, &gtk::graphene::Point::new(x as f32, y as f32)).unwrap_or_else(|| gtk::graphene::Point::new(x as f32, y as f32));
+        tab_popover.set_pointing_to(Some(&gdk::Rectangle::new(at.x() as i32, at.y() as i32, 1, 1)));
+        tab_popover.popup();
+    });
+    ui.tab_list.add_controller(secondary);
+
     let weak = Rc::downgrade(&ui);
     ui.session_list.connect_row_activated(move |_, row| {
         if let Some(ui) = weak.upgrade() {
             ui.session_button.popdown();
             let name = row.widget_name();
-            match name.strip_prefix("server:") {
-                Some(server) => ui.connect(server),
-                None => ui.open_session(&name),
+            if let Some(server) = name.strip_prefix("server:") {
+                ui.connect(server);
+            } else if let Some((server, session)) = name.strip_prefix("remote:").and_then(|rest| rest.split_once('|')) {
+                ui.open_remote_session(server, session);
+            } else {
+                ui.open_session(&name);
             }
         }
     });
@@ -336,6 +378,40 @@ pub fn build(app: &adw::Application) {
             ui.chrome.resize_split(split, ratio);
         }
     });
+
+    let weak = Rc::downgrade(&ui);
+    ui.grid.connect_float(move |layer, bounds| {
+        if let Some(ui) = weak.upgrade() {
+            ui.interact();
+            ui.chrome.move_layer(layer, bounds);
+        }
+    });
+    // Dropping a tab on another moves it there.
+    let reorder = gtk::DropTarget::new(gtk::glib::Type::STRING, gdk::DragAction::MOVE);
+    let weak = Rc::downgrade(&ui);
+    reorder.connect_motion(move |_, _, y| {
+        if let Some(ui) = weak.upgrade() {
+            match ui.tab_list.row_at_y(y as i32) {
+                Some(row) => ui.tab_list.drag_highlight_row(&row),
+                None => ui.tab_list.drag_unhighlight_row(),
+            }
+        }
+        gdk::DragAction::MOVE
+    });
+    let weak = Rc::downgrade(&ui);
+    reorder.connect_leave(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.tab_list.drag_unhighlight_row();
+        }
+    });
+    let weak = Rc::downgrade(&ui);
+    reorder.connect_drop(move |_, value, _, y| {
+        let (Some(ui), Ok(dragged)) = (weak.upgrade(), value.get::<String>()) else { return false };
+        ui.tab_list.drag_unhighlight_row();
+        ui.drop_tab(&dragged, y);
+        true
+    });
+    ui.tab_list.add_controller(reorder);
 
     // With no server chosen yet, a Rex server on this computer needs no address at all.
     let server = Some(ui.config.borrow().server.clone()).filter(|s| !s.is_empty()).or_else(tunnel::local_server);
@@ -403,6 +479,16 @@ impl Ui {
         add("move-tab-up", |ui| ui.move_tab(-1));
         add("move-tab-down", |ui| ui.move_tab(1));
         add("forwards", dialogs::forwards);
+        add("float-pane", |ui| {
+            let focused = ui.focused.borrow().clone();
+            ui.interact();
+            ui.zoomed.set(false);
+            ui.chrome.float_pane(&focused);
+        });
+        add("dock-pane", |ui| {
+            let focused = ui.focused.borrow().clone();
+            ui.dock_pane(&focused);
+        });
         add("attach-image", |ui| ui.choose_image());
         add("next-tab", |ui| ui.step_tab(1));
         add("previous-tab", |ui| ui.step_tab(-1));
@@ -554,9 +640,47 @@ impl Ui {
             }
         });
     }
-    fn attach(&self, endpoint: &str) {
+    fn attach(self: &Rc<Self>, endpoint: &str) {
         self.endpoint.replace(endpoint.to_owned());
         self.chrome.connect(endpoint);
+        self.watch_servers();
+    }
+    /// Keeps a light connection to every other saved server, so the switcher lists all sessions
+    /// and their programs can ask for attention. Servers behind SSH are left until they are opened.
+    fn watch_servers(self: &Rc<Self>) {
+        let (current, saved) = {
+            let config = self.config.borrow();
+            (config.server.clone(), config.servers.clone())
+        };
+        let wanted: Vec<String> = saved.into_iter().filter(|s| *s != current && !s.starts_with("ssh://")).collect();
+        self.watchers.borrow_mut().retain(|server, _| wanted.contains(server));
+        for server in wanted {
+            if self.watchers.borrow().contains_key(&server) {
+                continue;
+            }
+            let Ok(client) = Client::new(&self.control) else { continue };
+            client.set_passive();
+            let (weak, address, asked) = (Rc::downgrade(self), server.clone(), Cell::new(false));
+            let weak_client = Rc::downgrade(&client);
+            client.watch(move |update| {
+                let (Some(ui), Some(client)) = (weak.upgrade(), weak_client.upgrade()) else { return };
+                if update.state.connected() && !asked.replace(true) {
+                    client.watch_activity();
+                } else if !update.state.connected() {
+                    asked.set(false);
+                }
+                if let Some(watcher) = ui.watchers.borrow_mut().get_mut(&address) {
+                    watcher.state = update.state.clone();
+                    if let Some(activity) = update.activity {
+                        watcher.activity = activity;
+                    }
+                }
+                ui.notify();
+                ui.show_sessions();
+            });
+            client.connect(&server);
+            self.watchers.borrow_mut().insert(server, Watcher { _client: client, state: Rc::default(), activity: Rc::default() });
+        }
     }
     /// Whether `state` is the current server's, and connected.
     fn live(&self, state: &State) -> bool {
@@ -591,6 +715,43 @@ impl Ui {
         self.interact();
         self.tab.replace(String::new());
         self.chrome.select_session(id);
+    }
+    /// Opens a session that lives on another saved server.
+    fn open_remote_session(self: &Rc<Self>, server: &str, session: &str) {
+        {
+            let mut config = self.config.borrow_mut();
+            config.sessions.insert(server.to_owned(), session.to_owned());
+        }
+        self.interact();
+        self.connect(server);
+    }
+    fn drop_tab(self: &Rc<Self>, dragged: &str, y: f64) {
+        let state = self.state.borrow().clone();
+        let Some(row) = self.tab_list.row_at_y(y as i32) else { return };
+        let target = row.widget_name().to_string();
+        if target == dragged {
+            return;
+        }
+        // The upper half of a row means "before it"; the lower half, "after it".
+        let lower = row.compute_bounds(&self.tab_list).is_some_and(|bounds| y as f32 > bounds.y() + bounds.height() / 2.0);
+        let at = state.windows.iter().position(|tab| tab.id == target);
+        let before = match (at, lower) {
+            (Some(at), true) => state.windows.get(at + 1).map(|tab| tab.id.clone()),
+            (Some(_), false) => Some(target),
+            _ => None,
+        };
+        if before.as_deref() != Some(dragged) {
+            self.interact();
+            self.chrome.move_tab(dragged, before.as_deref());
+        }
+    }
+    fn dock_pane(self: &Rc<Self>, block: &str) {
+        let state = self.state.borrow().clone();
+        let anchor = state.tab_of(block).and_then(|tab| tab.placements().into_iter().find(|p| !p.floating && p.id != block));
+        if let Some(anchor) = anchor {
+            self.interact();
+            self.chrome.dock_pane(block, &anchor.id);
+        }
     }
     pub fn open_tab(self: &Rc<Self>, id: &str) {
         if *self.tab.borrow() != id {
@@ -785,6 +946,11 @@ impl Ui {
         if let Some(text) = self.chrome.take_clipboard(&state) {
             self.window.clipboard().set_text(&text);
         }
+        // While connected, an error is a command the server refused: say so once, and carry on.
+        let refused = if connected { state.error.clone() } else { String::new() };
+        if self.refused.replace(refused.clone()) != refused && !refused.is_empty() {
+            self.toasts.add_toast(adw::Toast::new(&refused));
+        }
         // Control changes and closed or created panes are already visible, so only other notices are toasted.
         let notice = state.notice.clone();
         if self.notice.replace(notice.clone()) != notice && !notice.is_empty() && !["control", "closed", "created"].iter().any(|word| notice.contains(word)) {
@@ -821,7 +987,7 @@ impl Ui {
             (problem, Some("Retry"))
         } else if self.endpoint.borrow().is_empty() && !self.config.borrow().server.is_empty() {
             ("Opening SSH tunnel…".to_owned(), None)
-        } else if !state.error.is_empty() {
+        } else if !state.error.is_empty() && !state.connected() {
             (state.error.clone(), Some("Retry"))
         } else if !state.connected() && !state.phase.is_empty() && state.phase != "disconnected" {
             (format!("{}…", capitalised(&state.phase)), None)
@@ -865,10 +1031,23 @@ impl Ui {
         self.session_dot.set_visible(elsewhere);
 
         let mut next: Vec<_> = state.sessions.iter().map(|s| (s.session_id.clone(), s.label.clone(), s.session_id == state.selected_session, attention(&s.session_id))).collect();
-        // Other saved servers follow the sessions, one click away.
+        // Every other saved server follows, with its own sessions under it.
         let config = self.config.borrow();
-        next.extend(config.servers.iter().filter(|server| **server != config.server).map(|server| (format!("server:{server}"), tunnel::label(server), false, String::new())));
+        let watchers = self.watchers.borrow();
+        let mut waiting_elsewhere = false;
+        for server in config.servers.iter().filter(|server| **server != config.server) {
+            next.push((format!("server:{server}"), tunnel::label(server), false, String::new()));
+            let Some(watcher) = watchers.get(server).filter(|w| w.state.connected()) else { continue };
+            for session in &watcher.state.sessions {
+                let reports = watcher.activity.iter().filter(|a| a.session == session.session_id && a.needs_attention());
+                let attention = reports.map(|a| if a.state == "failed" { "failed" } else { "attention" }).max().unwrap_or("").to_owned();
+                waiting_elsewhere |= !attention.is_empty();
+                next.push((format!("remote:{server}|{}", session.session_id), session.label.clone(), false, attention));
+            }
+        }
+        drop(watchers);
         drop(config);
+        self.session_dot.set_visible(elsewhere || waiting_elsewhere);
         if *self.shown_sessions.borrow() == next {
             return;
         }
@@ -877,6 +1056,9 @@ impl Ui {
             let row = gtk::Box::builder().spacing(10).margin_top(4).margin_bottom(4).build();
             if id.starts_with("server:") {
                 row.append(&gtk::Image::from_icon_name("network-server-symbolic"));
+                row.add_css_class("dim-label");
+            } else if id.starts_with("remote:") {
+                row.set_margin_start(26);
             }
             row.append(&gtk::Label::builder().label(label.as_str()).xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::End).build());
             if !attention.is_empty() {
@@ -941,23 +1123,13 @@ impl Ui {
                 content.append(&adw::Spinner::builder().valign(gtk::Align::Center).build());
             }
             let list_row = gtk::ListBoxRow::builder().child(&content).name(row.id.as_str()).tooltip_text(row.detail.as_str()).build();
-            // Right-click: the tab's own commands, applied to that tab.
-            let menu = gio::Menu::new();
-            menu.append(Some("Rename…"), Some("win.rename-tab"));
-            menu.append(Some("Move Up"), Some("win.move-tab-up"));
-            menu.append(Some("Move Down"), Some("win.move-tab-down"));
-            menu.append(Some("Close"), Some("win.close-tab"));
-            let popover = gtk::PopoverMenu::builder().menu_model(&menu).has_arrow(false).halign(gtk::Align::Start).build();
-            popover.set_parent(&list_row);
-            let secondary = gtk::GestureClick::builder().button(gdk::BUTTON_SECONDARY).build();
-            let (list, target, menu_popover) = (self.tab_list.clone(), list_row.clone(), popover.clone());
-            secondary.connect_pressed(move |_, _, x, y| {
-                list.emit_by_name::<()>("row-activated", &[&target]);
-                menu_popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-                menu_popover.popup();
+            // Tabs can be dragged onto one another to reorder them.
+            let source = gtk::DragSource::builder().actions(gdk::DragAction::MOVE).content(&gdk::ContentProvider::for_value(&row.id.to_value())).build();
+            let dragged = list_row.clone();
+            source.connect_drag_begin(move |source, _| {
+                source.set_icon(Some(&gtk::WidgetPaintable::new(Some(&dragged))), 24, 16);
             });
-            list_row.add_controller(secondary);
-            list_row.connect_destroy(move |_| popover.unparent());
+            list_row.add_controller(source);
             self.tab_list.append(&list_row);
             if row.current {
                 self.tab_list.select_row(Some(&list_row));
@@ -968,27 +1140,28 @@ impl Ui {
 
     /// Tells the desktop when a program starts waiting on the user while they are looking elsewhere.
     fn notify(&self) {
-        let activity = self.activity.borrow().clone();
-        let keys: HashSet<String> = activity.iter().filter(|a| a.needs_attention()).map(|a| format!("{}:{}:{}", a.block, a.state, a.attention_version)).collect();
-        // The first list is history, not news.
-        let Some(seen) = self.notified.replace(Some(keys.clone())) else { return };
-        if !self.config.borrow().notifications {
-            return;
-        }
-        let Some(app) = self.window.application() else { return };
-        for report in activity.iter().filter(|a| a.needs_attention()) {
-            let key = format!("{}:{}:{}", report.block, report.state, report.attention_version);
-            let watching = self.window.is_active() && self.visible.borrow().contains(&report.block);
-            if seen.contains(&key) || watching {
-                continue;
+        let mut sources: Vec<(String, Rc<Vec<Activity>>)> = vec![(self.config.borrow().server.clone(), self.activity.borrow().clone())];
+        sources.extend(self.watchers.borrow().iter().map(|(server, watcher)| (server.clone(), watcher.activity.clone())));
+        let enabled = self.config.borrow().notifications;
+        let current = self.config.borrow().server.clone();
+        for (server, activity) in sources {
+            let key = |a: &Activity| format!("{}:{}:{}", a.block, a.state, a.attention_version);
+            let keys: HashSet<String> = activity.iter().filter(|a| a.needs_attention()).map(key).collect();
+            // A server's first list is history, not news.
+            let Some(seen) = self.notified.borrow_mut().insert(server.clone(), keys) else { continue };
+            let Some(app) = self.window.application().filter(|_| enabled) else { continue };
+            for report in activity.iter().filter(|a| a.needs_attention() && !seen.contains(&key(a))) {
+                if server == current && self.window.is_active() && self.visible.borrow().contains(&report.block) {
+                    continue; // Already in front of the user.
+                }
+                // "Needs approval in aurora", then what the program said or which pane it is.
+                let notification = gio::Notification::new(&format!("{} in {}", report.label(), report.session_label));
+                let detail = if report.message.is_empty() { report.title.as_str() } else { report.message.as_str() };
+                if !detail.is_empty() {
+                    notification.set_body(Some(detail));
+                }
+                app.send_notification(Some(&key(report)), &notification);
             }
-            // "Needs approval in aurora", then what the program said or which pane it is.
-            let notification = gio::Notification::new(&format!("{} in {}", report.label(), report.session_label));
-            let detail = if report.message.is_empty() { report.title.as_str() } else { report.message.as_str() };
-            if !detail.is_empty() {
-                notification.set_body(Some(detail));
-            }
-            app.send_notification(Some(&key), &notification);
         }
     }
 
@@ -997,7 +1170,7 @@ impl Ui {
     fn pane(self: &Rc<Self>, session: &str, block: &str) -> Option<gtk::Widget> {
         if let Some(pane) = self.panes.borrow().get(block) {
             pane.client.show(session, block);
-            return Some(pane.terminal.widget().clone().upcast());
+            return Some(pane.shell.clone().upcast());
         }
         let client = Client::new(&self.control).map_err(|error| eprintln!("rexling: {error}")).ok()?;
         let (font, size) = {
@@ -1049,8 +1222,22 @@ impl Ui {
         terminal.widget().add_controller(drop);
         client.connect(&server);
         client.show(session, block);
-        let widget = terminal.widget().clone().upcast();
-        self.panes.borrow_mut().insert(block.to_owned(), Pane { client, terminal, frame });
+        let caption = gtk::Label::builder().xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::End).css_classes(["caption-heading"]).build();
+        let dock = gtk::Button::builder().icon_name("view-restore-symbolic").tooltip_text("Dock").css_classes(["flat", "circular"]).valign(gtk::Align::Center).build();
+        let (weak, id) = (Rc::downgrade(self), block.to_owned());
+        dock.connect_clicked(move |_| {
+            if let Some(ui) = weak.upgrade() {
+                ui.dock_pane(&id);
+            }
+        });
+        let bar = gtk::Box::builder().spacing(6).height_request(crate::panegrid::BAR as i32).css_classes(["rexling-float-bar"]).visible(false).build();
+        bar.append(&caption);
+        bar.append(&dock);
+        let shell = gtk::Box::builder().orientation(gtk::Orientation::Vertical).overflow(gtk::Overflow::Hidden).build();
+        shell.append(&bar);
+        shell.append(terminal.widget());
+        let widget = shell.clone().upcast();
+        self.panes.borrow_mut().insert(block.to_owned(), Pane { client, terminal, frame, shell, bar, caption });
         Some(widget)
     }
 
@@ -1072,12 +1259,24 @@ impl Ui {
 
         let mut shown = Vec::new();
         let mut widgets = Vec::new();
+        let mut floats = Vec::new();
         for placement in &placements {
             if let Some(widget) = self.pane(&state.selected_session, &placement.id) {
                 widgets.push((widget, placement.rect));
                 shown.push(placement.id.clone());
+                let floating = placement.floating && !self.zoomed.get();
+                if floating && !placement.layer_id.is_empty() {
+                    floats.push((placement.layer_id.clone(), placement.rect));
+                }
+                if let Some(pane) = self.panes.borrow().get(&placement.id) {
+                    pane.bar.set_visible(floating);
+                    if floating { pane.shell.add_css_class("rexling-float") } else { pane.shell.remove_css_class("rexling-float") }
+                    let block = tab.and_then(|tab| tab.blocks.iter().find(|b| b.id == placement.id));
+                    pane.caption.set_label(&block.map(|b| state.title(b)).unwrap_or_default());
+                }
             }
         }
+        self.grid.set_floats(floats);
         self.grid.set_splits(if self.zoomed.get() { Vec::new() } else { tab.map(|tab| tab.splits.clone()).unwrap_or_default() });
         self.grid.arrange(widgets);
 

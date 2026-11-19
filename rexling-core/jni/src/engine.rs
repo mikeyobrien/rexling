@@ -666,7 +666,10 @@ impl Actor {
                 let ids=layer["blocks"].as_array().into_iter().flatten()
                     .filter(|b|b["creator_name"]=="com.superlogical.terminal")
                     .filter_map(|b|b["block_id"].as_str()).collect();
+                let placed=layout.len();
                 collect_pane_layout(&layer["layout"],&ids,index,layer["kind"]!="tiled",0,&mut layout);
+                // Floating layers are moved and resized by ID.
+                if layer["kind"]!="tiled" && layer["layer_id"].is_string() {for entry in &mut layout[placed..] {entry["layerId"]=layer["layer_id"].clone();}}
                 for block in layer["blocks"].as_array().into_iter().flatten() {
                     if block["creator_name"] != "com.superlogical.terminal" {
                         continue;
@@ -1158,6 +1161,18 @@ impl Actor {
                 self.error.clear();
                 // Send once: never repeat a layout mutation after an uncertain reply.
                 self.control.as_mut().context("not connected")?.call(method,args).await?;
+                self.refresh_view().await?;
+            }
+            "move_layer" => {
+                ensure!(self.visible && !self.paused && self.phase=="connected" && !self.creating,"Connect before moving panes");
+                ensure!(value["session"].as_str()==Some(self.selected_session.as_str()),"The selected session changed");
+                let layer=value["layer"].as_str().filter(|id|!id.is_empty()).context("floating pane required")?;
+                let bounds:Vec<f64>=value["bounds"].as_array().into_iter().flatten().filter_map(Value::as_f64).filter(|v|v.is_finite()).collect();
+                ensure!(bounds.len()==4 && bounds[2]>0.0 && bounds[3]>0.0,"pane position required");
+                // Keep the pane inside the tab and large enough to grab again.
+                let (w,h)=(bounds[2].clamp(0.1,1.0),bounds[3].clamp(0.1,1.0));
+                let (x,y)=(bounds[0].clamp(0.0,1.0-w),bounds[1].clamp(0.0,1.0-h));
+                self.control.as_mut().context("not connected")?.call("session.resize_layer",json!({"session_id":self.selected_session,"layer_id":layer,"bounds":[x,y,w,h]})).await?;
                 self.refresh_view().await?;
             }
             "resize_pane" => {

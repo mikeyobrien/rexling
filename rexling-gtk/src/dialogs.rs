@@ -24,6 +24,8 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("Attach Image…", "attach-image", ""),
     ("Port Forwards…", "forwards", ""),
     ("Zoom Pane", "zoom-pane", "<Ctrl><Shift>Return"),
+    ("Float Pane", "float-pane", ""),
+    ("Dock Pane", "dock-pane", ""),
     ("Next Pane", "next-pane", "<Ctrl><Alt>Right"),
     ("Previous Pane", "previous-pane", "<Ctrl><Alt>Left"),
     ("Next Tab", "next-tab", "<Ctrl>Page_Down"),

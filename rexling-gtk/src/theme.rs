@@ -133,6 +133,8 @@ pub fn css(palette: &Palette) -> String {
   --accent-bg-color: {accent}; --accent-fg-color: {on_accent}; --accent-color: {accent_text};
 }}
 panegrid {{ background: {line}; }}
+.rexling-float {{ border-radius: 10px; border: 1px solid alpha({fg}, 0.22); box-shadow: 0 10px 30px alpha(black, 0.45); background: {bg}; }}
+.rexling-float-bar {{ padding: 0 4px 0 12px; background: {sidebar}; border-bottom: 1px solid {line}; }}
 .rexling-tabs row {{ border-radius: 10px; margin: 1px 6px; padding: 6px 8px; transition: background 120ms ease; }}
 .rexling-tabs row:selected {{ background: alpha({fg}, 0.09); }}
 .rexling-tab-title {{ font-weight: 600; }}

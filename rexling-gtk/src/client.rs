@@ -35,6 +35,9 @@ pub struct Placement {
     pub rect: [f64; 4],
     pub floating: bool,
     pub layer: i64,
+    /// The floating layer this pane is in, by which it is moved and resized.
+    #[serde(rename = "layerId")]
+    pub layer_id: String,
 }
 /// A border between tiled panes that can be dragged.
 #[derive(Deserialize, Default, Clone, PartialEq, Debug)]
@@ -71,7 +74,7 @@ impl Tab {
         let missing: Vec<&Block> = self.blocks.iter().filter(|b| !placed.iter().any(|p| p.id == b.id)).collect();
         if placed.is_empty() {
             let count = missing.len().max(1) as f64;
-            return missing.iter().enumerate().map(|(i, b)| Placement { id: b.id.clone(), rect: [i as f64 / count, 0.0, 1.0 / count, 1.0], floating: false, layer: 0 }).collect();
+            return missing.iter().enumerate().map(|(i, b)| Placement { id: b.id.clone(), rect: [i as f64 / count, 0.0, 1.0 / count, 1.0], ..Placement::default() }).collect();
         }
         placed
     }
@@ -190,9 +193,13 @@ pub struct Client {
     json: RefCell<String>,
     revision: Cell<u64>,
     navigation: Cell<u64>,
+    /// Numbers requests that are not navigations, such as moving a tab.
+    request: Cell<u64>,
     /// The navigation the user asked for that the server has not confirmed yet.
     pending: Cell<u64>,
     wants_control: Control,
+    /// A connection that only lists a server's sessions and activity, and never opens one.
+    passive: Cell<bool>,
     /// The pane this connection shows. Without one it follows the server's sessions and tabs only.
     target: RefCell<Option<(String, String)>>,
     /// Keys typed before control arrived, sent once it does.
@@ -217,8 +224,10 @@ impl Client {
             json: RefCell::default(),
             revision: Cell::new(0),
             navigation: Cell::new(0),
+            request: Cell::new(0),
             pending: Cell::new(0),
             wants_control: control.clone(),
+            passive: Cell::new(false),
             target: RefCell::default(),
             queued: RefCell::default(),
             activity: RefCell::default(),
@@ -316,6 +325,9 @@ impl Client {
     /// Reacts to new state: open this connection's session and pane, then keep control and size current.
     fn follow(&self, state: &State) {
         if !self.settled(state) {
+            return;
+        }
+        if self.passive.get() {
             return;
         }
         let Some((session, block)) = self.target.borrow().clone() else {
@@ -427,6 +439,29 @@ impl Client {
         self.adopt.set(true);
         self.command(json!({"type":"new_session","label":label}));
     }
+    pub fn set_passive(&self) {
+        self.passive.set(true);
+    }
+    /// Lifts a tiled pane out of the layout so it floats above it.
+    pub fn float_pane(&self, block: &str) {
+        let state = self.state();
+        if let Some(tab) = state.tab_of(block) {
+            self.command(json!({"type":"float_pane","session":state.selected_session,"window":tab.id,"id":block}));
+        }
+    }
+    /// Puts a floating pane back into the layout, beside `anchor`.
+    pub fn dock_pane(&self, block: &str, anchor: &str) {
+        let state = self.state();
+        if let Some(tab) = state.tab_of(block) {
+            self.command(json!({"type":"dock_pane","session":state.selected_session,"window":tab.id,"id":block,"anchor":anchor,"direction":"right"}));
+        }
+    }
+    pub fn move_layer(&self, layer: &str, bounds: [f64; 4]) {
+        let state = self.state();
+        if self.settled(&state) {
+            self.command(json!({"type":"move_layer","session":state.selected_session,"layer":layer,"bounds":bounds}));
+        }
+    }
     pub fn resize_split(&self, split: &Split, ratio: f64) {
         let state = self.state();
         if self.settled(&state) {
@@ -444,7 +479,7 @@ impl Client {
     /// Moves a tab to sit before `before`, or to the end when there is none.
     pub fn move_tab(&self, id: &str, before: Option<&str>) {
         let state = self.state();
-        self.command(json!({"type":"move_tab","session":state.selected_session,"id":id,"before":before.unwrap_or(""),"requestId":self.navigate()}));
+        self.command(json!({"type":"move_tab","session":state.selected_session,"id":id,"before":before.unwrap_or(""),"requestId":self.request.replace(self.request.get() + 1) + 1}));
     }
     pub fn close_session(&self, id: &str) {
         self.command(json!({"type":"close_session","id":id}));

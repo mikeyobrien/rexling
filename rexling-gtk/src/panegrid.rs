@@ -1,5 +1,5 @@
-//! Lays panes out by the fractions of the tab the server gives each one, with a hairline between
-//! neighbours that can be dragged to resize them.
+//! Lays panes out by the fractions of the tab the server gives each one. The hairline between
+//! tiled neighbours drags to resize them; a floating pane drags by its bar and resizes by its corner.
 use crate::client::Split;
 use gtk::{gdk, glib, prelude::*, subclass::prelude::*};
 use std::{
@@ -9,9 +9,23 @@ use std::{
 
 /// Called with a border and the share of its area the first side should get.
 type ResizeHandler = Rc<dyn Fn(&Split, f64)>;
+/// Called with a floating layer and where it should be, as fractions of the tab.
+type FloatHandler = Rc<dyn Fn(&str, [f64; 4])>;
 
 /// How close to a border, in pixels, the pointer grabs it.
 const GRAB: f64 = 5.0;
+/// Height of a floating pane's bar, and the size of its resize corner.
+pub const BAR: f64 = 28.0;
+const CORNER: f64 = 16.0;
+/// The end of the bar holds buttons, which are not for dragging.
+const BUTTONS: f64 = 40.0;
+
+#[derive(Clone)]
+enum Drag {
+    Border(Split),
+    Move(String, [f64; 4]),
+    Size(String, [f64; 4]),
+}
 
 mod imp {
     use super::*;
@@ -20,9 +34,13 @@ mod imp {
     pub struct PaneGrid {
         pub panes: RefCell<Vec<(gtk::Widget, [f64; 4])>>,
         pub splits: RefCell<Vec<Split>>,
-        pub dragging: RefCell<Option<Split>>,
+        /// Floating layers, back to front.
+        pub floats: RefCell<Vec<(String, [f64; 4])>>,
+        pub(super) dragging: RefCell<Option<Drag>>,
         pub on_resize: RefCell<Option<ResizeHandler>>,
-        pub last_ratio: Cell<f64>,
+        pub on_float: RefCell<Option<FloatHandler>>,
+        /// The last value sent during a drag, so tiny movements do not flood the server.
+        pub last: Cell<[f64; 4]>,
     }
 
     #[glib::object_subclass]
@@ -78,10 +96,25 @@ impl Default for PaneGrid {
 }
 
 impl PaneGrid {
-    /// The border under the pointer, if any.
-    fn split_at(&self, x: f64, y: f64) -> Option<Split> {
+    /// What a press at this point would drag, topmost first.
+    fn target(&self, x: f64, y: f64) -> Option<Drag> {
         let (width, height) = (self.width() as f64, self.height() as f64);
-        self.imp().splits.borrow().iter().rev().find(|split| {
+        let imp = self.imp();
+        for (layer, rect) in imp.floats.borrow().iter().rev() {
+            let (left, top, right, bottom) = (rect[0] * width, rect[1] * height, (rect[0] + rect[2]) * width, (rect[1] + rect[3]) * height);
+            if x < left || x > right || y < top || y > bottom {
+                continue;
+            }
+            if x >= right - CORNER && y >= bottom - CORNER {
+                return Some(Drag::Size(layer.clone(), *rect));
+            }
+            if y <= top + BAR && x <= right - BUTTONS {
+                return Some(Drag::Move(layer.clone(), *rect));
+            }
+            // Anything else inside a floating pane belongs to that pane, not to what is under it.
+            return None;
+        }
+        imp.splits.borrow().iter().rev().find(|split| {
             let [left, top, w, h] = split.rect;
             let (left, top, w, h) = (left * width, top * height, w * width, h * height);
             if split.direction == "horizontal" {
@@ -89,8 +122,9 @@ impl PaneGrid {
             } else {
                 (y - (top + h * split.ratio)).abs() <= GRAB && x >= left && x <= left + w
             }
-        }).cloned()
+        }).cloned().map(Drag::Border)
     }
+
     fn wire(&self) {
         let motion = gtk::EventControllerMotion::new();
         motion.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -98,24 +132,29 @@ impl PaneGrid {
         motion.connect_motion(move |_, x, y| {
             let Some(grid) = weak.upgrade() else { return };
             let held = grid.imp().dragging.borrow().clone();
-            let name = match held.or_else(|| grid.split_at(x, y)) {
-                Some(split) if split.direction == "horizontal" => Some("col-resize"),
-                Some(_) => Some("row-resize"),
+            let name = match held.or_else(|| grid.target(x, y)) {
+                Some(Drag::Border(split)) if split.direction == "horizontal" => Some("col-resize"),
+                Some(Drag::Border(_)) => Some("row-resize"),
+                Some(Drag::Move(..)) => Some("grab"),
+                Some(Drag::Size(..)) => Some("se-resize"),
                 None => None,
             };
             grid.set_cursor_from_name(name);
         });
         self.add_controller(motion);
 
-        // Capture phase: a press on a border belongs to the border, not to the terminal under it.
+        // Capture phase: a press on a border or a bar belongs to it, not to the terminal under it.
         let drag = gtk::GestureDrag::builder().button(gdk::BUTTON_PRIMARY).propagation_phase(gtk::PropagationPhase::Capture).build();
         let weak = self.downgrade();
         drag.connect_drag_begin(move |gesture, x, y| {
             let Some(grid) = weak.upgrade() else { return };
-            match grid.split_at(x, y) {
-                Some(split) => {
-                    grid.imp().last_ratio.set(split.ratio);
-                    grid.imp().dragging.replace(Some(split));
+            match grid.target(x, y) {
+                Some(target) => {
+                    grid.imp().last.set(match &target {
+                        Drag::Border(split) => [split.ratio, 0.0, 0.0, 0.0],
+                        Drag::Move(_, rect) | Drag::Size(_, rect) => *rect,
+                    });
+                    grid.imp().dragging.replace(Some(target));
                     gesture.set_state(gtk::EventSequenceState::Claimed);
                 }
                 None => {
@@ -127,20 +166,38 @@ impl PaneGrid {
         drag.connect_drag_update(move |gesture, dx, dy| {
             let (Some(grid), Some((x, y))) = (weak.upgrade(), gesture.start_point()) else { return };
             let imp = grid.imp();
-            let Some(split) = imp.dragging.borrow().clone() else { return };
-            let [left, top, w, h] = split.rect;
-            let ratio = if split.direction == "horizontal" {
-                ((x + dx) / grid.width().max(1) as f64 - left) / w.max(f64::EPSILON)
-            } else {
-                ((y + dy) / grid.height().max(1) as f64 - top) / h.max(f64::EPSILON)
-            };
-            let ratio = ratio.clamp(0.08, 0.92);
-            // Whole-percent steps keep a drag from flooding the server with resizes.
-            if (ratio - imp.last_ratio.get()).abs() >= 0.01 {
-                imp.last_ratio.set(ratio);
-                let handler = imp.on_resize.borrow().clone();
-                if let Some(handler) = handler {
-                    handler(&split, ratio);
+            let Some(target) = imp.dragging.borrow().clone() else { return };
+            let (width, height) = (grid.width().max(1) as f64, grid.height().max(1) as f64);
+            match target {
+                Drag::Border(split) => {
+                    let [left, top, w, h] = split.rect;
+                    let ratio = if split.direction == "horizontal" { ((x + dx) / width - left) / w.max(f64::EPSILON) } else { ((y + dy) / height - top) / h.max(f64::EPSILON) };
+                    let ratio = ratio.clamp(0.08, 0.92);
+                    // Whole-percent steps keep a drag from flooding the server with resizes.
+                    if (ratio - imp.last.get()[0]).abs() >= 0.01 {
+                        imp.last.set([ratio, 0.0, 0.0, 0.0]);
+                        let handler = imp.on_resize.borrow().clone();
+                        if let Some(handler) = handler {
+                            handler(&split, ratio);
+                        }
+                    }
+                }
+                Drag::Move(layer, start) | Drag::Size(layer, start) => {
+                    let moving = matches!(imp.dragging.borrow().as_ref(), Some(Drag::Move(..)));
+                    let (fx, fy) = (dx / width, dy / height);
+                    let next = if moving {
+                        [(start[0] + fx).clamp(0.0, 1.0 - start[2]), (start[1] + fy).clamp(0.0, 1.0 - start[3]), start[2], start[3]]
+                    } else {
+                        [start[0], start[1], (start[2] + fx).clamp(0.15, 1.0 - start[0]), (start[3] + fy).clamp(0.15, 1.0 - start[1])]
+                    };
+                    let last = imp.last.get();
+                    if next.iter().zip(last).any(|(a, b)| (a - b).abs() >= 0.004) {
+                        imp.last.set(next);
+                        let handler = imp.on_float.borrow().clone();
+                        if let Some(handler) = handler {
+                            handler(&layer, next);
+                        }
+                    }
                 }
             }
         });
@@ -152,12 +209,18 @@ impl PaneGrid {
         });
         self.add_controller(drag);
     }
-    /// Called with a border and the share of its area the first side should get, as the border is dragged.
+
     pub fn connect_resize(&self, handler: impl Fn(&Split, f64) + 'static) {
         self.imp().on_resize.replace(Some(Rc::new(handler)));
     }
+    pub fn connect_float(&self, handler: impl Fn(&str, [f64; 4]) + 'static) {
+        self.imp().on_float.replace(Some(Rc::new(handler)));
+    }
     pub fn set_splits(&self, splits: Vec<Split>) {
         self.imp().splits.replace(splits);
+    }
+    pub fn set_floats(&self, floats: Vec<(String, [f64; 4])>) {
+        self.imp().floats.replace(floats);
     }
 
     /// Shows exactly these panes, back to front. Widgets already shown keep their state.

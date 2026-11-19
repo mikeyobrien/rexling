@@ -13,12 +13,16 @@ Rexling Android app already uses.
 
 - **Live split panes.** Every pane in a tab is on screen and streaming at once, laid out as
   the server arranges them. Each pane has its own connection, so one busy terminal never
-  holds up another. Drag the line between two panes to resize them.
+  holds up another. Drag the line between two panes to resize them. Float a pane to lift
+  it above the others, then drag it by its bar and resize it by its corner.
 - **Nothing to set up on the same machine.** If a Rex server is running under your account,
   Rexling finds its socket and connects. Other servers are reached by HTTPS address, or by
   `ssh://user@host` through your own `ssh`, with your keys, agent and config.
 - **Sessions and tabs in a sidebar.** Each tab shows the program it is running, where, and
-  whether that program is working, waiting on you, finished or failed.
+  whether that program is working, waiting on you, finished or failed. Drag tabs to
+  reorder them.
+- **Every server in one switcher.** The session switcher lists the sessions of all your
+  saved servers, with a dot on any that wants you, and opens whichever you pick.
 - **Command palette.** `Ctrl+Shift+P` finds any command, tab, session or theme.
 - **43 themes that colour the whole window**, chosen from a gallery, with separate picks
   for light and dark. Your system's light or dark preference is followed by default.
@@ -65,7 +69,8 @@ Otherwise it asks for an address:
 | `unix:///path/to/server.sock` | A Rex server socket on this computer |
 
 `ssh://` needs key or agent sign-in that works without a prompt, and a host you have
-connected to before. Saved servers are listed in Preferences and in the command palette.
+connected to before. Saved servers are listed in Preferences, the command palette and the
+session switcher. Sessions on `ssh://` servers appear once that server is opened.
 
 ## Keys
 
@@ -110,9 +115,9 @@ Set `REXLING_TIMING=1` to print repaint times while you work.
 
 ## Not built yet
 
-- Showing several servers' sessions side by side; one server is open at a time
-- Dragging tabs to reorder them, and moving or resizing floating panes
+- Tabs from two sessions on screen at the same time; one session is open at a time
 - A built-in Tailscale client. Use the system's Tailscale; the Android app carries its own
+- Packages for distributions. `install.sh` builds from source
 
 ## How it is put together
 
