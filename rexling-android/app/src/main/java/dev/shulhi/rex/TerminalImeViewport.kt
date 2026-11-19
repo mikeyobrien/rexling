@@ -48,7 +48,9 @@ private fun androidx.compose.ui.unit.Density.keyboardCover(ime: WindowInsets,nav
  * counting the same amount as covered keeps one terminal height, and one PTY size, on every frame.
  */
 @Composable
-internal fun Modifier.terminalImeViewport(ime: WindowInsets,navigation: WindowInsets,keyboardChrome: ()->Int={0},focus: ()->TerminalKeyboardFocus?): Modifier {
+internal fun Modifier.terminalImeViewport(ime: WindowInsets,navigation: WindowInsets,keyboardChrome: ()->Int={0},
+    /** Told how far the terminal is moved up, so what it draws at its top edge can stay at the visible one. */
+    onPan: (Int)->Unit={},focus: ()->TerminalKeyboardFocus?): Modifier {
     val pan=remember {TerminalImePanState()}
     return layout {measurable,constraints->
         if(!constraints.hasBoundedHeight) {
@@ -61,7 +63,8 @@ internal fun Modifier.terminalImeViewport(ime: WindowInsets,navigation: WindowIn
             val child=measurable.measure(constraints.copy(minHeight=fullHeight,maxHeight=fullHeight))
             layout(child.width,constraints.maxHeight) {
                 // Read cursor state during placement, not composition or measurement.
-                child.placeRelative(0,-pan.position(focus(),constraints.maxHeight,covered))
+                val shift=pan.position(focus(),constraints.maxHeight,covered)
+                onPan(shift);child.placeRelative(0,-shift)
             }
         }
     }

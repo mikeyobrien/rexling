@@ -46,6 +46,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
@@ -740,6 +741,12 @@ internal interface TitleHold {
 
 /** A keycap in the keyboard's own shape, so the row reads as part of the keyboard below it. */
 internal val KeyCapShape=Kit.key
+/** Lets the terminal reach up [px] beneath the header drawn before it, without moving anything laid out after it. */
+internal fun Modifier.underHeader(px: Int): Modifier=if(px<=0) this else layout {measurable,constraints->
+    val grown=if(constraints.hasBoundedHeight) constraints.copy(minHeight=constraints.minHeight+px,maxHeight=constraints.maxHeight+px) else constraints
+    val placeable=measurable.measure(grown)
+    layout(placeable.width,(placeable.height-px).coerceAtLeast(0)) {placeable.place(0,-px)}
+}
 /** The key row's outer corner: a keycap's 7 plus the 7 or so of padding between it and the bar's edge. */
 internal val KeyRowCorner=14.dp
 @Composable internal fun KeyCapLabel(label: String,color: Color,active: Boolean=false) {

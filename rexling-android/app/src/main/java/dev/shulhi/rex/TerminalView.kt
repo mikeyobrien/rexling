@@ -170,6 +170,30 @@ class TerminalView(context: Context) : View(context) {
         set(value) { if (field != value) { field = value; metrics(); invalidate() } }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val backgroundPaint = Paint() // Cell fills must meet without antialiased seams.
+    private val fadePaint = Paint()
+    private var fadeKey = 0L
+    /**
+     * Lines that continue above the screen fade out at the top edge instead of being cut. Only while
+     * there is history up there: a full-screen program's own top line is never dimmed.
+     */
+    private fun drawHistoryFade(canvas: Canvas,frame: TerminalScreen) {
+        // Moved up by the keyboard, ordinary rows sit under a floating header too, and need the same veil.
+        if(frame.scroll.offset<=0L && !(historyPeek>0f && viewportShift>0)) return
+        // Under a floating header the lines stay faintly readable; below it three lines climb back to full strength.
+        val depth=(insetTop+cellHeight*(if(historyPeek>0f) 2f else 3f)).coerceAtMost(height*.3f)
+        val key=(palette.background.toLong() shl 32) or (depth+historyPeek*31f).toBits().toLong().and(0xffffffffL)
+        if(key!=fadeKey) {
+            fadeKey=key
+            val clear=palette.background and 0x00ffffff
+            fun tint(alpha: Int)=(alpha shl 24) or clear
+            fadePaint.shader=if(historyPeek>0f) android.graphics.LinearGradient(0f,0f,0f,depth,intArrayOf(tint(0xec),tint(0xdc),clear),
+                    floatArrayOf(0f,(historyPeek/depth).coerceIn(0f,.92f),1f),android.graphics.Shader.TileMode.CLAMP)
+                else android.graphics.LinearGradient(0f,0f,0f,depth,intArrayOf(tint(0xff),tint(0xd0),clear),
+                    floatArrayOf(0f,(insetTop/depth).coerceIn(0f,.9f),1f),android.graphics.Shader.TileMode.CLAMP)
+        }
+        val save=canvas.save();canvas.translate(0f,viewportShift.toFloat())
+        canvas.drawRect(0f,0f,width.toFloat(),depth,fadePaint);canvas.restoreToCount(save)
+    }
     private val fonts = TerminalFonts(context)
     private val terminalImages=TerminalImages()
     private data class RecordedRow(val cells: List<TerminalCell>,val recording: TerminalRowRecording,val links: List<TerminalLink>)
@@ -212,12 +236,21 @@ class TerminalView(context: Context) : View(context) {
     private var insetBottom = 0f
     private val contentWidth: Float get() = (width - insetHorizontal * 2).coerceAtLeast(1f)
     private val contentHeight: Float get() = (height - insetTop - insetBottom).coerceAtLeast(1f)
-    fun setTerminalPaddingDp(horizontal: Int, top: Int, bottom: Int) {
+    /**
+     * Pixels above the grid that lie under a floating header. The grid keeps its size and place;
+     * lines that scrolled off the top show through there instead of an empty band.
+     */
+    private var historyPeek = 0f
+    /** How far the keyboard has moved this view up; the top fade follows the edge that is still visible. */
+    var viewportShift: Int = 0
+        set(value) {if(field!=value) {field=value;invalidate()}}
+    fun setTerminalPaddingDp(horizontal: Int, top: Int, bottom: Int, peekPx: Int = 0) {
         val density = resources.displayMetrics.density
         val h = (horizontal * density).roundToInt().toFloat()
-        val t = (top * density).roundToInt().toFloat()
+        val t = (top * density).roundToInt().toFloat() + peekPx
         val b = (bottom * density).roundToInt().toFloat()
-        if (h == insetHorizontal && t == insetTop && b == insetBottom) return
+        if (h == insetHorizontal && t == insetTop && b == insetBottom && peekPx.toFloat() == historyPeek) return
+        historyPeek = peekPx.toFloat()
         insetHorizontal = h; insetTop = t; insetBottom = b
         configureRendering();clearRows();reportDimensions();reportCursorViewport(); invalidate()
     }
@@ -261,7 +294,7 @@ class TerminalView(context: Context) : View(context) {
         android.os.Trace.beginSection("Rexlet.drawTerminal")
         val token=frameTraceToken.takeIf {selection==null}
         if(token!=null) android.os.Trace.beginSection("Rexlink.draw.$token")
-        val geometry="$width:$height:${frame.columns}:$visibleColumns:$visibleRows:$insetHorizontal:$insetTop:$insetBottom:${canvas.isHardwareAccelerated}"
+        val geometry="$width:$height:${frame.columns}:$visibleColumns:$visibleRows:$insetHorizontal:$insetTop:$historyPeek:$insetBottom:${canvas.isHardwareAccelerated}"
         if(geometry!=rowGeometry) {clearRows();recorded=arrayOfNulls(visibleRows);rowGeometry=geometry}
         android.os.Trace.beginSection("Rexlink.linkIndex")
         val rowLinks=try {linkIndex.update(frame)} finally {android.os.Trace.endSection()}
@@ -269,9 +302,9 @@ class TerminalView(context: Context) : View(context) {
         // when the whole screen shifted, so only edge and uncovered rows need recording.
         reuseShiftedRows(frame,visibleRows)
         val slide=slideFor(frame)
-        if(slide!=0f) {canvas.save();canvas.clipRect(0f,insetTop,width.toFloat(),height-insetBottom);canvas.translate(0f,-slide)}
+        if(slide!=0f) {canvas.save();canvas.clipRect(0f,insetTop-historyPeek,width.toFloat(),height-insetBottom);canvas.translate(0f,-slide)}
         if(frame.images.isEmpty()) {
-        if(slide<0f) frame.above.forEachIndexed {i,row->drawLooseRow(canvas,row,visibleColumns,insetTop-(frame.above.size-i)*cellHeight)}
+        if(slide<0f || historyPeek>0f) frame.above.forEachIndexed {i,row->drawLooseRow(canvas,row,visibleColumns,insetTop-(frame.above.size-i)*cellHeight)}
         if(slide>0f) frame.below.forEachIndexed {i,row->drawLooseRow(canvas,row,visibleColumns,insetTop+(visibleRows+i)*cellHeight)}
         for(y in 0 until visibleRows) {
             val cells=frame.lines[y]
@@ -361,6 +394,7 @@ class TerminalView(context: Context) : View(context) {
         }
         canvas.restore()
         drawSelection(canvas)
+        if(selection==null) drawHistoryFade(canvas,frame)
         canvas.restoreToCount(saved)
         if(token!=null) android.os.Trace.endSection()
         android.os.Trace.endSection()
@@ -410,7 +444,8 @@ class TerminalView(context: Context) : View(context) {
         fun flush() {
             if(pass==2 || end<=start || start>=columns || color==palette.background) return
             backgroundPaint.color=color
-            canvas.drawRect(if(start==0) 0f else insetHorizontal+start*cellWidth,0f,
+            // The first row's fill covers the padding above it, but not the band under a floating header.
+            canvas.drawRect(if(start==0) 0f else insetHorizontal+start*cellWidth,if(top>0f) historyPeek.coerceAtMost(top) else 0f,
                 if(end>=columns) width.toFloat() else insetHorizontal+end*cellWidth,bottom,backgroundPaint)
         }
         for(cell in cells) {

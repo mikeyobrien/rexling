@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -360,7 +361,8 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
         Box(Modifier.weight(1f).fillMaxHeight()) {
         Column(Modifier.fillMaxSize().then(if(wide && chromeVisible) Modifier.padding(start=4.dp,end=8.dp,bottom=8.dp)
             .clip(WideCardShape).background(MaterialTheme.colorScheme.surface) else Modifier)) {
-            Box(Modifier.onGloballyPositioned {headerTop=it.positionInRoot().y;headerHeight=it.size.height}) {
+            // The header floats: the terminal runs beneath it, and scrolled-off lines fade out behind it.
+            Box(Modifier.zIndex(1f).onGloballyPositioned {headerTop=it.positionInRoot().y;headerHeight=it.size.height}) {
             SessionHeader(sessionStrip,currentSessionKey,state.connected,model.sessionTargets.isNotEmpty(),
                 blocks.map {state.programs[it.id] ?: ProgramIdentity.Loading},blocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0),state.directories[displayedBlock].orEmpty(),{picker="sessions"},model::selectSessionTarget,model::jumpLastSession,
                 serverIcons=if(model.servers.size>1) model.sessionTargets.associate {it.key to it.server.icon}+(currentSessionKey to model.activeServer.icon) else emptyMap(),
@@ -419,7 +421,10 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
                     if(state.error.isNotBlank() && state.phase !in listOf("connecting","reconnecting")) Text(state.error,Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(10.dp),
                         color=MaterialTheme.colorScheme.onErrorContainer,fontSize=11.sp,maxLines=3,overflow=TextOverflow.Ellipsis)
                     if(blocks.isNotEmpty()) {
-                        Box(Modifier.weight(1f).fillMaxWidth().padding(bottom=3.dp).travelling(travel)) {
+                        // Anything shown between the header and the terminal keeps the terminal below it.
+                        val headerOverlap=if(showServer || (state.phase=="disconnected" && !client.hasScreen) ||
+                            (state.error.isNotBlank() && state.phase !in listOf("connecting","reconnecting"))) 0 else headerHeight
+                        Box(Modifier.weight(1f).fillMaxWidth().underHeader(headerOverlap).padding(bottom=3.dp).travelling(travel)) {
                         if(!floatingActive || hiddenFloating!=chosen) LiveTerminal(client,carouselBlocks,chosen,liveBlock,state.programs,controlled,fontSize.toFloat(),
                             client::type,client::scroll,client::wheel,client::takeControl,client::scrollToBottom,client::resize,::openPane,{picker="tabs"},{view->terminalView=view;view.onOpenLink={url->
                                 val loopback=LoopbackLink.parse(url)
@@ -430,7 +435,7 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
                                 }
                                 else PortForwards.notice="Wait for this pane to connect before forwarding its link."
                             }},
-                            Modifier.fillMaxSize(),onNewPane=if(ready && state.selectedSession.isNotBlank() && chosen.isNotBlank()) ({client.createPane()}) else null,floatingDock=floating.isNotEmpty(),paneLayout=window?.layout.orEmpty(),titles=state.titles,directories=state.directories,hazeState=terminalHaze,captureBackdrop=floatingBackdrop || wheelBackdrop || readyBackdrop || model.images.state!=null,onImage=imageCommit,onPaste=::pasteClipboard,imeEnterSubmits=model.enterSubmits,tapOpensKeyboard=model.toolbarWithKeyboardOnly,
+                            Modifier.fillMaxSize(),topOverlapPx=headerOverlap,onNewPane=if(ready && state.selectedSession.isNotBlank() && chosen.isNotBlank()) ({client.createPane()}) else null,floatingDock=floating.isNotEmpty(),paneLayout=window?.layout.orEmpty(),titles=state.titles,directories=state.directories,hazeState=terminalHaze,captureBackdrop=floatingBackdrop || wheelBackdrop || readyBackdrop || model.images.state!=null,onImage=imageCommit,onPaste=::pasteClipboard,imeEnterSubmits=model.enterSubmits,tapOpensKeyboard=model.toolbarWithKeyboardOnly,
                             onShortcut={shortcut-> when(shortcut) {
                                 TerminalShortcut.PreviousPane -> {client.swipePane(-1);true}
                                 TerminalShortcut.NextPane -> {client.swipePane(1);true}
@@ -447,7 +452,7 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
 
                         // Paused input shows as a dimmed terminal; the header says why, so nothing covers the text.
                         if(paused!=null) Box(Modifier.matchParentSize().background(MaterialTheme.colorScheme.background.copy(alpha=.5f)))
-                        ReadyNotice(state.connectionEpoch,controlled,ready,Modifier.align(Alignment.TopCenter).padding(8.dp),hazeState=terminalHaze,onVisibleChange={readyBackdrop=it})
+                        ReadyNotice(state.connectionEpoch,controlled,ready,Modifier.align(Alignment.TopCenter).padding(top=with(LocalDensity.current) {headerOverlap.toDp()}).padding(8.dp),hazeState=terminalHaze,onVisibleChange={readyBackdrop=it})
                         if((!floatingActive || hiddenFloating!=chosen) && model.neovimShortcutsEnabled && ready && chosen==liveBlock && chosen !in state.cachedPrograms && state.programs[chosen]?.kind==ProgramKind.NEOVIM && model.neovimShortcuts.isNotEmpty()) {
                             NeovimShortcutButton(model.neovimShortcuts,keyTarget,controlled,
                                 onChoose={item,target->client.neovimShortcut(item,target)},onCustomize={neovimSettings=true},layout=model.neovimShortcutLayout,effect=model.neovimShortcutEffect,hapticsEnabled=model.neovimShortcutHaptics,hazeState=terminalHaze,onExpandedChange={wheelBackdrop=it},
@@ -578,11 +583,11 @@ private fun getClipboard(context: Context)=context.getSystemService(Context.CLIP
     programs: Map<String,ProgramIdentity>,controlled: Boolean,fontSize: Float,
     onInput: (String)->Unit,onScroll: (Int)->Unit,onWheel: (Int,Int,Int,Int,Int)->Unit,onActivate: ()->Unit,onBottom: ()->Unit,onDimensions: (Int,Int)->Unit,
     onSelect: (String)->Unit,onPanes: ()->Unit,onView: (TerminalView)->Unit,modifier: Modifier=Modifier,
-    onNewPane: (()->Unit)?=null,floatingDock: Boolean=false,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},onShortcut: (TerminalShortcut)->Boolean={false},imeEnterSubmits: Boolean=false,tapOpensKeyboard: Boolean=false) {
+    onNewPane: (()->Unit)?=null,floatingDock: Boolean=false,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},onShortcut: (TerminalShortcut)->Boolean={false},imeEnterSubmits: Boolean=false,tapOpensKeyboard: Boolean=false,topOverlapPx: Int=0) {
     val layout by client.displayLayout.collectAsState()
     val screen=client.screenForLayout(layout)
     TerminalCarousel(blocks,chosen,liveBlock,screen,client.paneFrames,programs,controlled,fontSize,
-        onInput,onScroll,onWheel,onActivate,onBottom,onDimensions,onSelect,onPanes,onView,modifier,client::bindTerminalView,onMouseClick=client::click,mouseTarget=client::keyTarget,onImage=onImage,onPaste=onPaste,imageTarget=client::imageInputTarget,bottomControlsInset=if(floatingDock) 56.dp else 0.dp,paneLayout=paneLayout,titles=titles,directories=directories,hazeState=hazeState,captureBackdrop=captureBackdrop,onNewPane=onNewPane,onShortcut=onShortcut,imeEnterSubmits=imeEnterSubmits,tapOpensKeyboard=tapOpensKeyboard)
+        onInput,onScroll,onWheel,onActivate,onBottom,onDimensions,onSelect,onPanes,onView,modifier,client::bindTerminalView,onMouseClick=client::click,mouseTarget=client::keyTarget,onImage=onImage,onPaste=onPaste,imageTarget=client::imageInputTarget,bottomControlsInset=if(floatingDock) 56.dp else 0.dp,paneLayout=paneLayout,titles=titles,directories=directories,hazeState=hazeState,captureBackdrop=captureBackdrop,onNewPane=onNewPane,onShortcut=onShortcut,imeEnterSubmits=imeEnterSubmits,tapOpensKeyboard=tapOpensKeyboard,topOverlapPx=topOverlapPx)
 }
 
 @Composable private fun BackgroundAlertsDialog(model: RexModel,hazeState: HazeState?=null,onClose: ()->Unit) {
