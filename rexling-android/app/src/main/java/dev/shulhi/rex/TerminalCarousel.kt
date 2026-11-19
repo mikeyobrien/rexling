@@ -44,7 +44,9 @@ import dev.chrisbanes.haze.hazeSource
     /** Adds a pane beside the shown one; null leaves the button out. */
     onNewPane: (()->Unit)?=null,
     /** False makes the button inert in place. It is false for a moment on every pane switch, so it neither moves nor dims. */
-    newPaneEnabled: Boolean=true) {
+    newPaneEnabled: Boolean=true,
+    /** Pixels of the terminal that lie under a floating header. */
+    topOverlapPx: Int=0) {
     val switchLayout=remember(paneLayout,blocks) {paneLayout.filter {p->blocks.any {it.id==p.id}}.sortedBy {it.layer}}
     val hasMinimap=blocks.all {b->switchLayout.any {it.id==b.id}}
     val localHaze=remember {HazeState()}
@@ -133,9 +135,11 @@ import dev.chrisbanes.haze.hazeSource
                     .paneScrim(backdrop) {(abs(pageOffset+drag)/stride).coerceIn(0f,1f)*.48f}
                     .then(if(center || retiring) Modifier else Modifier.clickable(role=Role.Button){latestSelect(block.id)})) {
                     Box(Modifier.fillMaxSize()) {
+                        val shifted=remember {arrayOfNulls<TerminalView>(1)}
                         if(frame!=null) AndroidView(
-                            factory={TerminalView(it)},modifier=Modifier.fillMaxSize().terminalImeViewport(imeInsets,navigationInsets,keyboardChrome) {keyboardFocus}.clipToBounds(),
+                            factory={TerminalView(it)},modifier=Modifier.fillMaxSize().terminalImeViewport(imeInsets,navigationInsets,keyboardChrome,onPan={shifted[0]?.viewportShift=it}) {keyboardFocus}.clipToBounds(),
                             update={view ->
+                                shifted[0]=view
                                 view.keepAwakeMode=if(center) keepAwake else KeepScreenAwake.SYSTEM
                                 imeHandoff.mount(block,view)
                                 view.onInputConnectionReady={if(center) imeHandoff.served(block.id,view)}
@@ -143,7 +147,7 @@ import dev.chrisbanes.haze.hazeSource
                                 keyboardFocus=view.keyboardFocus
                                 view.onDimensions=if(center && block.id==liveBlock) onDimensions else {_,_->}
                                 // Room under the last row for the pane pill, so it never sits on the prompt.
-                view.setTerminalPaddingDp(12,8,if(blocks.size>1 && paneIndicator) 52 else if(bottomControlsInset>0.dp) 28 else 6)
+                view.setTerminalPaddingDp(12,8,if(blocks.size>1 && paneIndicator) 52 else if(bottomControlsInset>0.dp) 28 else 6,topOverlapPx)
                                 view.palette=palette;view.textSp=fontSize
                                 if(retiring || block.id!=liveBlock || bindLiveView?.invoke(block.id,view)!=true) view.screen=frame
                                 view.interactive=center
@@ -220,7 +224,7 @@ import dev.chrisbanes.haze.hazeSource
         }
         if(showSwitch) {
             // Top right, clear of the prompt and whatever is being typed at the bottom of the screen.
-            Column(Modifier.align(Alignment.TopEnd).padding(top=10.dp,end=12.dp)
+            Column(Modifier.align(Alignment.TopEnd).padding(top=10.dp+with(LocalDensity.current) {topOverlapPx.toDp()},end=12.dp)
                 .widthIn(max=(maxWidth-32.dp).coerceIn(80.dp,240.dp))
                 .semantics {contentDescription="Pane switch indicator";stateDescription=blocks[candidate].id},
                 horizontalAlignment=Alignment.End,verticalArrangement=Arrangement.spacedBy(4.dp)) {
