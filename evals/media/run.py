@@ -99,13 +99,14 @@ class Session:
         device.adb("shell", "am", "force-stop", PACKAGE)
         device.adb("shell", "monkey", "-p", PACKAGE, "-c", "android.intent.category.LAUNCHER", "1")
         # The header's second line is the session strip, or a status line while only viewing.
-        # Either opens the switcher.
-        deadline = time.monotonic() + 25
-        while not (line := next((name for name in ("Session strip", "Status") if device.ui("has", name, "--timeout", "1", check=False)), None)):
+        # Either opens the switcher. It can change between the two as the app connects, so
+        # look again right before tapping.
+        deadline, opened = time.monotonic() + 30, False
+        time.sleep(4)
+        while not opened:
             if time.monotonic() > deadline:
                 raise RuntimeError("the app's header did not appear")
-        time.sleep(3)
-        device.ui("tap", line)
+            opened = any(device.ui("tap", name, "--timeout", "1", check=False) for name in ("Session strip", "Status"))
         device.ui("tap", self.label, "--timeout", "15")
         device.ui("has", self.label + " · ", "--timeout", "10")
         time.sleep(2)
