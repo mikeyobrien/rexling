@@ -104,12 +104,7 @@ pub struct Cell {
 pub struct Frame {
     pub columns: u16,
     pub rows: u16,
-    /// Where to draw a cursor: only while the terminal shows it.
     pub cursor: Option<(u16, u16)>,
-    /// The cursor position whether shown or hidden. Programs that draw their own cursor
-    /// hide the real one but still park it at their input caret; clients follow it to keep
-    /// the caret above an on-screen keyboard.
-    pub caret: Option<(u16, u16)>,
     pub cursor_style: u8,
     pub cursor_blinking: bool,
     pub foreground: [u8; 3],
@@ -427,8 +422,7 @@ impl Terminal {
         Ok(Frame {
             columns: raw.columns,
             rows: raw.rows,
-            cursor: (raw.cursor_visible == 1).then_some((raw.cursor_x, raw.cursor_y)),
-            caret: (raw.cursor_visible != 0).then_some((raw.cursor_x, raw.cursor_y)),
+            cursor: (raw.cursor_visible != 0).then_some((raw.cursor_x, raw.cursor_y)),
             cursor_style: raw.cursor_style,
             cursor_blinking: raw.cursor_blinking != 0,
             foreground: raw.foreground,
@@ -606,17 +600,6 @@ impl Replica {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn a_hidden_cursor_keeps_its_caret_position_for_keyboard_placement() {
-        // pi and openclaw draw their own cursor, hide the real one, and park it at the input caret.
-        let mut terminal=Terminal::new(20,5).unwrap();
-        terminal.write(b"> input\x1b[5;9H\x1b[?25l").unwrap();
-        let frame=terminal.frame().unwrap();
-        assert!(frame.cursor.is_none(),"a hidden cursor must not be drawn");
-        assert_eq!(frame.caret,Some((8,4)));
-        terminal.write(b"\x1b[?25h").unwrap();
-        let frame=terminal.frame().unwrap();
-        assert_eq!((frame.cursor,frame.caret),(Some((8,4)),Some((8,4))));
-    }
     #[test] fn program_cursor_shapes_and_blink_modes_reach_frames() {
         let mut terminal=Terminal::new(20,5).unwrap();
         for (sequence,style,blinking) in [(b"\x1b[1 q".as_slice(),1,true),(b"\x1b[2 q",1,false),(b"\x1b[3 q",2,true),(b"\x1b[4 q",2,false),(b"\x1b[5 q",0,true),(b"\x1b[6 q",0,false)] {

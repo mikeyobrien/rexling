@@ -124,8 +124,7 @@ class TerminalView(context: Context) : View(context) {
     internal val keyboardFocus: TerminalKeyboardFocus? get() {
         val frame=screen ?: return null
         if(frame.scroll.below>0) return null
-        // Follow the caret, not just a visible cursor: pi and openclaw hide the cursor they park there.
-        val row=frame.caretY?.takeIf {it in 0 until frame.rows} ?: return null
+        val row=frame.cursorY?.takeIf {it in 0 until frame.rows} ?: return null
         val lastText=frame.lines.indexOfLast {cells->cells.any {cell->cell.width>0 && cell.text.any {it!='\u0000' && !it.isWhitespace()}}}
         val bottom=insetTop+(row+1)*cellHeight+insetBottom
         return TerminalKeyboardFocus(insetTop+row*cellHeight,bottom,
