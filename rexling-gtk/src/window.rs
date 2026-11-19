@@ -168,6 +168,8 @@ struct PaneRow {
     /// "attention", "failed", "done", "working" or nothing.
     status: &'static str,
     focused: bool,
+    /// It floats over the tab's other panes.
+    floating: bool,
 }
 
 /// A pane somewhere else that is waiting on the user.
@@ -227,32 +229,38 @@ fn branch_mark() -> gtk::DrawingArea {
     area
 }
 
-/// A tab's panes in miniature: each program's icon where its pane is, all one size. When the
-/// real layout would shrink them to specks, the icons sit in an even grid in pane order instead.
+/// A tab's panes in miniature: each program's icon where its pane is, as large as its pane allows,
+/// so the picture is the real layout. With many small panes it grows a little rather than rearranging them.
+/// Only panes that float over others are set out in a grid, since their icons would cover the rest.
 fn minimap(panes: &[PaneRow], scale: i32) -> gtk::Fixed {
-    const WIDTH: f64 = 50.0;
-    const HEIGHT: f64 = 40.0;
-    const LEGIBLE: f64 = 14.0;
-    let map = gtk::Fixed::builder().width_request(WIDTH as i32).height_request(HEIGHT as i32).valign(gtk::Align::Center).build();
+    const LEGIBLE: f64 = 10.0;
     let shown: Vec<&PaneRow> = panes.iter().filter(|pane| pane.rect[2] > 0.0 && pane.rect[3] > 0.0).collect();
-    // The height an icon can have in a share of the miniature, keeping its shape.
-    let fit = |w: f64, h: f64| (h * HEIGHT - 2.0).min((w * WIDTH - 2.0) * 48.0 / 61.0).floor();
     let mut cells: Vec<[f64; 4]> = shown.iter().map(|pane| pane.rect).collect();
-    let mut high = cells.iter().map(|rect| fit(rect[2], rect[3])).fold(f64::MAX, f64::min);
-    // A floating pane sits over the others; icons that would cover each other go in the grid too.
-    let covered = cells.iter().enumerate().any(|(at, a)| cells[..at].iter().any(|b| ((a[0] + a[2] / 2.0) - (b[0] + b[2] / 2.0)).abs() * WIDTH < high * 61.0 / 48.0 && ((a[1] + a[3] / 2.0) - (b[1] + b[3] / 2.0)).abs() * HEIGHT < high));
-    if (high < LEGIBLE || covered) && !cells.is_empty() {
+    // The height an icon can have in its share of a miniature of this size, keeping its shape.
+    let fit = |rect: &[f64; 4], width: f64, height: f64| (rect[3] * height - 2.0).min((rect[2] * width - 2.0) * 48.0 / 61.0).floor();
+    let least = |cells: &[[f64; 4]], width: f64, height: f64| cells.iter().map(|rect| fit(rect, width, height)).fold(f64::MAX, f64::min);
+    let (mut width, mut height) = (50.0, 40.0);
+    let covered = shown.iter().any(|pane| pane.floating);
+    if covered {
         let columns = (cells.len() as f64).sqrt().ceil().min(3.0);
         let rows = (cells.len() as f64 / columns).ceil();
         cells = (0..cells.len()).map(|at| [(at as f64 % columns) / columns, (at as f64 / columns).floor() / rows, 1.0 / columns, 1.0 / rows]).collect();
-        high = fit(1.0 / columns, 1.0 / rows);
     }
-    let high = high.clamp(6.0, 30.0);
-    let wide = (high * 61.0 / 48.0).round();
+    let smallest = least(&cells, width, height);
+    if smallest < LEGIBLE && !cells.is_empty() {
+        // Room for the smallest icon to be told apart, as far as the row allows.
+        let grow = ((LEGIBLE + 2.0) / (smallest + 2.0).max(1.0)).min(1.6);
+        (width, height) = ((width * grow).round(), (height * grow).round());
+    }
+    let map = gtk::Fixed::builder().width_request(width as i32).height_request(height as i32).valign(gtk::Align::Center).build();
+    // Sizes follow the panes, but stay within sight of one another, so the picture reads as one thing.
+    let most = (least(&cells, width, height).max(6.0) * 1.8).clamp(12.0, 26.0);
     for (pane, rect) in shown.iter().zip(cells) {
+        let high = fit(&rect, width, height).clamp(6.0, most);
+        let wide = (high * 61.0 / 48.0).round();
         if let Some(texture) = tiles::texture(&pane.tile, high as i32 * scale) {
             let icon = gtk::Picture::builder().paintable(&texture).can_shrink(true).width_request(wide as i32).height_request(high as i32).build();
-            map.put(&icon, ((rect[0] + rect[2] / 2.0) * WIDTH - wide / 2.0).round(), ((rect[1] + rect[3] / 2.0) * HEIGHT - high / 2.0).round());
+            map.put(&icon, ((rect[0] + rect[2] / 2.0) * width - wide / 2.0).round(), ((rect[1] + rect[3] / 2.0) * height - high / 2.0).round());
         }
     }
     map
@@ -2030,6 +2038,7 @@ impl Ui {
                             },
                             status: self.status(&[b.id.as_str()], &state.working).1,
                             focused: b.id == focused,
+                            floating: !zoomed && placed.iter().any(|p| p.id == b.id && p.floating),
                         }
                     }).collect()
                 };
