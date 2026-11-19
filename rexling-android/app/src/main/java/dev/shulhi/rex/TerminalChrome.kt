@@ -737,6 +737,8 @@ internal interface TitleHold {
 
 /** A keycap in the keyboard's own shape, so the row reads as part of the keyboard below it. */
 internal val KeyCapShape=Kit.key
+/** The key row's outer corner: a keycap's 7 plus the 7 or so of padding between it and the bar's edge. */
+internal val KeyRowCorner=14.dp
 /** How many keys wide a toolbar key is. */
 internal fun keyUnits(key: ToolbarKey)=if(key==ToolbarKey.ARROWS) 2f else 1f
 @Composable internal fun KeyCapLabel(label: String,color: Color,active: Boolean=false) {

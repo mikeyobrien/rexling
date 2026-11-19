@@ -412,7 +412,8 @@ class MainActivity : ComponentActivity() {
                     }
                     // Tabs and Activity live in the header; the key toolbar appears with the keyboard.
                     if(chromeVisible && keyboardVisible) {
-                        Column(Modifier.fillMaxWidth().riseWithKeyboard().clip(RoundedCornerShape(topStart=24.dp,topEnd=24.dp)).background(MaterialTheme.colorScheme.surface)) {
+                        // The bar's corner is the key's corner plus the gap around it, so the two curves stay parallel.
+                        Column(Modifier.fillMaxWidth().riseWithKeyboard().clip(RoundedCornerShape(topStart=KeyRowCorner,topEnd=KeyRowCorner)).background(MaterialTheme.colorScheme.surface)) {
                             KeyboardBar(controlled,ready,client.controlModifier,client.altModifier,client.shiftModifier,keyboardVisible,
                                 client::toggleControl,client::toggleAlt,client::toggleShift,client::pressShift,client::releaseShift,{client.keyForTarget(it,keyTarget)},readable=state.connected,onControlShortcut=client::controlShortcut,inputKey=keyTarget,shortcutGesture=model.shortcutGesture,arrowJoystickEnabled=model.arrowJoystickEnabled,onPaste={pasteClipboard()},onPrompt=if(client.hasSemanticPrompts && !changingSession) client::scrollPrompt else null,toolbarKeys=model.toolbarKeys) {
                                 if(!controlled) client.takeControl() else if(keyboardVisible) terminalView?.hideKeyboard() else terminalView?.keyboard()
