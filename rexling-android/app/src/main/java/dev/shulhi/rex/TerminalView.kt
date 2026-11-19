@@ -127,7 +127,9 @@ class TerminalView(context: Context) : View(context) {
     internal val keyboardFocus: TerminalKeyboardFocus? get() {
         val frame=screen ?: return null
         if(frame.scroll.below>0) return null
-        val row=inputCursorRow(frame)?.takeIf {it in 0 until frame.rows} ?: return null
+        // Any program that hides its cursor but parks it at its input (pi, openclaw, Claude Code, Codex)
+        // keeps that line above the keyboard. Typing into a hidden cursor stays limited to known programs.
+        val row=(frame.cursorY ?: frame.cursorAnchorY.takeIf {frame.cursorAnchorX!=null})?.takeIf {it in 0 until frame.rows} ?: return null
         val lastText=frame.lines.indexOfLast {cells->cells.any {cell->cell.width>0 && cell.text.any {it!='\u0000' && !it.isWhitespace()}}}
         val bottom=insetTop+(row+1)*cellHeight+insetBottom
         return TerminalKeyboardFocus(insetTop+row*cellHeight,bottom,
@@ -304,7 +306,11 @@ class TerminalView(context: Context) : View(context) {
         val slide=slideFor(frame)
         if(slide!=0f) {canvas.save();canvas.clipRect(0f,insetTop-historyPeek,width.toFloat(),height-insetBottom);canvas.translate(0f,-slide)}
         if(frame.images.isEmpty()) {
-        if(slide<0f || historyPeek>0f) frame.above.forEachIndexed {i,row->drawLooseRow(canvas,row,visibleColumns,insetTop-(frame.above.size-i)*cellHeight)}
+        if(slide<0f || historyPeek>0f) frame.above.forEachIndexed {i,row->
+            // At rest only the few rows under the header can be seen; a slide may bring any of them in.
+            val origin=insetTop-(frame.above.size-i)*cellHeight
+            if(slide<0f || origin+cellHeight>0f) drawLooseRow(canvas,row,visibleColumns,origin)
+        }
         if(slide>0f) frame.below.forEachIndexed {i,row->drawLooseRow(canvas,row,visibleColumns,insetTop+(visibleRows+i)*cellHeight)}
         for(y in 0 until visibleRows) {
             val cells=frame.lines[y]
