@@ -310,7 +310,6 @@ class MainActivity : ComponentActivity() {
         // Wide screens (an unfolded Fold, tablets): the tab list sits beside the terminal; maximize hides it.
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
         val wide=maxWidth>=WideLayoutMinWidth
-        val listWidth=wideListWidth(maxWidth,maxHeight)
         // Sheets dock over the terminal side while there is a list beside it to keep in reach.
         val sheetDock=LocalSheetDock.current
         SideEffect {sheetDock?.active=wide && chromeVisible}
@@ -318,7 +317,7 @@ class MainActivity : ComponentActivity() {
         if(wide && !listHidden && chromeVisible) {
             // The list names every session, so it needs their tab counts without opening the switcher.
             LaunchedEffect(state.connected,state.sessions.size) {model.refreshSessionDetails()}
-            TabListPanel(listWidth,switcher,onSessions={picker="sessions"},onSettings={preferencesOpen=true},onCollapse={listHidden=true})
+            TabListPanel(WideListWidth,switcher,onSessions={picker="sessions"},onSettings={preferencesOpen=true},onCollapse={listHidden=true})
         } else if(wide && chromeVisible) TabRail(switcher) {listHidden=false}
         // Wide: the terminal side is a card like the list, with its header inside, both starting at the same height.
         Box(Modifier.weight(1f).fillMaxHeight()) {

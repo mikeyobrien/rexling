@@ -681,7 +681,8 @@ internal interface TitleHold {
     // The extra-key trigger lives just before Esc, outside the initial viewport.
     val keyScroll=rememberScrollState(initial=Int.MAX_VALUE)
     LaunchedEffect(keyboardVisible) {if(!keyboardVisible) {expanded=false;keyScroll.scrollTo(keyScroll.maxValue)}}
-    LaunchedEffect(expanded,toolbar) {if(!expanded) keyScroll.scrollTo(keyScroll.maxValue)}
+    // The row gets wider or narrower when the tab list is hidden or shown; follow it, or the keys stay scrolled part way.
+    LaunchedEffect(expanded,toolbar,keyScroll.maxValue) {if(!expanded) keyScroll.scrollTo(keyScroll.maxValue)}
     Column(Modifier.fillMaxWidth().padding(horizontal=8.dp)) {
         Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outline.copy(alpha=.4f)))
         Row(Modifier.fillMaxWidth().height(45.dp).padding(vertical=4.dp),horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.CenterVertically) {

@@ -31,14 +31,8 @@ internal val WideLayoutMinWidth=600.dp
 /** Wide layout cards: the list card and the terminal card share this shape and spacing. */
 internal val WideCardShape=RoundedCornerShape(26.dp)
 
-/**
- * The list's width: on a near-square screen (an unfolded book-style foldable) exactly half, so the
- * hinge falls between list and terminal instead of through terminal text; otherwise a fixed rail.
- */
-internal fun wideListWidth(width: Dp,height: Dp): Dp {
-    val aspect=width/height
-    return if(aspect in .75f..1.34f) width/2 else 320.dp
-}
+/** The list's width. Fixed, so the terminal keeps most of an unfolded screen in either orientation. */
+internal val WideListWidth=280.dp
 
 /** The list collapsed: one tile per tab, so every tab stays a tap away. */
 internal val WideRailWidth=72.dp
