@@ -68,16 +68,14 @@ internal val WideRailWidth=72.dp
                 }
                 ChromeButton(ChromeIcon.CHEVRON,"Hide tab list",modifier=Modifier.graphicsLayer {rotationZ=90f},onClick=onCollapse)
             }
-            // The list stays on screen, so its working dots do not pulse: a pulse here would redraw
-            // every frame while any tab works (battery, and the app never goes idle).
             ManagedList(rows,list,model.ready,manager::actions,manager::siblings,manager::move,manager.keys(),
                 Modifier.fillMaxWidth().weight(1f).semantics {contentDescription="Tab list"},contentPadding=PaddingValues(start=4.dp,end=4.dp,bottom=8.dp)) {
-                tabRows(rows,list,model,manager,pulse=false,dividers=false)
+                tabRows(rows,list,model,manager,dividers=false)
                 if(others.isNotEmpty()) item(key="sessions",contentType="label") {
                     Text("SESSIONS",Modifier.padding(start=18.dp,top=18.dp,bottom=4.dp),fontSize=11.sp,fontWeight=FontWeight.SemiBold,
                         letterSpacing=1.2.sp,color=dim)
                 }
-                sessionRows(rows,others,model,manager,onOpen={model.openSession(it.key)},pulse=false,dividers=false)
+                sessionRows(rows,others,model,manager,onOpen={model.openSession(it.key)},dividers=false)
             }
             // The footer is part of the card, so it never sits on a row.
             HorizontalDivider(Modifier.padding(horizontal=16.dp),color=MaterialTheme.colorScheme.outline.copy(alpha=.2f))
@@ -109,7 +107,6 @@ internal val WideRailWidth=72.dp
                     .clickable(enabled=model.enabled,role=Role.Tab) {model.openTab(tab.id)}
                     .semantics {contentDescription=tab.title;selected=current},contentAlignment=Alignment.Center) {
                     ProgramStack(tab.programs,tab.selectedPane,framed=true,fixedSlot=true)
-                    // Not pulsing, for the same reason as the list.
                     if(tab.attention || tab.working) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(9.dp).clip(CircleShape)
                         .background(scheme.surface).padding(1.5.dp).clip(CircleShape).background(if(tab.attention) attentionColor() else scheme.primary))
                 }

@@ -149,6 +149,7 @@ private val RowShape=RoundedCornerShape(14.dp)
 @Composable internal fun ManagedRow(rows: RowsState,key: String,selected: Boolean,enabled: Boolean,close: RowClose?,actions: List<RowAction>,
     onOpen: ()->Unit,modifier: Modifier=Modifier,minHeight: Dp=56.dp,lift: (()->Float)?=null,content: @Composable RowScope.()->Unit) {
     val scheme=MaterialTheme.colorScheme
+    @Suppress("NAME_SHADOWING") val modifier=modifier.arriving(remember(key) {rows.arrival(key)})
     val distance=with(LocalDensity.current) {RevealWidth.toPx()}
     val side=rows.revealed?.takeIf {it.first==key}?.second ?: 0
     val reveal=remember {Animatable(0f)}
@@ -331,7 +332,7 @@ private val RowShape=RoundedCornerShape(14.dp)
  * The session's tabs. A tab with several panes opens in place to list them; while it is open the
  * highlight moves from the tab to the pane being viewed.
  */
-internal fun LazyListScope.tabRows(rows: RowsState,list: LazyListState,model: SwitcherModel,manager: RowManager,pulse: Boolean=true,dividers: Boolean=true) {
+internal fun LazyListScope.tabRows(rows: RowsState,list: LazyListState,model: SwitcherModel,manager: RowManager,dividers: Boolean=true) {
     val drag=rows.drag
     val held=drag.id.orEmpty()
     val tabs=if(held.startsWith("tab:")) drag.order.mapNotNull {key->model.tabs.firstOrNull {tabKey(it.id)==key}} else model.tabs
@@ -345,7 +346,7 @@ internal fun LazyListScope.tabRows(rows: RowsState,list: LazyListState,model: Sw
                 ManagedRow(rows,key,current && !open,model.enabled,manager.close(key),manager.actions(key),{model.openTab(tab.id)},lift={drag.translation(key,list)}) {
                     Box(Modifier.padding(start=5.dp).width(48.dp)) {ProgramStack(tab.programs,tab.selectedPane,framed=true,fixedSlot=true)}
                     RowText(tab.title,tab.detail,Modifier.weight(1f).padding(start=8.dp,end=8.dp))
-                    RowStatus(tab.attention,tab.working,label=true,pulse=pulse)
+                    RowStatus(tab.attention,tab.working,label=true)
                     if(tab.panes.size>1) PanesToggle(open) {rows.expanded=if(key in rows.expanded) rows.expanded-key else rows.expanded+key}
                     else Spacer(Modifier.width(12.dp))
                 }
@@ -369,7 +370,7 @@ internal fun LazyListScope.tabRows(rows: RowsState,list: LazyListState,model: Sw
                                 append(pane.title)
                                 if(informative(pane.detail)) withStyle(SpanStyle(fontSize=12.sp,fontWeight=FontWeight.Normal,fontFamily=MonoUi,color=dim)) {append("  ${pane.detail}")}
                             },Modifier.weight(1f).padding(start=12.dp,end=8.dp),fontSize=14.sp,fontWeight=FontWeight.Medium,maxLines=1,overflow=TextOverflow.Ellipsis)
-                            RowStatus(false,pane.working,pulse=pulse)
+                            RowStatus(false,pane.working)
                             Spacer(Modifier.width(14.dp))
                         }
                         if(dividers && paneIndex==panes.lastIndex && index<tabs.lastIndex) RowDivider()
@@ -382,7 +383,7 @@ internal fun LazyListScope.tabRows(rows: RowsState,list: LazyListState,model: Sw
 
 /** Sessions, in the order given. Opening the one you are in is up to [onOpen]. */
 internal fun LazyListScope.sessionRows(rows: RowsState,sessions: List<SessionEntry>,model: SwitcherModel,manager: RowManager,onOpen: (SessionEntry)->Unit,
-    pulse: Boolean=true,dividers: Boolean=true) {
+    dividers: Boolean=true) {
     sessions.forEachIndexed {index,entry->
         val key=sessionRowKey(entry.key)
         item(key=key,contentType="session") {
@@ -393,7 +394,7 @@ internal fun LazyListScope.sessionRows(rows: RowsState,sessions: List<SessionEnt
                         ChromeSymbol(ChromeIcon.SESSIONS,Modifier.size(20.dp),MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     RowText(entry.target.session.label,entry.detail,Modifier.weight(1f).padding(start=8.dp,end=8.dp))
-                    if(busy) CircularProgressIndicator(Modifier.size(15.dp),strokeWidth=1.5.dp) else RowStatus(entry.attention,entry.working,label=true,pulse=pulse)
+                    if(busy) CircularProgressIndicator(Modifier.size(15.dp),strokeWidth=1.5.dp) else RowStatus(entry.attention,entry.working,label=true)
                     Spacer(Modifier.width(12.dp))
                 }
                 if(dividers && index<sessions.lastIndex) RowDivider()

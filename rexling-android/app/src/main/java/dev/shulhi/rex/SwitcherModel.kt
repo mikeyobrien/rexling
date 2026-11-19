@@ -64,6 +64,11 @@ internal data class RowMenu(val key: String,val top: Float,val bottom: Float,val
     /** Tab and pane being docked. */
     var dock by mutableStateOf<Pair<String,String>?>(null)
     val drag=TabDrag()
+    /** True while the card these rows belong to is opening; rows then follow each other in. */
+    var arriving=false
+    private val arrivals=HashMap<String,Int>()
+    /** This row's place in the arrival, or null once the card has settled. */
+    fun arrival(key: String): Int?=if(arriving) arrivals.getOrPut(key) {arrivals.size.coerceAtMost(12)} else null
 
     /** Close now, or ask in the row first when that would end a program. */
     fun requestClose(key: String,close: RowClose) {

@@ -25,6 +25,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -51,11 +53,14 @@ private val GroupShape=RoundedCornerShape(22.dp)
     var chosen by rememberSaveable {mutableStateOf(if(sessionsFirst) SwitcherLevel.SESSIONS else SwitcherLevel.TABS)}
     // A session with no tabs has nothing to show but the way out.
     val level=if(model.tabs.isEmpty()) SwitcherLevel.SESSIONS else chosen
+    val haptics=LocalHapticFeedback.current
     val rows=remember {RowsState().apply {
+        arriving=true
         // Open on the panes of the tab you are in, when it has more than one.
         if((model.tabs.firstOrNull {it.id==model.currentTab}?.panes?.size ?: 0)>1) expanded=setOf(tabKey(model.currentTab))
     }}
     val manager=RowManager(rows,model)
+    LaunchedEffect(Unit) {haptics.performHapticFeedback(HapticFeedbackType.SegmentTick);delay(ArrivalMillis);rows.arriving=false}
     val refresh by rememberUpdatedState(model.refreshSessions)
     LaunchedEffect(level) {rows.settle();if(level==SwitcherLevel.SESSIONS) refresh()}
     // Built out here on purpose: the frost redraws when its host window draws, and inside the sheet

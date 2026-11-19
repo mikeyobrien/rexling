@@ -1,5 +1,7 @@
 package dev.shulhi.rex
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,6 +16,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -33,28 +36,25 @@ import androidx.compose.ui.window.PopupProperties
 
 /**
  * A row's status, ranked like the Activity sheet: needs you is warm and labelled (you must act);
- * working is a quiet dot (nothing to do); idle shows nothing. The pulse is read only while drawing,
- * so it never recomposes the row. Lists that stay on screen pass [pulse] false: a pulse there would
- * redraw every frame for as long as anything works.
+ * working is a quiet dot (nothing to do); idle shows nothing. The dot pulses once when the status
+ * changes and then rests, so a list left on screen draws nothing while work goes on.
  */
-@Composable internal fun RowStatus(attention: Boolean,working: Boolean,label: Boolean=false,pulse: Boolean=true) {
+@Composable internal fun RowStatus(attention: Boolean,working: Boolean,label: Boolean=false) {
+    val status=if(attention) 2 else if(working) 1 else 0
+    val pulse=remember {Animatable(1f)}
+    var shown by remember {mutableIntStateOf(status)}
+    LaunchedEffect(status) {
+        if(status!=shown) {shown=status;if(status!=0) {pulse.snapTo(1.9f);pulse.animateTo(1f,spring(dampingRatio=.4f,stiffness=300f))}}
+    }
+    val dot=Modifier.size(8.dp).graphicsLayer {scaleX=pulse.value;scaleY=pulse.value}
     when {
         attention -> Row(Modifier.semantics(mergeDescendants=true) {contentDescription="Needs you"},
             verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
             val amber=attentionColor()
-            Box(Modifier.size(8.dp).background(amber,CircleShape))
+            Box(dot.background(amber,CircleShape))
             if(label) Text("Needs you",fontSize=11.sp,fontWeight=FontWeight.Medium,color=amber,maxLines=1)
         }
-        working && !pulse -> Box(Modifier.size(8.dp).background(MaterialTheme.colorScheme.primary,CircleShape).semantics {contentDescription="Working"})
-        working -> {
-            val phase=rememberWorkingPhase(true)
-            val color=MaterialTheme.colorScheme.primary
-            Box(Modifier.size(8.dp).semantics {contentDescription="Working"}.drawBehind {
-                // Same pulse as the Activity sheet's working bars (45–100%), so it never fades out.
-                val brightness=(.725-.275*kotlin.math.cos(phase.value*2*Math.PI)).toFloat()
-                drawCircle(color.copy(alpha=brightness))
-            })
-        }
+        working -> Box(dot.background(MaterialTheme.colorScheme.primary,CircleShape).semantics {contentDescription="Working"})
     }
 }
 

@@ -1,6 +1,8 @@
 package dev.shulhi.rex
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,6 +15,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
@@ -65,11 +70,16 @@ internal val LocalSheetDock=staticCompositionLocalOf<SheetDock?> {null}
     BackHandler {dock.entries.lastOrNull()?.onClose?.value?.invoke()}
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
         dock.entries.forEach {entry->key(entry) {
-            if(entry.card) Box(modifier.matchParentSize().clip(WideCardShape).background(Color.Black.copy(alpha=.45f))
+            // Cards rise into place; panels settle in over the side they cover.
+            val enter=remember {Animatable(0f)}
+            LaunchedEffect(Unit) {enter.animateTo(1f,spring(dampingRatio=.86f,stiffness=380f))}
+            val rise=with(LocalDensity.current) {(if(entry.card) 48.dp else 14.dp).toPx()}
+            val arrive=Modifier.graphicsLayer {alpha=enter.value.coerceIn(0f,1f);translationY=(1f-enter.value)*rise}
+            if(entry.card) Box(modifier.matchParentSize().clip(WideCardShape).drawBehind {drawRect(Color.Black.copy(alpha=.45f*enter.value.coerceIn(0f,1f)))}
                 .clickable(interactionSource=remember {MutableInteractionSource()},indication=null) {entry.onClose.value()}
                 .semantics {contentDescription="Close sheet"},contentAlignment=Alignment.BottomCenter) {
-                Box(Modifier.widthIn(max=520.dp).pointerInput(Unit) {detectTapGestures {}}) {entry.content.value()}
-            } else Box(modifier.matchParentSize().clip(WideCardShape).background(MaterialTheme.colorScheme.surface)
+                Box(Modifier.widthIn(max=520.dp).then(arrive).pointerInput(Unit) {detectTapGestures {}}) {entry.content.value()}
+            } else Box(modifier.matchParentSize().then(arrive).clip(WideCardShape).background(MaterialTheme.colorScheme.surface)
                 .border(1.dp,MaterialTheme.colorScheme.outline.copy(alpha=.18f),WideCardShape).pointerInput(Unit) {detectTapGestures {}}) {entry.content.value()}
         }}
     }

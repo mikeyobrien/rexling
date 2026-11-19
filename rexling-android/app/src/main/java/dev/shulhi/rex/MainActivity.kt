@@ -39,6 +39,8 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
@@ -258,6 +260,12 @@ class MainActivity : ComponentActivity() {
         viewing->HeaderStatus("Viewing only",StatusTone.QUIET,"Take over",onAction=client::takeControl)
         else->null
     }
+    // A tick under the finger for every selection, and a slide the way the tab change travels.
+    val haptics=LocalHapticFeedback.current
+    fun tick()=haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+    val travel=remember {TabTravel()}
+    val tabIndex=windows.indexOfFirst {it.id==window?.id}
+    LaunchedEffect(currentSessionKey,window?.id) {travel.arrive(currentSessionKey,window?.id.orEmpty(),tabIndex)}
     // One model for the switcher card and the wide list: what they show, and what each row can do.
     val sessionActivity=remember(model.activitySources) {ActivityBadgePolicy.sessions(model.activitySources)}
     val switcher=SwitcherModel(model.activeServer.label,
@@ -269,7 +277,7 @@ class MainActivity : ComponentActivity() {
         },currentSessionKey,
         enabled=tabsReady,ready=ready,canCreate=ready && state.selectedSession.isNotBlank(),canSplit=ready && state.selectedSession.isNotBlank() && chosen.isNotBlank(),
         busySession=model.closingSessionKey.ifBlank {model.renamingSessionKey},error=state.error,sessionError=model.sessionActionError,
-        openTab={picker="";client.selectWindow(it)},openPane={picker="";openPane(it)},newTab={picker="";client.createTab()},
+        openTab={picker="";tick();client.selectWindow(it)},openPane={picker="";tick();openPane(it)},newTab={picker="";client.createTab()},
         split={anchor,split->picker="";client.createPane(split,anchor)},
         closeTab={tab->client.closeTab(state.selectedSession,tab.id,tab.panes.map {it.id})},closePane={pane->client.closePane(state.selectedSession,pane.id)},
         renameTab={tab,label->client.editTerminal(displayedSession,tab,tab,"rename_tab",label=label)},
@@ -277,7 +285,7 @@ class MainActivity : ComponentActivity() {
         moveTab=client::moveTab,movePane=client::movePane,
         floatPane={tab,id->client.editTerminal(displayedSession,tab,id,"float_pane")},
         dockPane={tab,id,anchor,split->client.editTerminal(displayedSession,tab,id,"dock_pane",anchor=anchor,split=split)},
-        openSession={picker="";model.selectSessionTarget(it)},newSession={picker="";newSession=true},refreshSessions={client.refresh();model.refreshSessionDetails()},
+        openSession={picker="";tick();model.selectSessionTarget(it)},newSession={picker="";newSession=true},refreshSessions={client.refresh();model.refreshSessionDetails()},
         closeSession=model::closeSession,renameSession=model::renameSession)
     LaunchedEffect(palette) { model.updateTerminalTheme(palette) }
     LaunchedEffect(state.phase) {if(state.connected || state.phase=="preview") showServer=false}
@@ -327,7 +335,7 @@ class MainActivity : ComponentActivity() {
                 titleDetail=if(wide && chromeVisible) ""
                     else if(windows.size>1) "${windows.indexOfFirst {it.id==window?.id}+1}/${windows.size}" else "",
                 paneDots=if(carouselBlocks.size>1) carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0) to carouselBlocks.size else null,
-                status=headerStatus,
+                status=headerStatus,titleAlpha={.25f+.75f*travel.progress.value},
                 subtitle=if(wide && chromeVisible) state.directories[displayedBlock].orEmpty() else null,
                 onTitleSwipe=if(tabsReady && carouselBlocks.size>1) {{step->
                     val index=carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0)
@@ -372,7 +380,7 @@ class MainActivity : ComponentActivity() {
                     if(state.error.isNotBlank() && state.phase !in listOf("connecting","reconnecting")) Text(state.error,Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.errorContainer).padding(10.dp),
                         color=MaterialTheme.colorScheme.onErrorContainer,fontSize=11.sp,maxLines=3,overflow=TextOverflow.Ellipsis)
                     if(blocks.isNotEmpty()) {
-                        Box(Modifier.weight(1f).fillMaxWidth().padding(bottom=3.dp)) {
+                        Box(Modifier.weight(1f).fillMaxWidth().padding(bottom=3.dp).travelling(travel)) {
                         if(!floatingActive || hiddenFloating!=chosen) LiveTerminal(client,carouselBlocks,chosen,liveBlock,state.programs,controlled,fontSize.toFloat(),
                             client::type,client::scroll,client::wheel,client::takeControl,client::scrollToBottom,client::resize,::openPane,{picker="tabs"},{view->terminalView=view;view.onOpenLink={url->
                                 val loopback=LoopbackLink.parse(url)
@@ -404,7 +412,7 @@ class MainActivity : ComponentActivity() {
                     }
                     // Tabs and Activity live in the header; the key toolbar appears with the keyboard.
                     if(chromeVisible && keyboardVisible) {
-                        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(topStart=24.dp,topEnd=24.dp)).background(MaterialTheme.colorScheme.surface)) {
+                        Column(Modifier.fillMaxWidth().riseWithKeyboard().clip(RoundedCornerShape(topStart=24.dp,topEnd=24.dp)).background(MaterialTheme.colorScheme.surface)) {
                             KeyboardBar(controlled,ready,client.controlModifier,client.altModifier,client.shiftModifier,keyboardVisible,
                                 client::toggleControl,client::toggleAlt,client::toggleShift,client::pressShift,client::releaseShift,{client.keyForTarget(it,keyTarget)},readable=state.connected,onControlShortcut=client::controlShortcut,inputKey=keyTarget,shortcutGesture=model.shortcutGesture,arrowJoystickEnabled=model.arrowJoystickEnabled,onPaste={pasteClipboard()},onPrompt=if(client.hasSemanticPrompts && !changingSession) client::scrollPrompt else null,toolbarKeys=model.toolbarKeys) {
                                 if(!controlled) client.takeControl() else if(keyboardVisible) terminalView?.hideKeyboard() else terminalView?.keyboard()

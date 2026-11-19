@@ -36,3 +36,12 @@ $S/scratch-session.sh kill "$label"
 - Closing a tab or pane in the app ends its programs on the server. Do this only in scratch sessions.
 - `ui.py tap "Close"` matches `Close sheet` first and dismisses the card. Use the full label (`Close bash`) or `--exact`.
 - `adb shell input draganddrop` starts moving at the long-press timeout and never reorders; use `ui.py drag`.
+
+## Motion
+
+The emulator runs with animations off, so none of this shows by default. To see it, set the three `*_animation_scale` globals to 1, record with `adb shell screenrecord`, split the video into frames with `ffmpeg` and compare them; set the scales back to 0 afterwards.
+
+- The switcher's rows follow the card in 20 ms apart, with a haptic tick on open and on every selection.
+- Changing tab slides the terminal in from the side you travelled to and fades the header title back in. Changing session cuts.
+- The key row grows with the keyboard's own animation instead of appearing on its first frame.
+- A row's status dot pulses once when its status changes, then rests.

@@ -212,6 +212,8 @@ internal interface TitleHold {
     subtitle: String?=null,
     /** Pane position (index, count) drawn beside the title when the tab has several panes. */
     paneDots: Pair<Int,Int>?=null,
+    /** Read while drawing: the title fades back in as a tab change arrives. */
+    titleAlpha: ()->Float={1f},
     /** Takes over the second line while something is wrong, with its one action beside the menu. */
     status: HeaderStatus?=null, menu: @Composable ()->Unit) {
     val program=programs.getOrNull(paneIndex) ?: ProgramIdentity.Terminal
@@ -361,7 +363,7 @@ internal interface TitleHold {
                         append(title.ifBlank {program.title})
                         if(titleDetail.isNotBlank()) {append("  ");pushStyle(androidx.compose.ui.text.SpanStyle(color=dim,fontWeight=FontWeight.Normal));append(titleDetail);pop()}
                     },fontWeight=FontWeight.Bold,fontSize=13.sp,lineHeight=16.sp,style=lineStyle,letterSpacing=0.sp,maxLines=1,
-                        overflow=TextOverflow.Ellipsis,modifier=Modifier.weight(1f,fill=false).height(titleHeight).layout {measurable,constraints->
+                        overflow=TextOverflow.Ellipsis,modifier=Modifier.weight(1f,fill=false).height(titleHeight).graphicsLayer {alpha=titleAlpha()}.layout {measurable,constraints->
                             // Fallback/emoji metrics must not move the ordinary title text.
                             val text=measurable.measure(constraints.copy(minHeight=0,maxHeight=Constraints.Infinity))
                             layout(text.width,constraints.maxHeight,mapOf(FirstBaseline to titleBaseline)) {
