@@ -45,8 +45,9 @@ Studio to work on the app.
 
 - **Servers and sessions** — connect to multiple Rex servers, create and rename
   sessions, and restore your last session, tab and pane.
-- **Tabs and panes** — switch, rename and reorder terminals, preview split
-  layouts, split right or below, and dock or float panes. Optional minimized
+- **Tabs and panes** — one switcher for sessions, tabs and panes. Tap to open,
+  swipe a row to close, hold it to rename or split, drag it to reorder, and
+  dock or float panes. Optional minimized
   floating panes sit in an icon dock.
 - **Automatic pane takeover** — opening a pane takes control and resizes its
   terminal to fit your screen, letting terminal applications reflow their text.

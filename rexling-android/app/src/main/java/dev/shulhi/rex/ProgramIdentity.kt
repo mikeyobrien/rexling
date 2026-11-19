@@ -14,6 +14,11 @@ data class ProgramIdentity(val kind: ProgramKind, val label: String, val executa
     private val isShell: Boolean get() = kind == ProgramKind.TERMINAL &&
         label.lowercase(Locale.ROOT).removeSuffix(".exe") in shellNames
 
+    /** A shell at its prompt: closing it ends no program worth asking about. */
+    val idle: Boolean get() = !pending && isShell
+    /** Nothing identified (yet), so what closing it would end is not known. */
+    val unknown: Boolean get() = pending || (kind == ProgramKind.TERMINAL && label == Terminal.label)
+
     /** A task title is presentation only; executable identity still chooses the icon. */
     fun paneTitle(paneLabel: String, reportedTitle: String = ""): String =
         paneLabel.takeUnless {genericTitle(it) || it.equals(title,true) || it.equals(label,true)} ?: if (isShell) title else reportedTitle.takeUnless(::genericTitle) ?: title

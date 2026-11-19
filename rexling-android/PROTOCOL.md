@@ -36,14 +36,12 @@ UI JNI command: `{"type":"new_pane","session":"session:<id>","anchor":"block:<id
 **Split right** sends `horizontal`; **Split below** sends `vertical`. An omitted
 direction retains the legacy right split; unsupported values are rejected before
 creation starts.
-The Panes footer uses Open pane and New pane. New pane opens an anchored direction
-menu; opening or dismissing it sends no command. The menu closes if the selected
-target, tab, section or action availability changes. Both menu choices still bind
-the explicit panel-selected anchor. The map has no title row; its floating-layer
-visibility control appears only when overlays exist.
+The switcher's two split buttons anchor on the pane being viewed. A row's hold
+menu anchors on that row instead: a pane row on itself, a tab row on the pane the
+tab would show. Opening or dismissing the menu sends no command.
 The session must still match the actor's selection. The explicit anchor must
 exist among that session's known terminal panes; it can be different from the
-currently open pane. The panel's local selection is not terminal navigation.
+currently open pane.
 It sends `session.new_split`:
 
 ```json
@@ -76,7 +74,13 @@ before any server mutation, as verified by native tests.
 
 ## Pane layout map
 
-The Panes switcher maps the current window's server layout, rather than assuming
+The switcher is one card: sessions, then the session's tabs, with a tab's panes
+listed in place under it. Each pane row draws the tab's layout with that pane
+filled in. The larger selectable map described below was removed with the
+Panes page; the geometry rules still apply to the row drawings and to the
+pane-switch minimap.
+
+The Panes switcher mapped the current window's server layout, rather than assuming
 equal-width tiles from block order. The API revision 8 `session.view` schema
 defines each `layers[].layout` leaf's `rect` as `[x,y,width,height]` in fractions
 of the whole window. Nested `split.before` / `split.after` coordinates are already
@@ -96,24 +100,31 @@ Toggling visibility does not select, open, close or move anything on the server.
 Floating panes remain in the full list with a Floating caption. Visibility
 survives geometry refreshes within the same window and can be inspected while
 terminal actions are disabled.
-Tapping a usable tile or pane list row changes local panel selection only.
-**Open pane** navigates; split actions carry the selected target's explicit anchor.
-Tabs likewise select locally and navigate with **Open tab**. The selected tab
-determines which panes the Panes section manages, without opening that tab.
-“Viewing” in row captions identifies the actual open terminal separately from
-panel selection. A removed target disables Open/split instead of falling back
+Tapping a tab or pane row navigates to it at once; there is no local selection
+and no Open button. The highlighted row is the terminal actually open: the tab,
+or the pane while its tab is expanded. A row the server removes takes its menu,
+revealed Close and pending confirmation with it instead of falling back
 silently to another pane. Tiny tiles remain identifiable through the full list. Missing or
 incomplete geometry displays “Layout unavailable” instead of inventing a grid;
 the pane list and split actions remain available. The terminal still displays
 one pane at a time. This adds no polling or server mutations.
 
-## Reordering from the tab/pane panel
+## Managing rows in the switcher
 
-Hold-and-drag reorders either vertical list. Ordinary swipes scroll, and held
-movement is consumed before row selection; release commits only a changed order.
-Edge holding scrolls automatically. Cancellation, disabled actions, changed list
-membership/order or session/window identity discard the drag. Map tiles and other
-non-row content cannot begin a reorder. TalkBack rows expose Move up/down actions.
+The same rows appear in the switcher card and in the wide layout's tab list.
+Holding a row opens its menu (Rename, Split right, Split below, Close; panes
+add Float or Dock; sessions offer Rename and Close). Moving the held row
+dismisses the menu and reorders it among tabs, or among the panes of its tab;
+a carried tab's panes fold away until it is dropped. Ordinary swipes scroll,
+and held movement is consumed before row selection; release commits only a
+changed order. Edge holding scrolls automatically. Cancellation, disabled
+actions, or a changed list discard the drag. Sessions keep the server's order.
+TalkBack rows expose every menu action plus Move up/down.
+
+A sideways swipe reveals Close. Closing sends `close_tab`, `close_pane` or
+`close_session` directly when every pane involved is a shell at its prompt.
+Otherwise the row asks first, naming what would end (`ends cargo`); a pane whose
+program is not identified counts as running something, and a session always asks.
 
 Tabs use the existing `session.move_window` command and acknowledgment path.
 Pane commands bind `{session,window,id,before,blocks,requestId}`. Native code reads

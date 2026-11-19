@@ -15,4 +15,18 @@ internal object ActivityBadgePolicy {
         }
         return ActivityBadges(counts,elsewhere)
     }
+    /** Per session key: whether anything in it is unread (needs you) or working. Same rule as the tab badges. */
+    fun sessions(sources: List<ActivitySource>): Map<String,SessionActivity> {
+        val result=mutableMapOf<String,SessionActivity>()
+        for(source in sources.filter {it.connected}) for(record in source.items.distinctBy {it.key}) {
+            val attention=record.notifiable && record.key !in source.seen
+            val working=record.state==ActivityState.WORKING
+            if(!attention && !working) continue
+            val key=sessionKey(source.server.id,record.session)
+            val old=result[key]
+            result[key]=SessionActivity(attention || old?.attention==true,working || old?.working==true)
+        }
+        return result
+    }
 }
+internal data class SessionActivity(val attention: Boolean,val working: Boolean)

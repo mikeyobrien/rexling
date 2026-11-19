@@ -113,8 +113,6 @@ class MainActivity : ComponentActivity() {
     if(model.notificationNotice.isNotBlank()) AlertDialog(onDismissRequest={model.notificationNotice=""},title={Text("Notification")},text={Text(model.notificationNotice)},confirmButton={TextButton(onClick={model.notificationNotice=""}) {Text("OK")}})
 }
 
-private data class TerminalCloseTarget(val session: String,val id: String,val label: String,val tab: Boolean,val blocks: List<String>)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun RexWorkspace(model: RexModel,client: RexConnection) {
     val state by client.chromeState.collectAsState()
@@ -157,7 +155,6 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
     var neovimSettings by remember {mutableStateOf(false)}
     var toolbarSettings by remember {mutableStateOf(false)}
     var alerts by remember {mutableStateOf(false)}
-    var closeTarget by remember {mutableStateOf<TerminalCloseTarget?>(null)}
     val fontSize=model.fontSize
     var fontPicker by remember {mutableStateOf(false)}
     var terminalView by remember {mutableStateOf<TerminalView?>(null)}
@@ -209,9 +206,14 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
         val pane=client.tabPaneIndex(w)
         val block=w.blocks.getOrNull(pane)
         val program=state.programs[block?.id] ?: ProgramIdentity.Loading
+        val floating=w.layout.filter {it.floating}.mapTo(hashSetOf()) {it.id}
         TabEntry(w.id,program.tabTitle(w.label,block?.label.orEmpty(),index+1,state.titles[block?.id].orEmpty()),
             listOfNotNull(if(w.blocks.size>1) "${w.blocks.size} panes" else null,state.directories[block?.id]?.takeIf {it.isNotBlank()}).joinToString(" · "),
-            client.tabPrograms(w),pane,(activityBadges.tabs[w.id] ?: 0)>0,w.blocks.any {it.id in state.workingBlocks})
+            client.tabPrograms(w),pane,(activityBadges.tabs[w.id] ?: 0)>0,w.blocks.any {it.id in state.workingBlocks},w.label,
+            w.blocks.map {b->
+                val running=state.programs[b.id] ?: ProgramIdentity.Loading
+                PaneEntry(b.id,running.paneTitle(b.label,state.titles[b.id].orEmpty()),state.directories[b.id].orEmpty(),b.label,running,b.id in floating,b.id in state.workingBlocks)
+            },w.layout)
     }
     val tabHold=remember {TabHoldState()}
     var listHidden by rememberSaveable {mutableStateOf(false)}
@@ -230,7 +232,7 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
     val floatingActive=floating.any {it.id==chosen}
     var hiddenFloating by rememberSaveable(displayedSession,window?.id) {mutableStateOf("")}
     val controlled=state.controlled && ready && client.hasScreen && (!floatingActive || hiddenFloating!=chosen)
-    SideEffect {model.setPaneObscured((floatingActive && hiddenFloating==chosen) || model.activityVisible || picker.isNotEmpty() || preferencesOpen || networkSettings || servers || addServer || forwards || newSession || appearance || about || neovimSettings || toolbarSettings || alerts || fontPicker || closeTarget!=null)}
+    SideEffect {model.setPaneObscured((floatingActive && hiddenFloating==chosen) || model.activityVisible || picker.isNotEmpty() || preferencesOpen || networkSettings || servers || addServer || forwards || newSession || appearance || about || neovimSettings || toolbarSettings || alerts || fontPicker)}
     fun openPane(id: String) {hiddenFloating="";client.selectBlock(id)}
     fun minimizeFloating() {
         hiddenFloating=chosen
@@ -239,16 +241,29 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
     LaunchedEffect(navigation.id) {if(navigation.pending) hiddenFloating=""}
     LaunchedEffect(model.minimizeFloatingPanes) {if(model.minimizeFloatingPanes && floatingActive) minimizeFloating()}
     SideEffect {window?.let {client.floatingNavigation.remember(displayedSession,it,chosen)}}
-    BackHandler(enabled=ready && model.minimizeFloatingPanes && !newSession && !appearance && !about && !neovimSettings && !alerts && !fontPicker && closeTarget==null && floatingActive && hiddenFloating!=chosen && picker.isEmpty() && !preferencesOpen && !model.activityVisible) {minimizeFloating()}
+    BackHandler(enabled=ready && model.minimizeFloatingPanes && !newSession && !appearance && !about && !neovimSettings && !alerts && !fontPicker && floatingActive && hiddenFloating!=chosen && picker.isEmpty() && !preferencesOpen && !model.activityVisible) {minimizeFloating()}
     val liveBlock=state.selectedBlock.ifBlank {if(state.phase=="preview") "preview" else ""}
-    fun closePaneTarget(block: BlockItem)=TerminalCloseTarget(state.selectedSession,block.id,
-        (state.programs[block.id] ?: ProgramIdentity.Loading).paneTitle(block.label,state.titles[block.id].orEmpty()),false,listOf(block.id))
-    fun closeTabTarget(tab: WindowItem): TerminalCloseTarget {
-        val pane=client.tabPaneIndex(tab);val block=tab.blocks.getOrNull(pane)
-        val program=state.programs[block?.id] ?: ProgramIdentity.Loading
-        return TerminalCloseTarget(state.selectedSession,tab.id,program.tabTitle(tab.label,block?.label.orEmpty(),1,state.titles[block?.id].orEmpty()),true,tab.blocks.map {it.id})
-    }
-    LaunchedEffect(state.selectedSession) {closeTarget=null}
+    // One model for the switcher card and the wide list: what they show, and what each row can do.
+    val sessionActivity=remember(model.activitySources) {ActivityBadgePolicy.sessions(model.activitySources)}
+    val switcher=SwitcherModel(model.activeServer.label,
+        sessionStrip.firstOrNull {it.id==currentSessionKey}?.label.orEmpty().removeSuffix(" · ${model.activeServer.label}"),
+        tabEntries,window?.id.orEmpty(),chosen,
+        model.sessionTargets.map {target->
+            val activity=sessionActivity[target.key];val here=target.key==currentSessionKey
+            SessionEntry(target,activity?.attention==true || (here && tabEntries.any {it.attention}),activity?.working==true || (here && tabEntries.any {it.working}))
+        },currentSessionKey,
+        enabled=tabsReady,ready=ready,canCreate=ready && state.selectedSession.isNotBlank(),canSplit=ready && state.selectedSession.isNotBlank() && chosen.isNotBlank(),
+        busySession=model.closingSessionKey.ifBlank {model.renamingSessionKey},error=state.error,sessionError=model.sessionActionError,
+        openTab={picker="";client.selectWindow(it)},openPane={picker="";openPane(it)},newTab={picker="";client.createTab()},
+        split={anchor,split->picker="";client.createPane(split,anchor)},
+        closeTab={tab->client.closeTab(state.selectedSession,tab.id,tab.panes.map {it.id})},closePane={pane->client.closePane(state.selectedSession,pane.id)},
+        renameTab={tab,label->client.editTerminal(displayedSession,tab,tab,"rename_tab",label=label)},
+        renamePane={tab,id,label->client.editTerminal(displayedSession,tab,id,"rename_pane",label=label)},
+        moveTab=client::moveTab,movePane=client::movePane,
+        floatPane={tab,id->client.editTerminal(displayedSession,tab,id,"float_pane")},
+        dockPane={tab,id,anchor,split->client.editTerminal(displayedSession,tab,id,"dock_pane",anchor=anchor,split=split)},
+        openSession={picker="";model.selectSessionTarget(it)},newSession={picker="";newSession=true},refreshSessions=model::refreshSessionDetails,
+        closeSession=model::closeSession,renameSession=model::renameSession)
     LaunchedEffect(palette) { model.updateTerminalTheme(palette) }
     LaunchedEffect(state.phase) {if(state.connected || state.phase=="preview") showServer=false}
     LaunchedEffect(state.connected,state.selectedSession,state.selectedBlock,state.windows,navigation.pending) {
@@ -267,20 +282,18 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
             if(client.keyboardRequest==displayedBlock && terminalView!=null) {terminalView?.keyboard();client.keyboardShown()}
         }
     }
-    LaunchedEffect(picker) {if(picker=="sessions") model.refreshSessionDetails()}
-    val workspaceBackdrop=rememberBackdropCapture(menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || fontPicker || alerts || picker in setOf("tabs","panes","sessions","tabpicker") || model.activityVisible)
+    val workspaceBackdrop=rememberBackdropCapture(menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || fontPicker || alerts || picker.isNotEmpty() || model.activityVisible)
     Surface(Modifier.fillMaxSize().then(if(workspaceBackdrop) Modifier.hazeSource(workspaceHaze) else Modifier),color=MaterialTheme.colorScheme.background) {
         // Wide screens (an unfolded Fold, tablets): the tab list sits beside the terminal; maximize hides it.
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
         val wide=maxWidth>=WideLayoutMinWidth
         val listWidth=wideListWidth(maxWidth,maxHeight)
         Row(Modifier.fillMaxSize()) {
-        if(wide && !listHidden && chromeVisible) TabListPanel(listWidth,
-            sessionStrip.firstOrNull {it.id==currentSessionKey}?.label.orEmpty().removeSuffix(" · ${model.activeServer.label}"),model.activeServer.label,
-            tabEntries,window?.id.orEmpty(),sessionStrip.filter {it.id!=currentSessionKey},tabsReady,ready && state.selectedSession.isNotBlank(),
-            ready && state.selectedSession.isNotBlank() && chosen.isNotBlank(),
-            onTab=client::selectWindow,onSession=model::selectSessionTarget,onSessions={picker="sessions"},
-            onSettings={preferencesOpen=true},onNewTab=client::createTab,onSplit={client.createPane(it,chosen)},onCollapse={listHidden=true})
+        if(wide && !listHidden && chromeVisible) {
+            // The list names every session, so it needs their tab counts without opening the switcher.
+            LaunchedEffect(state.connected,state.sessions.size) {model.refreshSessionDetails()}
+            TabListPanel(listWidth,switcher,onSessions={picker="sessions"},onSettings={preferencesOpen=true},onCollapse={listHidden=true})
+        }
         // Wide: the terminal side is a card like the list, with its header inside, both starting at the same height.
         Column(Modifier.weight(1f).fillMaxHeight().then(if(wide && chromeVisible) Modifier.padding(start=4.dp,end=8.dp,bottom=8.dp)
             .clip(WideCardShape).background(MaterialTheme.colorScheme.surface) else Modifier)) {
@@ -289,7 +302,7 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                 blocks.map {state.programs[it.id] ?: ProgramIdentity.Loading},blocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0),state.directories[displayedBlock].orEmpty(),{picker="sessions"},model::selectSessionTarget,model::jumpLastSession,
                 serverIcons=if(model.servers.size>1) model.sessionTargets.associate {it.key to it.server.icon}+(currentSessionKey to model.activeServer.icon) else emptyMap(),
                 working=chosen in state.workingBlocks,title=if(model.servers.isEmpty()) stringResource(R.string.app_name) else (state.programs[chosen] ?: ProgramIdentity.Loading).paneTitle(blocks.firstOrNull {it.id==chosen}?.label.orEmpty(),state.titles[chosen].orEmpty()),
-                onTitleTap=if(tabsReady && windows.isNotEmpty()) {{picker="tabpicker"}} else null,
+                onTitleTap=if(tabsReady && windows.isNotEmpty()) {{picker="tabs"}} else null,
                 onTitleHold=if(tabsReady && windows.size>1) titleHold else null,
                 // Wide: the list shows tabs, so the header names the pane; phones keep the tab position.
                 titleDetail=if(wide && chromeVisible) {if(carouselBlocks.size>1) "pane ${carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0)+1}/${carouselBlocks.size}" else ""}
@@ -366,7 +379,7 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
                     if(blocks.isNotEmpty()) {
                         Box(Modifier.weight(1f).fillMaxWidth().padding(bottom=3.dp)) {
                         if(!floatingActive || hiddenFloating!=chosen) LiveTerminal(client,carouselBlocks,chosen,liveBlock,state.programs,controlled,fontSize.toFloat(),
-                            client::type,client::scroll,client::wheel,client::takeControl,client::scrollToBottom,client::resize,::openPane,{picker="panes"},{view->terminalView=view;view.onOpenLink={url->
+                            client::type,client::scroll,client::wheel,client::takeControl,client::scrollToBottom,client::resize,::openPane,{picker="tabs"},{view->terminalView=view;view.onOpenLink={url->
                                 val loopback=LoopbackLink.parse(url)
                                 if(loopback==null) PortForwards.openBrowser(context,url)
                                 else if(ready && chosen==liveBlock && displayedSession.isNotBlank()) {
@@ -416,12 +429,8 @@ private data class TerminalCloseTarget(val session: String,val id: String,val la
         }
         }
     }
-if(picker=="tabpicker") TabPickerCard(model.activeServer.label,
-        sessionStrip.firstOrNull {it.id==currentSessionKey}?.label.orEmpty().removeSuffix(" · ${model.activeServer.label}"),
-        tabEntries,window?.id.orEmpty(),ready,ready && state.selectedSession.isNotBlank(),ready && state.selectedSession.isNotBlank() && chosen.isNotBlank(),
-        onSelect={picker="";client.selectWindow(it)},onNewTab={picker="";client.createTab()},onSplit={picker="";client.createPane(it,chosen)},onSessions={picker="sessions"},onClose={picker=""},onManage={picker="tabs"},hazeState=workspaceHaze)
-    if(picker=="sessions") SessionSwitcher(model.sessionTargets,currentSessionKey,model.lastSessionKey,ready,model.closingSessionKey.ifBlank {model.renamingSessionKey},model.sessionActionError,model::closeSession,model::renameSession,
-                    onSelect={picker="";model.selectSessionTarget(it)},onClose={picker=""},onNew={picker="";newSession=true},hazeState=workspaceHaze)
+    // Sessions, tabs and panes share one card: the title opens it on the tabs, "sessions" one level up.
+    if(picker.isNotEmpty()) Switcher(switcher,onClose={picker=""},sessionsFirst=picker=="sessions",hazeState=workspaceHaze)
     if(model.activityVisible) ActivitySheet(model.activitySources,model::refreshActivity,model::openActivity,onClose={model.showActivity(false)},onSeen=model::markActivitySeen,onMarkAll=model::markAllActivitySeen,hazeState=workspaceHaze)
     NetworkPrompts()
     if(networkSettings) NetworkSheet(model.activeServer,state.connected,hazeState=workspaceHaze) {networkSettings=false}
@@ -449,97 +458,12 @@ if(picker=="tabpicker") TabPickerCard(model.activeServer.label,
     }
     if(servers) ServersSheet(model,hazeState=workspaceHaze){servers=false}
     if(addServer) ServerEditor(null,onClose={addServer=false},onSave={label,url,icon->model.saveServer(null,label,url,icon)})
-    if(picker=="tabs" || picker=="panes") TabPaneSwitcher(windows,window?.id.orEmpty(),chosen,
-        state.programs,state.titles,state.directories,client::tabPaneIndex,ready,
-        canCreateTab=ready && state.selectedSession.isNotBlank(),canCreatePane=ready && state.selectedSession.isNotBlank(),
-        onTab={picker="";client.selectWindow(it)},onPane={picker="";openPane(it)},
-        onNewTab={picker="";client.createTab()},onNewPane={anchor,split->picker="";client.createPane(split,anchor)},
-        onCloseTab={picker="";closeTarget=closeTabTarget(it)},onClosePane={picker="";closeTarget=closePaneTarget(it)},
-        onClose={picker=""},initialPage=if(picker=="panes") 1 else 0,onMoveTab=client::moveTab,onMovePane=client::movePane,reorderKey=currentSessionKey,
-        onRenameTab={tab,label->client.editTerminal(displayedSession,tab,tab,"rename_tab",label=label)},
-        onRenamePane={tab,id,label->client.editTerminal(displayedSession,tab,id,"rename_pane",label=label)},
-        onFloatPane={tab,id->client.editTerminal(displayedSession,tab,id,"float_pane")},
-        onDockPane={tab,id,anchor,split->client.editTerminal(displayedSession,tab,id,"dock_pane",anchor=anchor,split=split)},error=state.error,hazeState=workspaceHaze)
-    closeTarget?.let {target->
-        AlertDialog(onDismissRequest={closeTarget=null},title={Text(if(target.tab) "Close tab?" else "Close pane?")},
-            text={Text(if(target.tab) "Close “${target.label}”? This ends every program in its ${target.blocks.size} pane${if(target.blocks.size==1) "" else "s"}."
-                else "Close “${target.label}”? This ends the program running in this pane.")},
-            confirmButton={TextButton(enabled=ready,onClick={closeTarget=null
-                if(target.tab) client.closeTab(target.session,target.id,target.blocks) else client.closePane(target.session,target.id)
-            }) {Text("Close",color=MaterialTheme.colorScheme.error)}},
-            dismissButton={TextButton(onClick={closeTarget=null}) {Text("Cancel")}})
-    }
     if(appearance) AppearanceSheet(model.appearance,model.themes,model.theme(false),model.theme(true),model::changeAppearance,model::chooseTheme,hazeState=workspaceHaze) {appearance=false}
     if(fontPicker) FontSizeDialog(fontSize,model::changeFontSize,hazeState=workspaceHaze) {fontPicker=false}
     if(newSession) NewSessionDialog(model.activeServer.label,ready,client::createSession) {newSession=false}
 
 }
 private fun getClipboard(context: Context)=context.getSystemService(Context.CLIPBOARD_SERVICE)
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable internal fun SessionSwitcher(targets: List<SessionTarget>,current: String,last: String,canCreate: Boolean,closing: String,error: String,onCloseSession: (SessionTarget)->Unit,onRenameSession: (SessionTarget,String)->Boolean,onSelect: (String)->Unit,onClose: ()->Unit,onNew: ()->Unit,hazeState: HazeState?=null) {
-    var search by rememberSaveable {mutableStateOf("")}
-    var closeTarget by remember {mutableStateOf<SessionTarget?>(null)}
-    var renameTarget by remember {mutableStateOf<SessionTarget?>(null)}
-    val groups=remember(targets,current,search) {SessionCatalog.groups(targets,current,search)}
-    // Filtering does not resize the drawer or move the search field under the finger.
-    val panelHeight=(128+targets.size.coerceIn(1,7)*64+targets.map {it.server.id}.distinct().size.coerceAtMost(5)*24).dp.coerceIn(248.dp,600.dp)
-    val scheme=MaterialTheme.colorScheme
-    val drawerSurface=Modifier.drawerFrost(hazeState,BottomSheetDefaults.ExpandedShape)
-    ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Color.Transparent,contentColor=MaterialTheme.colorScheme.onSurface,tonalElevation=0.dp,
-        dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
-        Column(drawerSurface.fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))) {
-        DrawerHandle()
-        Column(Modifier.fillMaxWidth().height(panelHeight).padding(bottom=4.dp)) {
-            Row(Modifier.fillMaxWidth().heightIn(min=48.dp).padding(start=16.dp,end=4.dp),verticalAlignment=Alignment.CenterVertically) {
-                Text("Sessions",Modifier.weight(1f),style=SettingsType.row,fontWeight=FontWeight.Bold)
-                FilledTonalButton(onClick=onNew,enabled=canCreate,contentPadding=PaddingValues(horizontal=10.dp,vertical=0.dp),modifier=Modifier.heightIn(min=36.dp)) {
-                    ChromeSymbol(ChromeIcon.ADD,Modifier.size(15.dp),scheme.primary)
-                    Spacer(Modifier.width(4.dp));Text("New session",style=SettingsType.section)
-                }
-                ChromeButton(ChromeIcon.CLOSE,"Close sessions",onClick=onClose)
-            }
-            BasicTextField(search,{search=it},Modifier.fillMaxWidth().padding(horizontal=16.dp).heightIn(min=40.dp)
-                .clip(RoundedCornerShape(12.dp)).background(scheme.surfaceVariant.copy(alpha=.45f)).padding(horizontal=12.dp,vertical=10.dp),
-                textStyle=SettingsType.row.copy(color=scheme.onSurface),singleLine=true,
-                cursorBrush=androidx.compose.ui.graphics.SolidColor(scheme.primary),
-                decorationBox={field->Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    ChromeSymbol(ChromeIcon.SEARCH,Modifier.size(17.dp),scheme.onSurfaceVariant)
-                    Box(Modifier.weight(1f)) {if(search.isEmpty()) Text("Find session…",style=SettingsType.row,color=scheme.onSurfaceVariant);field()}
-                }})
-            LazyColumn(Modifier.fillMaxWidth().weight(1f),contentPadding=PaddingValues(horizontal=16.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                if(groups.isEmpty()) item {Text(if(targets.isEmpty()) "No sessions yet" else "No matching sessions",Modifier.padding(vertical=16.dp),style=SettingsType.row,color=scheme.onSurfaceVariant)}
-                groups.forEach {group->
-                    item(key="server:${group.server.id}") {
-                        Row(Modifier.fillMaxWidth().padding(top=6.dp),verticalAlignment=Alignment.CenterVertically) {
-                            ServerGlyph(group.server.icon,Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(group.server.label,Modifier.weight(1f),style=SettingsType.section,color=scheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
-                            Text(group.sessions.size.toString(),style=SettingsType.detail,color=scheme.onSurfaceVariant)
-                        }
-                    }
-                    items(group.sessions,key={it.key}) {target->
-                        SessionRow(target,current==target.key,last==target.key,closing==target.key,
-                            onSelect={onSelect(target.key)},onClose={closeTarget=target},onRename={renameTarget=target})
-                    }
-                }
-            }
-            if(error.isNotBlank()) Text(error,Modifier.padding(horizontal=16.dp,vertical=4.dp),color=scheme.error,style=SettingsType.detail)
-        }
-    }
-    }
-    renameTarget?.let {target->
-        SessionRenameDialog(target,closing.isBlank(),onSave={label->if(onRenameSession(target,label)) renameTarget=null},onDismiss={renameTarget=null})
-    }
-    closeTarget?.let {target->
-        AlertDialog(onDismissRequest={closeTarget=null},title={Text("Close session?")},
-            text={Text("Close “${target.session.label}” on ${target.server.label}? All its tabs and panes will close, ending the programs running in them.")},
-            confirmButton={TextButton(onClick={closeTarget=null;onCloseSession(target)},enabled=closing.isBlank()) {
-                Text("Close session",color=MaterialTheme.colorScheme.error)
-            }},dismissButton={TextButton(onClick={closeTarget=null}){Text("Cancel")}})
-    }
-
-}
 
 @Composable private fun LiveTerminal(client: RexConnection,blocks: List<BlockItem>,chosen: String,liveBlock: String,
     programs: Map<String,ProgramIdentity>,controlled: Boolean,fontSize: Float,
