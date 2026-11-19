@@ -92,6 +92,7 @@ struct Inner {
     dimmed: Cell<bool>,
     /// Marks this pane as the one with the keyboard, when there are several.
     marked: Cell<bool>,
+    offline: Cell<bool>,
     /// How much the grid is shrunk to fit: a pane this client does not size is shown whole, not clipped.
     view_scale: Cell<f64>,
     cursor_lit: Cell<bool>,
@@ -147,6 +148,7 @@ impl Terminal {
             controlled: Cell::new(false),
             dimmed: Cell::new(false),
             marked: Cell::new(false),
+            offline: Cell::new(false),
             view_scale: Cell::new(1.0),
             cursor_lit: Cell::new(true),
             blink: RefCell::default(),
@@ -194,6 +196,12 @@ impl Terminal {
     /// Panes without the keyboard step back a little so the active one stands out.
     pub fn set_dimmed(&self, dimmed: bool) {
         if self.0.dimmed.replace(dimmed) != dimmed {
+            self.0.area.queue_draw();
+        }
+    }
+    /// The server is away: what is shown is the last screen, not a live one.
+    pub fn set_offline(&self, offline: bool) {
+        if self.0.offline.replace(offline) != offline {
             self.0.area.queue_draw();
         }
     }
@@ -471,7 +479,8 @@ impl Inner {
         let metrics = self.metrics.get();
         let layout = pango::Layout::new(&context);
         let needed = (PADDING * 2.0 + frame.columns as f64 * metrics.width, PADDING * 2.0 + frame.rows as f64 * metrics.height);
-        let fit = if self.controlled.get() { 1.0 } else { (width / needed.0).min(height / needed.1).clamp(0.2, 1.0) };
+        // Shrink a pane this client does not size so it shows whole, but never past readable: beyond that it is cut off.
+        let fit = if self.controlled.get() { 1.0 } else { (width / needed.0).min(height / needed.1).clamp(0.6, 1.0) };
         self.view_scale.set(fit);
         let _ = cr.save();
         cr.scale(fit, fit);
@@ -620,15 +629,21 @@ impl Inner {
             let _ = cr.fill();
         }
         let _ = cr.restore();
-        let (width, _) = (width * fit, height * fit);
-        if self.dimmed.get() {
+        let width = width * fit;
+        let height = height * fit;
+        if self.offline.get() {
+            set_color(cr, palette.background, 0.6);
+            let _ = cr.paint();
+        } else if self.dimmed.get() {
             set_color(cr, palette.background, 0.38);
             let _ = cr.paint();
         }
         if self.marked.get() {
-            set_color(cr, crate::theme::accent(&palette), 1.0);
-            cr.rectangle(0.0, 0.0, width, 2.0);
-            let _ = cr.fill();
+            // An outline all the way round: a line on one edge reads as a divider.
+            set_color(cr, crate::theme::accent(&palette), 0.9);
+            cr.set_line_width(2.0);
+            cr.rectangle(1.0, 1.0, width - 2.0, height - 2.0);
+            let _ = cr.stroke();
         }
     }
 

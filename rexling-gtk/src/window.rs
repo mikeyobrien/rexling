@@ -54,6 +54,7 @@ pub struct Forward {
 }
 
 pub struct Ui {
+    this: std::rc::Weak<Ui>,
     pub window: adw::ApplicationWindow,
     pub config: RefCell<Config>,
     control: Control,
@@ -102,6 +103,12 @@ pub struct Ui {
     /// what was on screen stays there, dimmed, while the server is away.
     link: RefCell<Rc<State>>,
     stale_lists: Cell<bool>,
+    /// The terminal should take the keyboard as soon as there is one to take it.
+    focus_pending: Cell<bool>,
+    /// Panes are being placed; focus moving between them now is not the user's doing.
+    arranging: Cell<bool>,
+    /// A dialog is open over the window; window shortcuts wait until it closes.
+    pub modal: Cell<bool>,
     offline: Cell<bool>,
     /// Whether this server has been reached since it was chosen.
     reached: Cell<bool>,
@@ -142,6 +149,16 @@ const TAB_ACTIONS: &[&str] = &[
 
 /// A palette entry: what it is called, a hint beside it, and what it does.
 pub type Command = (String, String, Box<dyn Fn(&Rc<Ui>)>);
+
+/// A folder for a narrow column: `~` for home, and only the last two parts of a long path, cut between names.
+pub fn short_path(path: &str) -> String {
+    let path = home_relative(path);
+    let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    if path.chars().count() <= 28 || parts.len() <= 2 {
+        return path;
+    }
+    format!("…/{}", parts[parts.len() - 2..].join("/"))
+}
 
 pub fn home_relative(path: &str) -> String {
     match std::env::var("HOME") {
@@ -189,10 +206,11 @@ pub fn build(app: &adw::Application) {
 
     // Sidebar: the session switcher above the session's tabs.
     let session_list = gtk::ListBox::builder().selection_mode(gtk::SelectionMode::None).css_classes(["navigation-sidebar"]).build();
-    let new_session = gtk::Entry::builder().placeholder_text("New session").margin_top(6).margin_start(6).margin_end(6).margin_bottom(6).build();
+    // One field for the whole menu: typing narrows the sessions, and Enter opens the first match or creates what was typed.
+    let new_session = gtk::Entry::builder().placeholder_text("Find or create a session").margin_top(6).margin_start(6).margin_end(6).margin_bottom(6).build();
     let session_box = gtk::Box::builder().orientation(gtk::Orientation::Vertical).width_request(260).build();
-    session_box.append(&session_list);
     session_box.append(&new_session);
+    session_box.append(&session_list);
     let session_popover = gtk::Popover::builder().child(&session_box).build();
     let session_label = gtk::Label::builder().label("Sessions").css_classes(["rexling-session"]).ellipsize(pango::EllipsizeMode::End).build();
     let session_dot = gtk::Box::builder().css_classes(["rexling-dot"]).valign(gtk::Align::Center).visible(false).build();
@@ -212,18 +230,10 @@ pub fn build(app: &adw::Application) {
     let title = adw::WindowTitle::new("Rexling", "");
     let header = adw::HeaderBar::builder().title_widget(&title).build();
     header.pack_start(&icon_button("sidebar-show-symbolic", "Sidebar", "win.toggle-sidebar"));
-    let menu = gio::Menu::new();
-    let commands = gio::Menu::new();
-    commands.append(Some("Command Palette"), Some("win.palette"));
-    menu.append_section(None, &commands);
-    let application = gio::Menu::new();
-    application.append(Some("Preferences"), Some("win.preferences"));
-    application.append(Some("Keyboard Shortcuts"), Some("win.shortcuts"));
-    application.append(Some("About Rexling"), Some("win.about"));
-    menu.append_section(None, &application);
-    header.pack_end(&gtk::MenuButton::builder().icon_name("open-menu-symbolic").tooltip_text("Menu").menu_model(&menu).primary(true).build());
+    let menu = dialogs::menu(&[&["palette", "new-window"], &["preferences", "shortcuts", "about"]]);
+    header.pack_end(&gtk::MenuButton::builder().icon_name("open-menu-symbolic").tooltip_text("Menu").popover(&menu).primary(true).build());
     for (below, tooltip, action) in [(true, "Split Below", "win.split-below"), (false, "Split Right", "win.split-right")] {
-        header.pack_end(&gtk::Button::builder().child(&split_icon(below)).tooltip_text(tooltip).action_name(action).build());
+        header.pack_end(&gtk::Button::builder().child(&split_icon(below)).tooltip_text(tooltip).action_name(action).css_classes(["flat", "image-button"]).build());
     }
 
     let banner = adw::Banner::new("");
@@ -275,7 +285,8 @@ pub fn build(app: &adw::Application) {
     let styles = gtk::CssProvider::new();
     gtk::style_context_add_provider_for_display(&gdk::Display::default().expect("display"), &styles, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
 
-    let ui = Rc::new(Ui {
+    let ui = Rc::new_cyclic(|this| Ui {
+        this: this.clone(),
         window: window.clone(),
         config: RefCell::new(config),
         control,
@@ -317,6 +328,9 @@ pub fn build(app: &adw::Application) {
         refused: RefCell::default(),
         link: RefCell::default(),
         stale_lists: Cell::new(false),
+        focus_pending: Cell::new(false),
+        arranging: Cell::new(false),
+        modal: Cell::new(false),
         offline: Cell::new(false),
         reached: Cell::new(false),
         recovering: Cell::new(false),
@@ -380,12 +394,9 @@ pub fn build(app: &adw::Application) {
         }
     });
     // Right-click a tab for its own commands. One menu serves the whole list, so rebuilding rows cannot orphan it.
-    let tab_menu = gio::Menu::new();
-    tab_menu.append(Some("Rename…"), Some("win.rename-tab"));
-    tab_menu.append(Some("Move Up"), Some("win.move-tab-up"));
-    tab_menu.append(Some("Move Down"), Some("win.move-tab-down"));
-    tab_menu.append(Some("Close"), Some("win.close-tab"));
-    let tab_popover = gtk::PopoverMenu::builder().menu_model(&tab_menu).has_arrow(false).halign(gtk::Align::Start).build();
+    let tab_popover = dialogs::menu(&[&["rename-tab", "move-tab-up", "move-tab-down"], &["close-tab"]]);
+    tab_popover.set_has_arrow(false);
+    tab_popover.set_halign(gtk::Align::Start);
     // Parented outside the list: a list box treats every child as a row.
     tab_popover.set_parent(&ui.toasts);
     let secondary = gtk::GestureClick::builder().button(gdk::BUTTON_SECONDARY).build();
@@ -417,12 +428,43 @@ pub fn build(app: &adw::Application) {
     });
     let weak = Rc::downgrade(&ui);
     new_session.connect_activate(move |entry| {
-        if let Some(ui) = weak.upgrade() {
-            ui.interact();
-            ui.chrome.new_session(entry.text().trim());
-            entry.set_text("");
-            ui.session_button.popdown();
+        let Some(ui) = weak.upgrade() else { return };
+        let typed = entry.text().trim().to_lowercase();
+        if typed.is_empty() {
+            return;
         }
+        let found = ui.shown_sessions.borrow().iter().find(|(id, label, ..)| !id.starts_with("server:") && label.to_lowercase().contains(&typed)).map(|(id, ..)| id.clone());
+        ui.session_button.popdown();
+        match found.as_deref().map(|id| (id, id.strip_prefix("remote:").and_then(|rest| rest.split_once('|')))) {
+            Some((_, Some((server, session)))) => ui.open_remote_session(server, session),
+            Some((id, None)) => ui.open_session(id),
+            None => {
+                ui.interact();
+                ui.focus_pending.set(true);
+                ui.chrome.new_session(entry.text().trim());
+            }
+        }
+        entry.set_text("");
+    });
+    let weak = Rc::downgrade(&ui);
+    new_session.connect_changed(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.session_list.invalidate_filter();
+        }
+    });
+    let (weak, field) = (Rc::downgrade(&ui), new_session.clone());
+    ui.session_list.set_filter_func(move |row| {
+        let Some(ui) = weak.upgrade() else { return true };
+        let typed = field.text().trim().to_lowercase();
+        let name = row.widget_name();
+        // Server headings stay; sessions show while they match what is typed.
+        typed.is_empty() || name.starts_with("server:") || ui.shown_sessions.borrow().iter().any(|(id, label, ..)| *id == name.as_str() && label.to_lowercase().contains(&typed))
+    });
+    // The menu opens ready to type in.
+    let field = new_session.clone();
+    session_popover.connect_show(move |_| {
+        field.set_text("");
+        field.grab_focus();
     });
     let weak = Rc::downgrade(&ui);
     adw::StyleManager::default().connect_dark_notify(move |_| {
@@ -444,6 +486,18 @@ pub fn build(app: &adw::Application) {
             ui.chrome.resize_split(split, ratio);
         }
     });
+
+    // Ctrl+Shift+D is also GTK's own debugging key where that is switched on. While Split Right
+    // cannot run, the key does nothing here rather than falling through to it.
+    let guard = gtk::EventControllerKey::new();
+    guard.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let weak = Rc::downgrade(&ui);
+    guard.connect_key_pressed(move |_, key, _, state| {
+        let chord = state.contains(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK) && matches!(key, gdk::Key::D | gdk::Key::d);
+        let available = weak.upgrade().is_some_and(|ui| !ui.modal.get() && ui.window.lookup_action("split-right").is_some_and(|action| action.is_enabled()));
+        if chord && !available { gtk::glib::Propagation::Stop } else { gtk::glib::Propagation::Proceed }
+    });
+    window.add_controller(guard);
 
     // Closing the session menu hands the keyboard back to the terminal.
     let weak = Rc::downgrade(&ui);
@@ -505,7 +559,8 @@ impl Ui {
             let action = gio::SimpleAction::new(name, None);
             let weak = Rc::downgrade(self);
             action.connect_activate(move |_, _| {
-                if let Some(ui) = weak.upgrade() {
+                // Window shortcuts do nothing while a dialog is open over the window.
+                if let Some(ui) = weak.upgrade().filter(|ui| !ui.modal.get()) {
                     run(&ui);
                 }
             });
@@ -513,7 +568,9 @@ impl Ui {
         };
         add("new-tab", |ui| {
             ui.interact();
-            ui.chrome.new_tab();
+            ui.focus_pending.set(true);
+            let folder = ui.state.borrow().directories.get(&*ui.focused.borrow()).cloned().unwrap_or_default();
+            ui.chrome.new_tab(&folder);
         });
         add("split-right", |ui| ui.split_pane(false));
         add("split-below", |ui| ui.split_pane(true));
@@ -558,10 +615,25 @@ impl Ui {
             let focused = ui.focused.borrow().clone();
             let state = ui.state.borrow().clone();
             // Remember the pane's place: its nearest split, which side it was on, and its share.
-            if let Some(split) = state.tab_of(&focused).and_then(|tab| tab.splits.iter().rev().find(|s| s.before == focused || s.after == focused)) {
-                let before = split.before == focused;
-                let anchor = if before { split.after.clone() } else { split.before.clone() };
-                ui.floated_from.borrow_mut().insert(focused.clone(), (anchor, split.direction == "vertical", before, split.ratio));
+            if let Some(tab) = state.tab_of(&focused) {
+                // The pane's own split is the innermost one that has it alone on one side.
+                let own = tab.splits.iter().rev().find(|s| s.before_all == [focused.clone()] || s.after_all == [focused.clone()]);
+                let placed = tab.placements();
+                let rect = |id: &str| placed.iter().find(|p| p.id == id).map(|p| p.rect);
+                if let (Some(split), Some(mine)) = (own, rect(&focused)) {
+                    let before = split.before_all == [focused.clone()];
+                    let below = split.direction == "vertical";
+                    // Of the panes on the other side, the neighbour is the one sharing the most of the dividing edge.
+                    let shared = |other: [f64; 4]| {
+                        let (a, b) = if below { ((mine[0], mine[0] + mine[2]), (other[0], other[0] + other[2])) } else { ((mine[1], mine[1] + mine[3]), (other[1], other[1] + other[3])) };
+                        (a.1.min(b.1) - a.0.max(b.0)).max(0.0)
+                    };
+                    let others = if before { &split.after_all } else { &split.before_all };
+                    let neighbour = others.iter().filter_map(|id| rect(id).map(|r| (id, shared(r)))).max_by(|a, b| a.1.total_cmp(&b.1));
+                    if let Some((anchor, _)) = neighbour {
+                        ui.floated_from.borrow_mut().insert(focused.clone(), (anchor.clone(), below, before, split.ratio));
+                    }
+                }
             }
             ui.interact();
             ui.zoomed.set(false);
@@ -615,7 +687,8 @@ impl Ui {
         }
         for theme in theme::all() {
             let id = theme.id.clone();
-            items.push((theme.name.clone(), "Theme".into(), Box::new(move |ui| ui.choose_theme(&id))));
+            let kind = if theme.palette.dark { "Dark theme" } else { "Light theme" };
+            items.push((theme.name.clone(), kind.into(), Box::new(move |ui| ui.choose_theme(&id))));
         }
         items
     }
@@ -656,13 +729,23 @@ impl Ui {
                 config.theme_light = id.to_owned();
             }
             let switched = chosen.palette.dark != adw::StyleManager::default().is_dark();
+            let previous = config.appearance.clone();
             if switched {
                 config.appearance = if chosen.palette.dark { "dark" } else { "light" }.into();
             }
             config.save();
             if switched {
-                // A theme of the other brightness can only show if the style follows it; say that it changed.
-                self.toasts.add_toast(adw::Toast::new(if chosen.palette.dark { "Style set to Dark" } else { "Style set to Light" }));
+                // A theme of the other brightness can only show if the style follows it: say that it changed, and offer the way back.
+                let toast = adw::Toast::builder().title(if chosen.palette.dark { "Style set to Dark" } else { "Style set to Light" }).button_label("Undo").build();
+                let weak = self.this.clone();
+                toast.connect_button_clicked(move |_| {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.config.borrow_mut().appearance = previous.clone();
+                        ui.config.borrow().save();
+                        ui.apply_appearance();
+                    }
+                });
+                self.toasts.add_toast(toast);
             }
         }
         self.apply_appearance();
@@ -680,10 +763,15 @@ impl Ui {
     // --- Connection and control ---------------------------------------------------------------
 
     pub fn connect(self: &Rc<Self>, server: &str) {
-        let server = server.trim().to_owned();
-        if server.is_empty() {
-            return;
-        }
+        // Whatever asked for it, an address that cannot be one never replaces a working connection.
+        let server = match tunnel::address(server) {
+            Ok(server) => server,
+            Err(problem) => {
+                self.toasts.add_toast(adw::Toast::new(problem));
+                return;
+            }
+        };
+        self.focus_pending.set(true);
         {
             let mut config = self.config.borrow_mut();
             config.server = server.clone();
@@ -820,6 +908,7 @@ impl Ui {
 
     pub fn open_session(self: &Rc<Self>, id: &str) {
         self.interact();
+        self.focus_pending.set(true);
         self.tab.replace(String::new());
         self.chrome.select_session(id);
     }
@@ -1100,9 +1189,10 @@ impl Ui {
         if !self.reached.replace(true) {
             let mut config = self.config.borrow_mut();
             let server = config.server.clone();
-            if config.servers.first() != Some(&server) {
+            if config.servers.first() != Some(&server) || config.reached.as_ref() != Some(&server) {
                 config.servers.retain(|s| *s != server);
-                config.servers.insert(0, server);
+                config.servers.insert(0, server.clone());
+                config.reached = Some(server);
                 config.save();
             }
             drop(config);
@@ -1123,15 +1213,21 @@ impl Ui {
         self.was_connected.set(false);
         if !self.reached.get() {
             // Never reached: the address may simply be wrong, so it stays on screen to be fixed.
-            let waiting = state.error.is_empty();
-            self.connect_page.set_description(Some(&if waiting { "Connecting…".to_owned() } else { format!("{}. Trying again…", tunnel::explain(&state.error)) }));
+            let server = self.config.borrow().server.clone();
+            let missing = server.strip_prefix("unix://").is_some_and(|path| !std::path::Path::new(path).exists());
+            self.connect_page.set_description(Some(&if server.is_empty() {
+                CONNECT_HINT.to_owned()
+            } else if missing {
+                "There is no Rex server socket at that path".to_owned()
+            } else if state.error.is_empty() {
+                "Connecting…".to_owned()
+            } else {
+                format!("{}. Trying again…", tunnel::explain(&state.error))
+            }));
             self.stack.set_visible_child_name("connect");
         } else if !self.offline.replace(true) {
             self.tab_list.set_sensitive(false);
             self.session_button.set_sensitive(false);
-            for pane in self.panes.borrow().values() {
-                pane.terminal.set_dimmed(true);
-            }
         }
         self.refresh_banner();
         self.sync_actions();
@@ -1161,6 +1257,7 @@ impl Ui {
             self.config.borrow_mut().sessions.remove(&server);
             self.recovering.set(false);
             self.connect(&server);
+            self.toasts.add_toast(adw::Toast::new("The server restarted and the session that was open has ended"));
             return;
         }
         // The engine retries on its own while it says it is reconnecting; nudge it only when it has given up.
@@ -1206,21 +1303,30 @@ impl Ui {
         }
     }
 
+    /// Whether a pane on screen is held by another client, so this window can only watch it.
+    fn watching(&self) -> bool {
+        let panes = self.panes.borrow();
+        self.visible.borrow().iter().filter_map(|id| panes.get(id)).any(|pane| {
+            let state = pane.client.state();
+            state.connected() && pane.client.showing() && !state.controlled && state.other_owner
+        })
+    }
+
     fn refresh_banner(&self) {
         let link = self.link.borrow().clone();
         // One status line: a problem, a connection in progress, or that this window is only watching.
         let problem = self.problem.borrow().clone();
         let (text, button) = if !problem.is_empty() {
             (problem, Some("Retry"))
-        } else if self.endpoint.borrow().is_empty() && !self.config.borrow().server.is_empty() {
+        } else if self.endpoint.borrow().is_empty() && self.config.borrow().server.starts_with("ssh://") {
             ("Opening SSH tunnel…".to_owned(), None)
         } else if !self.reached.get() {
             // The connect page says what is happening.
             (String::new(), None)
         } else if !link.connected() {
-            ("Reconnecting…".to_owned(), Some("Retry"))
-        } else if !self.visible.borrow().is_empty() && !self.control.get() {
-            ("Viewing only. Click or type to take control.".to_owned(), Some("Take Control"))
+            ("Reconnecting… Typing is paused.".to_owned(), Some("Retry"))
+        } else if self.watching() {
+            ("In use on another device".to_owned(), Some("Take Control"))
         } else {
             (String::new(), None)
         };
@@ -1315,10 +1421,10 @@ impl Ui {
                 let focused = if current { self.focused.borrow().clone() } else { config.panes.get(&tab.id).cloned().unwrap_or_default() };
                 let lead = tab.blocks.iter().find(|b| b.id == focused).or(tab.blocks.first());
                 let title = tab.name().map(str::to_owned).or_else(|| lead.map(|b| state.title(b))).unwrap_or_else(|| tab.label.clone());
-                let directory = lead.and_then(|b| state.directories.get(&b.id)).map(|d| home_relative(d)).unwrap_or_default();
+                let directory = lead.and_then(|b| state.directories.get(&b.id)).map(|d| short_path(d)).unwrap_or_default();
                 let detail = match tab.blocks.len() {
-                    // A shell is already titled by its folder; say which shell instead of repeating it.
-                    0 | 1 if directory == title => lead.map(|b| state.program(b)).unwrap_or_default(),
+                    // A shell is already titled by its folder; when the path adds nothing, say which shell it is.
+                    0 | 1 if directory == title || directory == format!("/{title}") || directory == format!("~/{title}") => lead.map(|b| state.program(b)).unwrap_or_default(),
                     0 | 1 => directory,
                     count if directory.is_empty() => format!("{count} panes"),
                     count => format!("{count} panes · {directory}"),
@@ -1421,6 +1527,7 @@ impl Ui {
             }
         });
         let (weak, id, view, latest, themed) = (Rc::downgrade(self), block.to_owned(), terminal.clone(), frame.clone(), Cell::new(false));
+        let held = Cell::new(false);
         let weak_client = Rc::downgrade(&client);
         client.watch(move |update| {
             let (Some(ui), Some(client)) = (weak.upgrade(), weak_client.upgrade()) else { return };
@@ -1429,14 +1536,19 @@ impl Ui {
                 let frame = if showing { update.frame } else { None };
                 view.set_frame(frame.clone());
                 latest.replace(frame);
-            } else {
-                // Offline: the last screen stays, dimmed, instead of going blank.
-                view.set_dimmed(true);
             }
-            view.set_controlled(showing && update.state.controlled);
-            // Another client took this pane: say so, and stop claiming the keyboard until the user acts again.
-            if showing && !update.state.controlled && update.state.other_owner && ui.control.get() && ui.visible.borrow().contains(&id) && client.take_was_sent() {
+            // Offline, the last screen stays, faded, instead of going blank.
+            view.set_offline(!update.state.connected());
+            let controlled = showing && update.state.controlled;
+            view.set_controlled(controlled);
+            // This window held the pane and another client has taken it: stop claiming the keyboard until the user acts again.
+            if controlled {
+                held.set(true);
+            } else if held.get() && showing && update.state.other_owner {
+                held.set(false);
                 ui.control.set(false);
+            }
+            if update.state_changed {
                 ui.refresh_banner();
             }
             if update.state.connected() && !themed.replace(true) {
@@ -1521,7 +1633,9 @@ impl Ui {
         }
         self.grid.set_floats(floats);
         self.grid.set_splits(if self.zoomed.get() { Vec::new() } else { tab.map(|tab| tab.splits.clone()).unwrap_or_default() });
+        self.arranging.set(true);
         self.grid.arrange(widgets);
+        self.arranging.set(false);
 
         // Keep a few recent panes connected; drop the rest and any whose terminal is gone.
         {
@@ -1541,7 +1655,7 @@ impl Ui {
         }
         let single = shown.len() < 2;
         for (id, pane) in self.panes.borrow().iter() {
-            pane.terminal.set_dimmed(self.offline.get() || (!single && shown.contains(id) && *id != focused));
+            pane.terminal.set_dimmed(!single && shown.contains(id) && *id != focused);
             pane.terminal.set_marked(!single && *id == focused);
         }
         let first = self.visible.borrow().is_empty() && !shown.is_empty();
@@ -1549,7 +1663,11 @@ impl Ui {
         if changed {
             self.refresh_banner();
         }
-        if first {
+        let wanted = self.focus_pending.get() && self.panes.borrow().contains_key(&focused);
+        if wanted {
+            self.focus_pending.set(false);
+        }
+        if first || wanted {
             // Terminals have just appeared: the keyboard belongs in one, not on a header button.
             let weak = Rc::downgrade(self);
             gtk::glib::idle_add_local_once(move || {
@@ -1580,6 +1698,7 @@ impl Ui {
         });
         self.window.set_title(Some(&heading));
         self.remember(&state);
+        self.sync_actions();
     }
 
     fn remember(&self, state: &State) {
@@ -1607,6 +1726,8 @@ impl Ui {
     fn terminal_event(self: &Rc<Self>, block: &str, event: Event) {
         let Some(client) = self.panes.borrow().get(block).map(|p| p.client.clone()) else { return };
         match event {
+            // Nothing typed while the server is away is sent later by surprise.
+            Event::Input(_) | Event::Paste(_) if self.offline.get() => {}
             Event::Input(text) => {
                 self.interact();
                 client.input(&text);
@@ -1626,7 +1747,7 @@ impl Ui {
             Event::Click { column, row, cell_width, cell_height } => client.click(column, row, cell_width, cell_height),
             Event::Claim => self.interact(),
             Event::Focused => {
-                if *self.focused.borrow() != block && self.visible.borrow().iter().any(|id| id == block) {
+                if !self.arranging.get() && *self.focused.borrow() != block && self.visible.borrow().iter().any(|id| id == block) {
                     self.focused.replace(block.to_owned());
                     self.show_tabs();
                     self.arrange();

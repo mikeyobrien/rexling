@@ -157,7 +157,15 @@ fn new_split_arguments(session: &str,anchor: &str,command: &Value)->Result<Value
         _=>anyhow::bail!("Choose Split right or Split below"),
     };
     Ok(json!({"session_id":session,"anchor_id":anchor,"direction":direction,"side":"after",
-        "layout":{"block":{"flavor":"com.superlogical.terminal.shell"}},"focus":false}))
+        "layout":shell_block(command),"focus":false}))
+}
+/// A new shell. A client may ask for it to start in a folder, such as the one the pane beside it is in.
+fn shell_block(command: &Value)->Value {
+    let mut block=json!({"flavor":"com.superlogical.terminal.shell"});
+    if let Some(cwd)=command["cwd"].as_str().filter(|cwd|cwd.starts_with('/') && cwd.len()<=4096 && !cwd.chars().any(char::is_control)) {
+        block["options"]=json!({"cwd":cwd});
+    }
+    json!({"block":block})
 }
 fn split_anchor<'a>(windows: &Value,command: &'a Value)->Result<&'a str> {
     let anchor=command["anchor"].as_str().filter(|id|!id.is_empty()).context("Choose a pane first")?;
@@ -196,8 +204,14 @@ fn collect_pane_layout(node: &Value,ids: &BTreeSet<&str>,layer: usize,floating: 
     }
     for child in ["before","after"] {collect_pane_layout(&node["split"][child],ids,layer,floating,depth+1,out);}
 }
+fn all_blocks<'a>(node: &'a Value,depth: usize,out: &mut Vec<&'a str>) {
+    // A leaf has no split under it; without this check every missing child would be searched in turn.
+    if !node.is_object() || depth>64 || out.len()>=256 {return;}
+    if let Some(id)=node["block_id"].as_str() {out.push(id);}
+    for child in ["before","after"] {all_blocks(&node["split"][child],depth+1,out);}
+}
 fn first_block(node: &Value,depth: usize)->Option<&str> {
-    if depth>64 {return None;}
+    if !node.is_object() || depth>64 {return None;}
     node["block_id"].as_str().or_else(||first_block(&node["split"]["before"],depth+1)).or_else(||first_block(&node["split"]["after"],depth+1))
 }
 /// Each border between tiled panes: where it is and a pane on either side, for clients that let it be dragged.
@@ -206,7 +220,9 @@ fn collect_splits(node: &Value,depth: usize,out: &mut Vec<Value>) {
     if !split.is_object() || depth>64 || out.len()>=256 {return;}
     if let (Some(direction),Some(ratio),Some(rect),Some(before),Some(after))=(split["direction"].as_str(),split["ratio"].as_f64(),node["rect"].as_array(),
         first_block(&split["before"],0),first_block(&split["after"],0)) {
-        out.push(json!({"direction":direction,"ratio":ratio,"rect":rect,"before":before,"after":after}));
+        let (mut before_all,mut after_all)=(Vec::new(),Vec::new());
+        all_blocks(&split["before"],0,&mut before_all);all_blocks(&split["after"],0,&mut after_all);
+        out.push(json!({"direction":direction,"ratio":ratio,"rect":rect,"before":before,"after":after,"beforeAll":before_all,"afterAll":after_all}));
     }
     for child in ["before","after"] {collect_splits(&split[child],depth+1,out);}
 }
@@ -1317,7 +1333,7 @@ impl Actor {
                     value["session"].as_str() == Some(self.selected_session.as_str()),
                     "The selected session changed; try again"
                 );
-                let layout = json!({"block":{"flavor":"com.superlogical.terminal.shell"}});
+                let layout = shell_block(&value);
                 let (method, args) = if value["type"] == "new_tab" {
                     (
                         "session.new_window",
@@ -1967,6 +1983,24 @@ mod tests {
         for (key,value) in [("window",json!("gone")),("blocks",json!(["a","b"])),("id",json!("gone")),("before",json!("gone")),("before",json!("a"))] {
             let mut invalid=valid.clone();invalid[key]=value;assert!(pane_reorder_swaps(&windows,&invalid).is_err());
         }
+    }
+    #[test]
+    fn splits_report_their_borders_and_the_panes_on_each_side() {
+        let layout=json!({"rect":[0,0,1,1],"split":{"direction":"horizontal","ratio":0.4,
+            "before":{"block_id":"a","rect":[0,0,0.4,1]},
+            "after":{"rect":[0.4,0,0.6,1],"split":{"direction":"vertical","ratio":0.5,
+                "before":{"block_id":"b","rect":[0.4,0,0.6,0.5]},
+                "after":{"block_id":"c","rect":[0.4,0.5,0.6,0.5]}}}}});
+        let mut splits=Vec::new();
+        collect_splits(&layout,0,&mut splits);
+        assert_eq!(splits.len(),2);
+        assert_eq!(splits[0]["before"],"a");assert_eq!(splits[0]["after"],"b");
+        assert_eq!(splits[0]["beforeAll"],json!(["a"]));assert_eq!(splits[0]["afterAll"],json!(["b","c"]));
+        assert_eq!(splits[1]["direction"],"vertical");assert_eq!(splits[1]["beforeAll"],json!(["b"]));
+        // A single pane has no borders, and finding that out must not take long.
+        let mut none=Vec::new();
+        collect_splits(&json!({"rect":[0,0,1,1],"block_id":"a"}),0,&mut none);
+        assert!(none.is_empty());
     }
     #[test]
     fn pane_layout_preserves_nested_window_rects_and_floating_layers() {

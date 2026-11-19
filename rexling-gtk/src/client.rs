@@ -50,6 +50,11 @@ pub struct Split {
     pub rect: [f64; 4],
     pub before: String,
     pub after: String,
+    /// Every pane on each side.
+    #[serde(rename = "beforeAll")]
+    pub before_all: Vec<String>,
+    #[serde(rename = "afterAll")]
+    pub after_all: Vec<String>,
 }
 #[derive(Deserialize, Default, Clone, PartialEq, Debug)]
 #[serde(default)]
@@ -363,7 +368,8 @@ impl Client {
         }
         if !state.controlled {
             self.sent_size.set((0, 0));
-            if self.wants_control.get() {
+            // A pane nobody holds is taken straight away; one another client holds only when the user acts.
+            if self.wants_control.get() || !state.other_owner {
                 self.take(state);
             }
         } else {
@@ -384,11 +390,6 @@ impl Client {
             self.queued.borrow_mut().clear();
             self.follow(&self.state());
         }
-    }
-    /// Whether this connection has asked for its pane since it last opened it.
-    pub fn take_was_sent(&self) -> bool {
-        let state = self.state();
-        *self.last_take.borrow() == (state.selected_block.clone(), state.navigation_id, state.connection_epoch)
     }
     /// Whether this connection currently streams its pane.
     pub fn showing(&self) -> bool {
@@ -500,18 +501,20 @@ impl Client {
             self.command(json!({"type":"close_tab","session":state.selected_session,"id":id,"blocks":blocks}));
         }
     }
-    pub fn new_tab(&self) {
+    /// Opens a tab whose shell starts in `folder`, when one is given.
+    pub fn new_tab(&self, folder: &str) {
         let state = self.state();
         if self.settled(&state) && !state.selected_session.is_empty() {
-            self.command(json!({"type":"new_tab","session":state.selected_session}));
+            self.command(json!({"type":"new_tab","session":state.selected_session,"cwd":folder}));
         }
     }
-    /// Splits `anchor`. `below` stacks the new pane under it; otherwise it goes beside it.
+    /// Splits `anchor`. `below` stacks the new pane under it; otherwise it goes beside it. The new shell starts in the anchor's folder.
     pub fn split(&self, anchor: &str, below: bool) {
         let state = self.state();
         if self.settled(&state) && state.tab_of(anchor).is_some() {
+            let folder = state.directories.get(anchor).cloned().unwrap_or_default();
             self.command(json!({"type":"new_pane","session":state.selected_session,"anchor":anchor,
-                "direction":if below {"vertical"} else {"horizontal"}}));
+                "direction":if below {"vertical"} else {"horizontal"},"cwd":folder}));
         }
     }
     pub fn close_pane(&self, block: &str) {

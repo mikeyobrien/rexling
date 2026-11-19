@@ -39,6 +39,45 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("About Rexling", "about", ""),
 ];
 
+/// Shows a dialog over the window. Window shortcuts wait until it closes, then the terminal has the keyboard again.
+fn present(ui: &Rc<Ui>, dialog: &impl IsA<adw::Dialog>) {
+    ui.modal.set(true);
+    let weak = Rc::downgrade(ui);
+    dialog.connect_closed(move |_| {
+        if let Some(ui) = weak.upgrade() {
+            ui.modal.set(false);
+            ui.focus_terminal();
+        }
+    });
+    dialog.present(Some(&ui.window));
+}
+
+/// A menu of window commands, in groups, with their keys written the way the rest of the app writes them.
+pub fn menu(groups: &[&[&str]]) -> gtk::Popover {
+    let list = gtk::Box::builder().orientation(gtk::Orientation::Vertical).build();
+    let popover = gtk::Popover::builder().child(&list).css_classes(["menu"]).build();
+    for (index, group) in groups.iter().enumerate() {
+        if index > 0 {
+            list.append(&gtk::Separator::builder().margin_top(4).margin_bottom(4).build());
+        }
+        for wanted in group.iter() {
+            let Some((label, action, accelerator)) = ACTIONS.iter().find(|(_, action, _)| action == wanted) else { continue };
+            let row = gtk::Box::builder().spacing(24).build();
+            row.append(&gtk::Label::builder().label(*label).xalign(0.0).hexpand(true).build());
+            row.append(&gtk::Label::builder().label(keys(accelerator)).css_classes(["dim-label", "caption"]).build());
+            let button = gtk::Button::builder().child(&row).action_name(format!("win.{action}")).css_classes(["flat", "rexling-menu-item"]).build();
+            let weak = popover.downgrade();
+            button.connect_clicked(move |_| {
+                if let Some(popover) = weak.upgrade() {
+                    popover.popdown();
+                }
+            });
+            list.append(&button);
+        }
+    }
+    popover
+}
+
 /// Keys the terminal itself handles.
 const TERMINAL_KEYS: &[(&str, &str)] = &[
     ("Copy", "<Ctrl><Shift>c"),
@@ -91,7 +130,7 @@ fn score(text: &str, kind: &str, query: &str) -> Option<usize> {
     if text.contains(query) {
         return Some(2);
     }
-    if kind.starts_with(query) {
+    if kind.split_whitespace().any(|word| word.starts_with(query)) {
         return Some(3);
     }
     let initials: String = text.split_whitespace().filter_map(|word| word.chars().next()).collect();
@@ -131,14 +170,14 @@ pub fn palette(ui: &Rc<Ui>) {
             list.remove_all();
             let query = query.trim().to_lowercase();
             // Only themes, tabs, sessions and servers have a kind; a command's hint is its keys.
-            let kind = |hint: &str| if matches!(hint, "Theme" | "Tab" | "Session" | "Server") { hint.to_owned() } else { String::new() };
+            let kind = |hint: &str| if hint.ends_with("theme") || matches!(hint, "Tab" | "Session" | "Server") { hint.to_owned() } else { String::new() };
             let mut matches: Vec<(usize, usize)> = commands.iter().enumerate().filter_map(|(index, (label, hint, _))| score(label, &kind(hint), &query).map(|s| (s, index))).collect();
             matches.sort();
             for (_, index) in matches.into_iter().take(60) {
                 let (label, hint, _) = &commands[index];
                 let row = gtk::Box::builder().spacing(12).build();
                 row.append(&gtk::Label::builder().label(label.as_str()).xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::End).build());
-                row.append(&gtk::Label::builder().label(hint.as_str()).css_classes(["rexling-key"]).build());
+                row.append(&gtk::Label::builder().label(hint.as_str()).css_classes(["dim-label", "caption"]).build());
                 list.append(&gtk::ListBoxRow::builder().child(&row).name(index.to_string()).build());
             }
             list.select_row(list.row_at_index(0).as_ref());
@@ -155,6 +194,8 @@ pub fn palette(ui: &Rc<Ui>) {
         move |row: &gtk::ListBoxRow| {
             let (Some(ui), Ok(index)) = (weak.upgrade(), row.widget_name().parse::<usize>()) else { return };
             dialog.close();
+            // The palette is on its way out; what it runs may open a dialog of its own.
+            ui.modal.set(false);
             if let Some((_, _, command)) = commands.get(index) {
                 command(&ui);
             }
@@ -214,7 +255,7 @@ pub fn palette(ui: &Rc<Ui>) {
             ui.focus_terminal();
         }
     });
-    dialog.present(Some(&ui.window));
+    present(ui, &dialog);
     entry.grab_focus();
 }
 
@@ -385,9 +426,23 @@ pub fn preferences(ui: &Rc<Ui>) {
     let url = adw::EntryRow::builder().title("Add a server: https://…, ssh://user@host or unix:///path").show_apply_button(true).build();
     let (weak, parent) = (Rc::downgrade(ui), dialog.clone());
     url.connect_apply(move |row| {
-        if let Some(ui) = weak.upgrade().filter(|_| !row.text().trim().is_empty()) {
-            parent.close();
-            ui.connect(row.text().trim());
+        let Some(ui) = weak.upgrade() else { return };
+        // The same check as the first-run page; a mistake here must not cost the working connection.
+        match crate::tunnel::address(&row.text()) {
+            Ok(address) => {
+                parent.close();
+                ui.connect(&address);
+            }
+            Err(problem) => {
+                row.add_css_class("error");
+                row.set_title(problem);
+            }
+        }
+    });
+    url.connect_changed(|row| {
+        if row.has_css_class("error") {
+            row.remove_css_class("error");
+            row.set_title("Add a server: https://…, ssh://user@host or unix:///path");
         }
     });
     servers.add(&url);
@@ -411,7 +466,7 @@ pub fn preferences(ui: &Rc<Ui>) {
             ui.focus_terminal();
         }
     });
-    dialog.present(Some(&ui.window));
+    present(ui, &dialog);
 }
 
 pub fn shortcuts(ui: &Rc<Ui>) {
@@ -457,11 +512,11 @@ pub fn shortcuts(ui: &Rc<Ui>) {
             ui.focus_terminal();
         }
     });
-    dialog.present(Some(&ui.window));
+    present(ui, &dialog);
 }
 
 pub fn about(ui: &Rc<Ui>) {
-    adw::AboutDialog::builder()
+    let dialog = adw::AboutDialog::builder()
         .application_name("Rexling")
         .application_icon("dev.shulhi.Rexling")
         .version(env!("CARGO_PKG_VERSION"))
@@ -470,8 +525,8 @@ pub fn about(ui: &Rc<Ui>) {
         .website("https://github.com/shulhi/rexling")
         .issue_url("https://github.com/shulhi/rexling/issues")
         .license_type(gtk::License::Apache20)
-        .build()
-        .present(Some(&ui.window));
+        .build();
+    present(ui, &dialog);
 }
 
 /// Asks before ending a session: every program in it stops.
@@ -485,7 +540,7 @@ pub fn confirm_close_session(ui: &Rc<Ui>, label: &str, close: impl Fn(&Rc<Ui>) +
             close(&ui);
         }
     });
-    dialog.present(Some(&ui.window));
+    present(ui, &dialog);
 }
 
 /// Asks for a name. An empty name is passed on: the server then restores its default.
@@ -502,7 +557,7 @@ pub fn rename(ui: &Rc<Ui>, heading: &str, current: &str, apply: impl Fn(&Rc<Ui>,
         }
         ui.focus_terminal();
     });
-    dialog.present(Some(&ui.window));
+    present(ui, &dialog);
     entry.grab_focus();
     entry.select_region(0, -1);
 }
@@ -579,7 +634,7 @@ pub fn forwards(ui: &Rc<Ui>) {
             ui.focus_terminal();
         }
     });
-    dialog.present(Some(&ui.window));
+    present(ui, &dialog);
     port.grab_focus();
 }
 
@@ -592,7 +647,8 @@ mod tests {
         assert_eq!(score("Split Right", "", "split"), Some(0));
         assert_eq!(score("Split Right", "", "right"), Some(1));
         assert_eq!(score("Split Right", "", "sr"), Some(4));
-        assert_eq!(score("Cathode Amber", "Theme", "theme"), Some(3), "searching a kind lists everything of that kind");
+        assert_eq!(score("Cathode Amber", "Dark theme", "theme"), Some(3), "searching a kind lists everything of that kind");
+        assert_eq!(score("Alpine Milk", "Light theme", "light"), Some(3), "light themes are found whatever they are called");
         assert_eq!(score("Split Right", "", "light"), None, "scattered letters do not match");
         assert_eq!(score("New Tab", "", "split"), None);
     }

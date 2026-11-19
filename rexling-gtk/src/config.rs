@@ -5,7 +5,11 @@ use std::{collections::HashMap, path::PathBuf};
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct Config {
+    /// The server in use. Only one that has answered is written to disk; see `reached`.
     pub server: String,
+    /// The last server that answered. A mistyped address never replaces it in the saved settings.
+    #[serde(skip)]
+    pub reached: Option<String>,
     /// Every server that has been connected to, most recent first.
     pub servers: Vec<String>,
     pub font: String,
@@ -27,6 +31,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             server: String::new(),
+            reached: None,
             servers: Vec::new(),
             font: "JetBrainsMono Nerd Font, monospace".into(),
             font_size: 11.0,
@@ -51,14 +56,20 @@ fn path() -> PathBuf {
 
 impl Config {
     pub fn load() -> Self {
-        std::fs::read_to_string(path()).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+        let mut config: Self = std::fs::read_to_string(path()).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+        config.reached = Some(config.server.clone());
+        config
     }
     pub fn save(&self) {
         let path = path();
         let result = (|| -> anyhow::Result<()> {
             std::fs::create_dir_all(path.parent().unwrap())?;
             let temporary = path.with_extension("json.tmp");
-            std::fs::write(&temporary, serde_json::to_string_pretty(self)?)?;
+            let mut saved = self.clone();
+            if let Some(reached) = &self.reached {
+                saved.server = reached.clone();
+            }
+            std::fs::write(&temporary, serde_json::to_string_pretty(&saved)?)?;
             std::fs::rename(temporary, &path)?;
             Ok(())
         })();
