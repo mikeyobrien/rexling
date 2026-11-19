@@ -8,6 +8,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +29,9 @@ import dev.chrisbanes.haze.HazeState
 /** One thing the action card can do. Null [run] shows it disabled. */
 internal class CardAction(val label: String,val icon: ChromeIcon,val detail: String="",val run: (()->Unit)?)
 
+/** Closing the pane the card is about. A non-blank [detail] ("ends nvim") is asked in the row before [run]. */
+internal class CardClose(val label: String,val question: String,val detail: String,val run: (()->Unit)?)
+
 /**
  * What the terminal menu shows: the pane's state as chips, the everyday actions as tiles and the
  * places you can go from here as rows.
@@ -35,7 +42,7 @@ internal class ActionCardModel(val overline: String,val title: String,
     /** The grid as "63 × 58", blank until there is a screen. */
     val size: String,
     /** "Release" or "Take over". */
-    val ownership: CardAction?,val tiles: List<CardAction>,val places: List<CardAction>,val preferences: ()->Unit)
+    val ownership: CardAction?,val tiles: List<CardAction>,val places: List<CardAction>,val preferences: ()->Unit,val close: CardClose?=null)
 
 private val CardGroupShape=Kit.group
 
@@ -97,6 +104,21 @@ private val CardGroupShape=Kit.group
                         }
                         ChromeSymbol(ChromeIcon.CHEVRON,Modifier.size(16.dp).graphicsLayer {rotationZ=-90f},scheme.onSurfaceVariant.copy(alpha=.7f))
                     }
+                }
+            }
+            model.close?.let {close->
+                // Shells at a prompt close at once; anything running is named and asked about here first.
+                var asking by remember {mutableStateOf(false)}
+                val red=Kit.destructive().copy(alpha=if(close.run!=null) 1f else .38f)
+                Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clip(CardGroupShape).background(group)
+                    .clickable(enabled=close.run!=null,role=Role.Button) {if(asking) asking=false else if(close.detail.isBlank()) leave(close.run ?: {})() else asking=true}
+                    .padding(start=18.dp,end=10.dp),verticalAlignment=Alignment.CenterVertically) {
+                    ChromeSymbol(ChromeIcon.CLOSE,Modifier.size(20.dp),red)
+                    Column(Modifier.weight(1f).padding(start=18.dp)) {
+                        Text(if(asking) close.question else close.label,fontSize=16.sp,fontWeight=FontWeight.Medium,color=red,maxLines=1,overflow=TextOverflow.Ellipsis)
+                        if(asking) Text(close.detail,fontSize=12.sp,color=scheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    }
+                    if(asking) KitButton("Close",leave(close.run ?: {}),tone=KitTone.DESTRUCTIVE)
                 }
             }
         }

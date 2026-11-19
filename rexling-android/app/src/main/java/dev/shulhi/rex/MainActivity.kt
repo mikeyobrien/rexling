@@ -454,7 +454,10 @@ class MainActivity : ComponentActivity() {
             CardAction("Port forwarding",ChromeIcon.SERVER,run={forwards=true}),
             // One server that is connected needs no count.
             CardAction("Servers",ChromeIcon.SERVER,detail=if(model.servers.size>1 || model.connectedCount==0) "${model.connectedCount} connected" else "",run={servers=true})),
-        preferences={preferencesOpen=true}),onClose={menu=false},hazeState=workspaceHaze)
+        preferences={preferencesOpen=true},
+        // The pane in front of you; a tab's only pane takes the tab with it, so it says so.
+        close=RowManager(RowsState(),switcher).close(if(blocks.size>1) paneKey(chosen) else tabKey(window?.id.orEmpty()))
+            ?.let {CardClose(if(blocks.size>1) "Close pane" else "Close tab",it.question,it.detail,if(ready) it.run else null)}),onClose={menu=false},hazeState=workspaceHaze)
     if(picker.isNotEmpty()) Switcher(switcher,onClose={picker=""},sessionsFirst=picker=="sessions",hazeState=workspaceHaze)
     if(model.activityVisible) ActivitySheet(model.activitySources,model::refreshActivity,model::openActivity,onClose={model.showActivity(false)},onSeen=model::markActivitySeen,onMarkAll=model::markAllActivitySeen,hazeState=workspaceHaze)
     NetworkPrompts()

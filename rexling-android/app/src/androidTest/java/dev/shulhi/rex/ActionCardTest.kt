@@ -14,7 +14,7 @@ import org.junit.runner.RunWith
 class ActionCardTest {
     @get:Rule val ui=createComposeRule()
     private val calls=mutableListOf<String>()
-    private fun card(controlled: Boolean=true,status: String=if(controlled) "In control" else "Viewing only",servers: String="") {
+    private fun card(controlled: Boolean=true,status: String=if(controlled) "In control" else "Viewing only",servers: String="",ends: String?=null) {
         ui.setContent {
             var open by remember {mutableStateOf(true)}
             MaterialTheme {
@@ -25,7 +25,7 @@ class ActionCardTest {
                         CardAction("Copy",ChromeIcon.COPY) {calls+="copy"},CardAction("Keyboard",ChromeIcon.KEYBOARD) {calls+="keyboard"}),
                     listOf(CardAction("New session",ChromeIcon.ADD) {calls+="session"},CardAction("Port forwarding",ChromeIcon.SERVER) {calls+="forwards"},
                         CardAction("Servers",ChromeIcon.SERVER,servers) {calls+="servers"}),
-                    preferences={calls+="preferences"}),onClose={calls+="close";open=false})
+                    preferences={calls+="preferences"},close=ends?.let {CardClose("Close pane","Close nvim?",it) {calls+="closed"}}),onClose={calls+="close";open=false})
             }
         }
     }
@@ -67,5 +67,22 @@ class ActionCardTest {
         ui.onNodeWithText("2 connected").assertIsDisplayed()
         ui.onNodeWithText("Servers").performClick()
         ui.runOnIdle {assertEquals(listOf("close","servers"),calls)}
+    }
+    @Test fun anIdlePaneClosesInOneTap() {
+        card(ends="");ui.onNodeWithText("Close pane").performClick()
+        ui.runOnIdle {assertEquals(listOf("close","closed"),calls)}
+    }
+    @Test fun aRunningProgramIsNamedAndAskedAboutBeforeItCloses() {
+        card(ends="ends nvim");ui.onNodeWithText("Close pane").performClick()
+        ui.runOnIdle {assertEquals(emptyList<String>(),calls)}
+        ui.onNodeWithText("Close nvim?").assertIsDisplayed();ui.onNodeWithText("ends nvim").assertIsDisplayed()
+        ui.onNodeWithText("Close").performClick()
+        ui.runOnIdle {assertEquals(listOf("close","closed"),calls)}
+    }
+    @Test fun tappingTheQuestionTakesItBack() {
+        card(ends="ends nvim");ui.onNodeWithText("Close pane").performClick()
+        ui.onNodeWithText("Close nvim?").performClick()
+        ui.onNodeWithText("Close pane").assertIsDisplayed()
+        ui.runOnIdle {assertEquals(emptyList<String>(),calls)}
     }
 }
