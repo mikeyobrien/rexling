@@ -1,0 +1,23 @@
+name: Linux client
+
+on:
+  push:
+    paths: ["rexling-gtk/**", "rexling-core/**", ".github/workflows/linux-client.yml"]
+  pull_request:
+    paths: ["rexling-gtk/**", "rexling-core/**", ".github/workflows/linux-client.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Arch carries the GTK 4 and libadwaita versions the client needs.
+    container: archlinux:latest
+    steps:
+      - name: Install build tools and libraries
+        run: pacman -Syu --noconfirm base-devel git rust python curl gtk4 libadwaita librsvg
+      - uses: actions/checkout@v4
+      - name: Build libghostty-vt and test the core
+        run: python3 rexling-core/scripts/build_native.py --host-test
+      - name: Test
+        run: cargo test --locked --manifest-path rexling-gtk/Cargo.toml
+      - name: Lint
+        run: cargo clippy --locked --manifest-path rexling-gtk/Cargo.toml -- -D warnings

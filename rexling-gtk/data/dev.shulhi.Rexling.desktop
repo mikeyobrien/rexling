@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Rexling
+GenericName=Rex Client
+Comment=Terminal sessions on a Rex server
+Exec=rexling
+Icon=dev.shulhi.Rexling
+Terminal=false
+Categories=System;TerminalEmulator;GTK;
+Keywords=rex;terminal;multiplexer;
+StartupNotify=true

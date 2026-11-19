@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.shulhi.Rexling</id>
+  <name>Rexling</name>
+  <summary>Terminal sessions on a Rex server</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <description>
+    <p>Rexling is an unofficial native client for Superlogical Rex. It shows the persistent terminal sessions on your Rex server, with every split pane live at once.</p>
+    <ul>
+      <li>Live split panes, each on its own connection</li>
+      <li>Sessions and tabs in a sidebar, with what each program is doing</li>
+      <li>A command palette for commands, tabs, sessions and themes</li>
+      <li>Themes that colour the whole window</li>
+      <li>Notifications when a program is waiting on you</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">dev.shulhi.Rexling.desktop</launchable>
+  <url type="homepage">https://github.com/shulhi/rexling</url>
+  <url type="bugtracker">https://github.com/shulhi/rexling/issues</url>
+  <developer id="dev.shulhi">
+    <name>Rexling contributors</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>System</category>
+    <category>TerminalEmulator</category>
+  </categories>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+</component>

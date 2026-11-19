@@ -10,6 +10,8 @@ for everyday shell work, Neovim, Codex and Claude.
 | :---: | :---: |
 | <img src="docs/images/rexlink-android.png" alt="Rexling in light theme" width="340"> | <img src="docs/images/rexlink-android-dark.png" alt="Rexling in dark theme" width="340"> |
 
+A native Linux desktop client lives in [rexling-gtk](rexling-gtk/README.md).
+
 ## Installation and build
 
 Rexling supports **Android 9 or newer on 64-bit ARM devices**. You need a running

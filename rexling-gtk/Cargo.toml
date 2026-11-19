@@ -1,0 +1,26 @@
+[package]
+name = "rexling-gtk"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "Apache-2.0"
+description = "Native GTK client for Superlogical Rex"
+
+[[bin]]
+name = "rexling"
+path = "src/main.rs"
+
+[dependencies]
+adw = { package = "libadwaita", version = "0.9", features = ["v1_6"] }
+anyhow = "1"
+async-channel = "2"
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+pangocairo = "0.22"
+rex-core = { package = "rexling-core", path = "../rexling-core" }
+# The session engine lives in the JNI crate; it has no JNI in it and builds as a plain Rust library.
+rex-engine = { package = "rexling-jni", path = "../rexling-core/jni" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+
+[profile.release]
+lto = "thin"

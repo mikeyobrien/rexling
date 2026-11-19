@@ -1,0 +1,5 @@
+# rexling-core links the host build of libghostty-vt. Build it once with
+#   python3 rexling-core/scripts/build_native.py --host-test
+# or point GHOSTTY_PREFIX at an existing build.
+[env]
+GHOSTTY_PREFIX = { value = "../rexling-core/.build/ghostty-host", relative = true }
