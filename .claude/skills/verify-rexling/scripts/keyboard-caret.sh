@@ -14,11 +14,11 @@ mkdir -p "$RUN"
 PAUSE="$ROOT/rexling-android/.build/verify/viewer.pause"; touch "$PAUSE"
 ui() { "$HERE/ui.py" "$@"; }
 label=$("$HERE/scratch-session.sh" new "verify-rexling-$NAME")
-trap 'rm -f "$PAUSE"; adb shell am force-stop dev.shulhi.rex || true; "$HERE/scratch-session.sh" kill "$label" >/dev/null 2>&1 || true' EXIT
+trap 'rm -f "$PAUSE"; adb shell am force-stop dev.mobrienv.rexling || true; "$HERE/scratch-session.sh" kill "$label" >/dev/null 2>&1 || true' EXIT
 block=$(rex block ls -s "$label" | awk 'NR==2{print $2}')
 
-adb shell am force-stop dev.shulhi.rex
-adb shell monkey -p dev.shulhi.rex -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+adb shell am force-stop dev.mobrienv.rexling
+adb shell monkey -p dev.mobrienv.rexling -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
 ui has "Session strip" --timeout 20 >/dev/null; sleep 3
 ui tap "Session strip" >/dev/null
 ui tap "$label" --timeout 15 >/dev/null

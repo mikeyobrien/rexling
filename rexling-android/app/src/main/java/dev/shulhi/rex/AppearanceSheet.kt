@@ -20,10 +20,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
-@Composable internal fun QuickThemeMenuItem(dark: Boolean,onDark: (Boolean)->Unit) {
-    TerminalMenuItem(if(dark) "Toggle Light theme" else "Toggle Dark theme",if(dark) ChromeIcon.SUN else ChromeIcon.MOON,onClick={onDark(!dark)})
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun AppearanceSheet(appearance: Appearance,themes: List<AppTheme>,light: AppTheme,dark: AppTheme,
     onAppearance: (Appearance)->Unit,onTheme: (String)->Unit,hazeState: dev.chrisbanes.haze.HazeState?=null,onClose: ()->Unit) {
@@ -54,8 +50,8 @@ import kotlin.math.roundToInt
                 LazyColumn(Modifier.fillMaxWidth().weight(1f,fill=false),contentPadding=PaddingValues(horizontal=16.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                     items(options,key={it.id}) {theme->
                         val active=theme.id==selected.id
-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f))
-                            .then(if(active) Modifier.border(1.dp,MaterialTheme.colorScheme.primary,RoundedCornerShape(12.dp)) else Modifier)
+                        Row(Modifier.fillMaxWidth().clip(Kit.row).background(Kit.groupFill())
+                            .then(if(active) Modifier.border(1.dp,MaterialTheme.colorScheme.primary,Kit.row) else Modifier)
                             .semantics(mergeDescendants=true) {contentDescription="Theme ${theme.name}";this.selected=active;role=Role.RadioButton}
                             .clickable {onTheme(theme.id);editing=null}.padding(12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                             ThemeSwatch(theme)
@@ -75,20 +71,5 @@ import kotlin.math.roundToInt
         .border(1.dp,Color(palette.foreground).copy(alpha=.15f),RoundedCornerShape(9.dp)).padding(7.dp),verticalArrangement=Arrangement.SpaceBetween) {
         Text("❯ Aa",fontFamily=MonoUi,fontSize=11.sp,color=Color(palette.foreground),lineHeight=12.sp)
         Row(horizontalArrangement=Arrangement.spacedBy(3.dp)) {for(i in listOf(1,2,3,4,5)) Box(Modifier.size(7.dp,3.dp).background(Color(palette.ansi[i]),RoundedCornerShape(1.dp)))}
-    }
-}
-
-@Composable internal fun FontSizeDialog(size: Int,onSize: (Int)->Unit,hazeState: dev.chrisbanes.haze.HazeState?=null,onClose: ()->Unit) {
-    SettingsDrawer("Font size","Close font size",onClose,hazeState) {
-        Column(Modifier.fillMaxWidth().padding(horizontal=16.dp).padding(top=8.dp,bottom=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween) {
-                IconButton(onClick={onSize(size-1)},enabled=size>8,modifier=Modifier.semantics {contentDescription="Decrease font size"}) {Text("−",fontSize=24.sp)}
-                Text("$size sp",fontFamily=MonoUi,fontSize=16.sp)
-                IconButton(onClick={onSize(size+1)},enabled=size<20,modifier=Modifier.semantics {contentDescription="Increase font size"}) {Text("+",fontSize=24.sp)}
-            }
-            Slider(value=size.toFloat(),onValueChange={onSize(it.roundToInt())},valueRange=8f..20f,steps=11,modifier=Modifier.semantics {contentDescription="Font size"})
-            Text("Aa 0123 / ~",fontFamily=MonoUi,fontSize=size.sp)
-        }
-            TextButton(onClick=onClose,modifier=Modifier.align(Alignment.End)){Text("Done")}
     }
 }

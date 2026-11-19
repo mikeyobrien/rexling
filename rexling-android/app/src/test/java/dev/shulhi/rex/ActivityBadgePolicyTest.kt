@@ -38,6 +38,14 @@ class ActivityBadgePolicyTest {
         val result=ActivityBadgePolicy.route(sources,server,"s",moved)
         assertEquals(mapOf("b" to 1),result.tabs);assertEquals(1,result.elsewhere)
     }
+    @Test fun sessionsShowWhatIsUnreadOrWorkingInThemOnEveryConnectedServer() {
+        val remote=server.copy(id="remote",endpoint="https://remote.example")
+        val seen=record(session="quiet")
+        val sources=listOf(source(listOf(record(),record("a2",state="working"),record(session="busy",state="working"),seen,record("b1",session="quiet").copy(progressOnly=true)),seen=setOf(seen.key)),
+            source(listOf(record(state="blocked")),remote),source(listOf(record(session="offline")),server.copy(id="down"),connected=false))
+        assertEquals(mapOf(sessionKey("mac","s") to SessionActivity(true,true),sessionKey("mac","busy") to SessionActivity(false,true),
+            sessionKey("remote","s") to SessionActivity(true,false)),ActivityBadgePolicy.sessions(sources))
+    }
     @Test fun switchingSessionsReroutesWithoutAcknowledgingOrLosingRecords() {
         val items=listOf(record(),record("b1",session="other"));val sources=listOf(source(items))
         val first=ActivityBadgePolicy.route(sources,server,"s",windows)

@@ -1,14 +1,59 @@
-# <img src="rexling-android/app/src/main/res/drawable-nodpi/rexlink_dinosaur.png" alt="Rexling app icon" width="40" height="40" align="absmiddle"> Rexling
+# <img src="rexling-android/app/src/main/res/drawable-nodpi/rexling_dinosaur_gruvbox.png" alt="Rexling M app icon" width="40" height="40" align="absmiddle"> Rexling M
+
+Rexling M is a fork of [Rexling](https://github.com/shulhi/rexling) by
+[shulhi](https://github.com/shulhi), the unofficial native Android client for
+Superlogical Rex. It keeps everything upstream does and reworks the interface
+around one-handed phone use and unfolded foldables.
+
+It installs beside upstream's Rexling as a separate app with an orange icon.
+[Download the latest APK](https://github.com/mikeyobrien/rexling/releases/latest).
+
+## What's different in this fork
+
+| One switcher | Keys on the keyboard | Close a pane | Pane swipe |
+| :---: | :---: | :---: | :---: |
+| <img src="docs/images/fork/switcher.png" alt="Sessions, tabs and panes in one card" width="200"> | <img src="docs/images/fork/key-row.png" alt="The key row on top of the keyboard" width="200"> | <img src="docs/images/fork/close-pane.png" alt="The terminal menu asking before it closes a pane running nvim" width="200"> | <img src="docs/images/fork/pane-swipe.png" alt="A layout map in the corner while swiping between panes" width="200"> |
+
+- **One switcher.** Sessions, tabs and panes live in one card, opened from the
+  header. Rename, close and reorder rows in place, or hold the title and slide
+  to jump tabs.
+- **Keys on the keyboard.** Esc, Ctrl, Alt, Shift, Tab and the arrow joystick
+  sit on top of the keyboard and show only while it is open. The keyboard's
+  Enter submits.
+- **Terminal menu as a card.** Paste, Image, Copy and Keyboard as tiles, then
+  the places you can go, then Close pane. An idle shell closes at once; anything
+  running is named and asked about first.
+- **Pane swipe.** A small layout map in the top right shows where you are,
+  clear of the prompt.
+- **Preferences on one sheet**, and a first run that asks only for the server
+  address.
+
+| Tabs beside the terminal | Sheets dock over the terminal |
+| :---: | :---: |
+| <img src="docs/images/fork/fold-tabs.png" alt="A tab and session list beside the terminal on an unfolded foldable" width="420"> | <img src="docs/images/fork/fold-preferences.png" alt="Preferences docked over the terminal side" width="420"> |
+
+- **Foldables and tablets.** The session's tabs and the other sessions stay in
+  a list beside the terminal, which collapses to an icon rail. Sheets open over
+  the terminal side, so the list stays in reach.
+- **Recovery.** When the session you were viewing ends, the app moves to another
+  live session instead of sticking at "Reconnecting".
+
+Measured on an x86_64 emulator at 60 Hz against a local Rex server:
+
+| | Upstream at the fork point | This fork |
+| --- | --- | --- |
+| Key press to drawn echo, median | 29.1 ms | 13.6 ms |
+| Fast-fling frames stuck at the scroll edge | 45% | 0% |
+| Frames drawn in 5 idle seconds, wide layout with a working tab | 302 | 11 |
+
+The fork is based on upstream build 157 and does not yet include changes
+upstream made after that.
 
 ## Overview
 
 Rexling is an unofficial native Android client for Superlogical Rex.
 Access your terminal sessions from your phone over Tailscale, with touch controls
 for everyday shell work, Neovim, Codex and Claude.
-
-| Light theme | Dark theme |
-| :---: | :---: |
-| <img src="docs/images/rexlink-android.png" alt="Rexling in light theme" width="340"> | <img src="docs/images/rexlink-android-dark.png" alt="Rexling in dark theme" width="340"> |
 
 ## Installation and build
 
@@ -18,8 +63,9 @@ or SSH.
 
 ### Install an APK
 
-Download an APK from [GitHub Releases](https://github.com/shulhi/rexling/releases),
-open it on your phone, and allow installation when Android asks. Open Rexling
+Download an APK from [this fork's releases](https://github.com/mikeyobrien/rexling/releases)
+(or [upstream's](https://github.com/shulhi/rexling/releases) for the original app),
+open it on your phone, and allow installation when Android asks. Open Rexling M
 and enter your Rex server’s private HTTPS URL or `ssh://user@host`. On Android 17+, allow local
 network access when prompted.
 
@@ -29,7 +75,7 @@ Install Android Studio, the Android SDK/NDK, Rust, Go, Python and curl. Exact ve
 and setup instructions are in [BUILDING.md](BUILDING.md).
 
 ```sh
-git clone https://github.com/shulhi/rexling.git
+git clone https://github.com/mikeyobrien/rexling.git
 cd rexling
 ./rexling-android/scripts/gradle.sh :app:shareRelease
 ```
@@ -45,8 +91,9 @@ Studio to work on the app.
 
 - **Servers and sessions** — connect to multiple Rex servers, create and rename
   sessions, and restore your last session, tab and pane.
-- **Tabs and panes** — switch, rename and reorder terminals, preview split
-  layouts, split right or below, and dock or float panes. Optional minimized
+- **Tabs and panes** — one switcher for sessions, tabs and panes. Tap to open,
+  swipe a row to close, hold it to rename or split, drag it to reorder, and
+  dock or float panes. Optional minimized
   floating panes sit in an icon dock.
 - **Automatic pane takeover** — opening a pane takes control and resizes its
   terminal to fit your screen, letting terminal applications reflow their text.

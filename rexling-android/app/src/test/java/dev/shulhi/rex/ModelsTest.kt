@@ -40,6 +40,11 @@ class ModelsTest {
         assertEquals(0L,TerminalScroll().available)
         assertEquals("\u001b[5~",TerminalInput.key("pageup"))
     }
+    @Test fun aSessionTheServerReportedGoneReachesTheApp() {
+        val gone = AppState.parse("""{"revision":2,"phase":"connected","selectedSession":"","staleSession":"dead"}""")
+        assertEquals("dead", gone.staleSession)
+        assertEquals("", AppState.parse("""{"revision":2,"phase":"connected"}""").staleSession)
+    }
     @Test fun disconnectedStateAllowsMissingOptionalCollections() {
         val state = AppState.parse("""{"revision":1,"phase":"disconnected"}""")
         assertFalse(state.connected)

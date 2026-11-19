@@ -37,7 +37,9 @@ import dev.chrisbanes.haze.hazeSource
     liveScreen: TerminalScreen?,frames: Map<String,TerminalScreen>,programs: Map<String,ProgramIdentity>,controlled: Boolean,fontSize: Float,
     onInput: (String)->Unit,onScroll: (Int)->Unit,onWheel: (Int,Int,Int,Int,Int)->Unit,onActivate: ()->Unit,onBottom: ()->Unit,onDimensions: (Int,Int)->Unit,onSelect: (String)->Unit,onPanes: ()->Unit,
     onView: (TerminalView)->Unit,modifier: Modifier=Modifier,bindLiveView: ((String,TerminalView)->Boolean)?=null,
-    onMouseClick: (Int,Int,Int,Int)->Unit={_,_,_,_->},mouseTarget: ()->String={""},onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},imageTarget: ()->String=mouseTarget,bottomControlsInset: androidx.compose.ui.unit.Dp=0.dp,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false) {
+    onMouseClick: (Int,Int,Int,Int)->Unit={_,_,_,_->},mouseTarget: ()->String={""},onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},imageTarget: ()->String=mouseTarget,bottomControlsInset: androidx.compose.ui.unit.Dp=0.dp,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,
+    /** False when the header shows the pane dots, so nothing covers the last terminal row. */
+    paneIndicator: Boolean=true) {
     val switchLayout=remember(paneLayout,blocks) {paneLayout.filter {p->blocks.any {it.id==p.id}}.sortedBy {it.layer}}
     val hasMinimap=blocks.all {b->switchLayout.any {it.id==b.id}}
     val localHaze=remember {HazeState()}
@@ -166,8 +168,8 @@ import dev.chrisbanes.haze.hazeSource
                         }
                     }
                     if(center && (frame?.scroll?.below ?: 0)>0) {
-                        Text("↓ Latest",Modifier.align(Alignment.BottomEnd).padding(end=12.dp,bottom=(if(blocks.size>1) if(hasMinimap) 128.dp else 88.dp else 10.dp)+bottomControlsInset)
-                            .clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surface)
+                        Text("↓ Latest",Modifier.align(Alignment.BottomEnd).padding(end=12.dp,bottom=(if(blocks.size>1 && paneIndicator) 34.dp else 10.dp)+bottomControlsInset)
+                            .clip(Kit.row).background(MaterialTheme.colorScheme.surface)
                             .clickable(role=Role.Button,onClick=onBottom).padding(horizontal=12.dp,vertical=7.dp),
                             fontSize=11.sp,color=MaterialTheme.colorScheme.primary)
                     }
@@ -176,7 +178,7 @@ import dev.chrisbanes.haze.hazeSource
             }
         }
         }
-        if(blocks.size>1) {
+        if(blocks.size>1 && paneIndicator) {
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(28.dp)
                 .clickable(role=Role.Button,onClick=onPanes)
                 .semantics {contentDescription="Pane position indicator";stateDescription="Pane ${candidate+1} of ${blocks.size}"},contentAlignment=Alignment.Center) {
@@ -184,10 +186,11 @@ import dev.chrisbanes.haze.hazeSource
             }
         }
         if(showSwitch) {
-            Column(Modifier.align(Alignment.BottomCenter).padding(bottom=34.dp)
+            // Top right, clear of the prompt and whatever is being typed at the bottom of the screen.
+            Column(Modifier.align(Alignment.TopEnd).padding(top=10.dp,end=12.dp)
                 .widthIn(max=(maxWidth-32.dp).coerceIn(80.dp,240.dp))
                 .semantics {contentDescription="Pane switch indicator";stateDescription=blocks[candidate].id},
-                horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                horizontalAlignment=Alignment.End,verticalArrangement=Arrangement.spacedBy(4.dp)) {
                     if(hasMinimap) PaneSwitchMinimap(switchLayout,blocks[candidate].id,Modifier.size(56.dp,36.dp),hazeState=haze)
                     Row(Modifier.paneFrost(haze,RoundedCornerShape(13.dp)).semantics {contentDescription="Pane switch caption"}.padding(horizontal=6.dp,vertical=4.dp),
                         verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(9.dp)) {

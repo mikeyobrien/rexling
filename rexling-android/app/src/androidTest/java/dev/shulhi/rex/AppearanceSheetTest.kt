@@ -31,13 +31,14 @@ class AppearanceSheetTest {
         ui.onNodeWithContentDescription("Theme Abyssal Trench").performClick()
         ui.runOnIdle {assertEquals("abyssal-trench",chosen);assertEquals(Appearance.SYSTEM,mode)}
     }
-    @Test fun fontSizeChangesOneSpAtATime() {
-        val size=mutableIntStateOf(10)
-        ui.setContent {MaterialTheme {FontSizeDialog(size.intValue,{size.intValue=it},onClose={})}}
-        ui.onNodeWithContentDescription("Increase font size").performClick();ui.onNodeWithText("11 sp").assertIsDisplayed()
-        ui.onNodeWithContentDescription("Decrease font size").performClick();ui.onNodeWithText("10 sp").assertIsDisplayed()
-        ui.onNodeWithContentDescription("Font size").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) {it(9f)}
-        ui.onNodeWithText("9 sp").assertIsDisplayed()
+    @Test fun textSizeStepsOneAtATimeInItsOwnRowAndStopsAtTheLimits() {
+        val size=mutableIntStateOf(MaxFontSize-1)
+        ui.setContent {MaterialTheme {PreferencesSheet({},fontSize=size.intValue,onFontSize={size.intValue=it})}}
+        ui.onNodeWithContentDescription("Increase text size").performClick()
+        ui.onNodeWithContentDescription("Text size $MaxFontSize").assertIsDisplayed()
+        ui.onNodeWithContentDescription("Increase text size").assertIsNotEnabled()
+        ui.onNodeWithContentDescription("Decrease text size").performClick()
+        ui.runOnIdle {assertEquals(MaxFontSize-1,size.intValue)}
     }
     @Test fun lightAndDarkChoicesAndFontSizeSurviveModelRecreation() {
         val name="rexlink-theme-test-${System.nanoTime()}";val store=ViewModelStore()
@@ -82,31 +83,32 @@ class AppearanceSheetTest {
             }
         } finally {main {store.clear()};app.deleteSharedPreferences(name)}
     }
-    @Test fun quickMenuSwitchUsesCurrentAppearanceAndSupportsBothDirections() {
-        val dark=mutableStateOf(false)
-        ui.setContent {MaterialTheme {QuickThemeMenuItem(dark.value) {dark.value=it}}}
-        ui.onNodeWithText("Toggle Dark theme").performClick()
-        ui.runOnIdle {assertTrue(dark.value)}
-        ui.onNodeWithText("Toggle Light theme").performClick()
-        ui.runOnIdle {assertFalse(dark.value)}
-    }
-    @Test fun preferencesChooseTheCtrlShortcutGesture() {
+    @Test fun everyChoiceIsMadeInItsOwnRow() {
         val gesture=mutableStateOf(ControlShortcutGesture.HOLD)
-        val joystick=mutableStateOf(true)
-        ui.setContent {MaterialTheme {PreferencesSheet({},{},{},{},{},gesture.value,{gesture.value=it},
-            arrowJoystickEnabled=joystick.value,onArrowJoystick={joystick.value=it})}}
+        val joystick=mutableStateOf(true);val mode=mutableStateOf(Appearance.SYSTEM);val awake=mutableStateOf(KeepScreenAwake.SYSTEM)
+        ui.setContent {MaterialTheme {PreferencesSheet({},appearance=mode.value,onAppearance={mode.value=it},keepScreenAwake=awake.value,onKeepScreenAwake={awake.value=it},
+            shortcutGesture=gesture.value,onShortcutGesture={gesture.value=it},arrowJoystickEnabled=joystick.value,onArrowJoystick={joystick.value=it})}}
         ui.onNodeWithText("Hold").performScrollTo().assertIsSelected()
         ui.onNodeWithText("Double tap").performClick().assertIsSelected()
         ui.runOnIdle {assertEquals(ControlShortcutGesture.DOUBLE_TAP,gesture.value)}
-        ui.onNodeWithText("Hold").performClick().assertIsSelected()
-        ui.runOnIdle {assertEquals(ControlShortcutGesture.HOLD,gesture.value)}
-        ui.onNodeWithText("Use joystick for arrows").performScrollTo().assertIsOn().performClick().assertIsOff()
-        ui.onNodeWithText("Tap for arrow buttons").assertIsDisplayed()
+        ui.onNodeWithText("Joystick").performScrollTo().assertIsSelected()
+        ui.onNodeWithText("Keys").performClick().assertIsSelected()
         ui.runOnIdle {assertFalse(joystick.value)}
+        ui.onNodeWithText("System").performScrollTo().assertIsSelected()
+        ui.onNodeWithText("Dark").performClick().assertIsSelected()
+        ui.onNodeWithText("Active").performClick().assertIsSelected()
+        ui.runOnIdle {assertEquals(Appearance.DARK,mode.value);assertEquals(KeepScreenAwake.ACTIVE,awake.value)}
+    }
+    @Test fun theKeyRowPreviewsItsKeysAndOpensTheEditor() {
+        var opened=0
+        ui.setContent {MaterialTheme {PreferencesSheet({},toolbarKeys=listOf(ToolbarKey.HOME,ToolbarKey.CTRL_C),onToolbar={opened++})}}
+        ui.onNodeWithText("home").assertIsDisplayed();ui.onNodeWithText("^C").assertIsDisplayed()
+        ui.onNodeWithText("Key row").performClick()
+        ui.runOnIdle {assertEquals(1,opened)}
     }
     @Test fun themedSheetsRenderInLightAndDark() {
         val selected=mutableStateOf(themes.first {it.id=="abyssal-trench"})
-        ui.setContent {val theme=selected.value;MaterialTheme(colorScheme=(if(theme.terminal.dark) darkColorScheme() else lightColorScheme()).withPreset(theme)) {
+        ui.setContent {val theme=selected.value;MaterialTheme(colorScheme=rexColorScheme(theme.terminal.dark,theme.ui)) {
             Surface(Modifier.fillMaxSize()) {AppearanceSheet(Appearance.SYSTEM,themes,themes.first {it.id=="alpine-milk"},themes.first {it.id=="abyssal-trench"},{},{},onClose={})}
         }}
         for(id in listOf("abyssal-trench","alpine-milk")) {

@@ -6,11 +6,11 @@ The user sees which programs across connected servers need attention, are workin
 
 - Filters: `All`, `Needs you`, `Working`, `Finished`. Entries are grouped by server, with counts. Each entry is labelled `<title>, <state>, <session>, <server>`.
 - `Mark seen` and `Refresh activity`. Tapping an entry opens and takes control of that exact pane.
-- An attention badge on the eye. Its live check is `test_activity_badge.py`, which needs approval.
+- The bell (`Activity`) in the header: an amber count for what needs you off screen (other sessions and this session's other tabs), a small blue dot while something works. Its live check is `test_activity_badge.py`, which needs approval.
 
 ## How to get to it (user POV)
 
-The eye (`Activity`) at the far right of the bottom bar.
+The bell (`Activity`) at the right of the header.
 
 ## Driving it with ui.py
 

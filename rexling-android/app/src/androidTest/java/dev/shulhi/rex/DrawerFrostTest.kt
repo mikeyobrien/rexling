@@ -33,7 +33,9 @@ class DrawerFrostTest {
         val choice=mutableIntStateOf(-1);val dark=mutableStateOf(false);val green=mutableStateOf(false)
         val server=ServerProfile.create("Test Mac","https://fixture.example","mac")
         val target=SessionTarget(server,SessionItem("s","Development"),SessionDetail("this device",1,1))
-        val window=WindowItem("w","Project",listOf(BlockItem("b","shell")))
+        val codex=ProgramIdentity.resolve(listOf("codex"))
+        val tab=TabEntry("w","Project","~/Dev/project",listOf(codex),0,false,false,"Project",listOf(PaneEntry("b","Review changes","~/Dev/project","shell",codex)))
+        val switcher=SwitcherModel("Test Mac","Development",listOf(tab),"w","b",listOf(SessionEntry(target)),target.key)
         val record=ActivityRecord.parse(JSONObject().put("session","s").put("sessionLabel","Development").put("windowLabel","Project")
             .put("block","b").put("state","blocked").put("kind","permission").put("title","Review changes").put("app","codex"))!!
         ui.setContent {RexTheme(dark.value,ThemeCatalog.defaults[if(dark.value) 0 else 1]) {
@@ -48,8 +50,8 @@ class DrawerFrostTest {
                 }
                 when(choice.intValue) {
                     0->ActivitySheet(listOf(ActivitySource(server,true,false,"",false,listOf(record))),{},{},{},hazeState=haze)
-                    1->SessionSwitcher(listOf(target),target.key,"",true,"","",{},{_,_->true},{},{},{},hazeState=haze)
-                    2->TabPaneSwitcher(listOf(window),"w","b",mapOf("b" to ProgramIdentity.resolve(listOf("codex"))),mapOf("b" to "Review changes"),mapOf("b" to "~/Dev/project"),{0},true,true,true,{},{},{},{_,_->},{},{},{},hazeState=haze)
+                    1->Switcher(switcher,{},sessionsFirst=true,hazeState=haze)
+                    2->Switcher(switcher,{},hazeState=haze)
                     3->Box(Modifier.align(Alignment.TopEnd).padding(top=60.dp,end=12.dp)) {
                         DropdownMenu(true,{},modifier=Modifier.drawerFrost(haze,RoundedCornerShape(16.dp)),shape=RoundedCornerShape(16.dp),containerColor=Color.Transparent,tonalElevation=0.dp) {
                             TerminalMenuItem("Preferences",ChromeIcon.SETTINGS,onClick={})
@@ -68,7 +70,7 @@ class DrawerFrostTest {
             when(kind) {
                 0->{ui.onNodeWithText("Activity").assertIsDisplayed();ui.onNodeWithText("Review changes").assertIsDisplayed()}
                 1->ui.onNodeWithText("Development").assertIsDisplayed()
-                2->ui.onNodeWithContentDescription("Tab Project").assertIsDisplayed()
+                2->ui.onNodeWithText("Project").assertIsDisplayed()
                 3->ui.onNodeWithText("Preferences").assertIsDisplayed()
             }
             if(isDark && kind in 0..1) {

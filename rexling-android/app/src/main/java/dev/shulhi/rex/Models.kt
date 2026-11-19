@@ -58,6 +58,8 @@ data class AppState(
     val identity: String = "", val error: String = "", val notice: String = "",
     val sessions: List<SessionItem> = emptyList(), val windows: List<WindowItem> = emptyList(),
     val selectedSession: String = "", val selectedBlock: String = "", val controlled: Boolean = false,
+    /** A session the server reported gone; the app drops its saved place for it. */
+    val staleSession: String = "",
     val screen: TerminalScreen? = null, val creating: Boolean = false, val navigationId: Long = 0,val tabMoveId: Long=0,val paneMoveId: Long=0,val connectionEpoch: Long=0,val otherOwner: Boolean=false,val attentionCount: Int=0,
     internal val cachedPrograms: Set<String> = emptySet(),
 ) {
@@ -100,6 +102,7 @@ data class AppState(
                     WindowItem(w.optString("id"), w.optString("label", "Window"),blocks,layout)
                 },
                 selectedSession = root.optString("selectedSession"), selectedBlock = root.optString("selectedBlock"),
+                staleSession = root.optString("staleSession"),
                 controlled = root.optBoolean("controlled"), creating = root.optBoolean("creating"), screen = root.optJSONObject("screen")?.let(TerminalScreen::parse),
             )
         }

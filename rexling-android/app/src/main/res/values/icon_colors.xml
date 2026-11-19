@@ -1,3 +1,4 @@
 <resources>
-    <color name="launcher_background">#FFFFFF</color>
+    <!-- Gruvbox dark, with the dinosaur in its oranges: this fork's icon, told apart from upstream's blue on white. -->
+    <color name="launcher_background">#282828</color>
 </resources>

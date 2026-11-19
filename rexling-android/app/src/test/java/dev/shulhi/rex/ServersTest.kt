@@ -52,4 +52,10 @@ class ServersTest {
         assertTrue(decoded.all {it.icon==ServerIcon.GLOBE})
     }
 
+    @Test fun aBareHostMeansHttpsAndTheNameComesFromIt() {
+        assertEquals("https://rex.example.ts.net",ServerProfile.completeAddress("  rex.example.ts.net "))
+        assertEquals("ssh://me@box",ServerProfile.completeAddress("ssh://me@box"))
+        assertEquals("",ServerProfile.completeAddress(" "))
+        assertEquals("rex",ServerProfile.create("",ServerProfile.completeAddress("rex.example.ts.net")).label)
+    }
 }

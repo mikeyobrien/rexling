@@ -130,7 +130,7 @@ class RexModel @JvmOverloads constructor(application: Application, preferenceNam
         if(theme.terminal.dark) darkTheme=id else lightTheme=id
         preferences.edit {putString(if(theme.terminal.dark) "dark_theme" else "light_theme",id)}
     }
-    fun changeFontSize(size: Int) {fontSize=size.coerceIn(8,20);preferences.edit {putInt("font_size",fontSize)}}
+    fun changeFontSize(size: Int) {fontSize=size.coerceIn(MinFontSize,MaxFontSize);preferences.edit {putInt("font_size",fontSize)}}
     var appearance by mutableStateOf(runCatching {Appearance.valueOf(preferences.getString("appearance","SYSTEM")!!)}.getOrDefault(Appearance.SYSTEM))
         private set
     internal var minimizeFloatingPanes by mutableStateOf(preferences.getBoolean("minimize_floating_panes",false))

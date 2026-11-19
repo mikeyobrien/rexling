@@ -39,8 +39,8 @@ health)
   check "$SERIAL online" "adb devices | grep -q '^$SERIAL[[:space:]]*device'"
   check "booted" booted
   check "host GPU, not SwiftShader" "adb -s $SERIAL shell dumpsys SurfaceFlinger | grep -m1 '^GLES:' | grep -qv -i swiftshader"
-  check "Rexling installed" "adb -s $SERIAL shell pm path dev.shulhi.rex | grep -q package:"
-  check "Rexling runs as x86_64" "adb -s $SERIAL shell dumpsys package dev.shulhi.rex | grep -q 'primaryCpuAbi=x86_64'"
+  check "Rexling installed" "adb -s $SERIAL shell pm path dev.mobrienv.rexling | grep -q package:"
+  check "Rexling runs as x86_64" "adb -s $SERIAL shell dumpsys package dev.mobrienv.rexling | grep -q 'primaryCpuAbi=x86_64'"
   if [ -n "$SERVER_HOST" ]; then check "Rex server reachable from emulator" "adb -s $SERIAL shell ping -c1 -W3 $SERVER_HOST"
   else echo "skip  Rex server reachability (set REXLING_SERVER_URL)"; fi
   exit $rc

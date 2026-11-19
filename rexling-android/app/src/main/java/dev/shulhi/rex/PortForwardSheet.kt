@@ -31,23 +31,13 @@ import dev.chrisbanes.haze.HazeState
     val context=LocalContext.current
     var editing by remember {mutableStateOf(false)}
     val canAdd=servers.any {it.connected && it.session.isNotBlank()} && PortForwards.items.size<64
-    ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),
-        containerColor=Color.Transparent,contentColor=MaterialTheme.colorScheme.onSurface,tonalElevation=0.dp,dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
-        Column(Modifier.drawerFrost(hazeState,BottomSheetDefaults.ExpandedShape).fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)).padding(bottom=4.dp)) {
-            DrawerHandle()
-            Row(Modifier.fillMaxWidth().heightIn(min=48.dp).padding(start=16.dp,end=4.dp),verticalAlignment=Alignment.CenterVertically) {
-                Text("Port forwarding",Modifier.weight(1f),style=SettingsType.row,fontWeight=FontWeight.Bold)
-                ChromeButton(ChromeIcon.ADD,"Add port forward",enabled=canAdd) {editing=true}
-                ChromeButton(ChromeIcon.CLOSE,"Close port forwarding",onClick=onClose)
-            }
-            Text("All servers · ${PortForwards.items.count {it.running}} running",Modifier.padding(horizontal=16.dp,vertical=6.dp),style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
+    SheetCard("Port forwarding","Close port forwarding",onClose,hazeState,actions={KitRoundButton(ChromeIcon.ADD,"Add port forward",enabled=canAdd) {editing=true}}) {
             PortForwards.notice?.let {notice->
                 Text(notice,Modifier.padding(horizontal=16.dp,vertical=8.dp),style=SettingsType.detail,color=MaterialTheme.colorScheme.error)
                 TextButton(onClick={PortForwards.notice=null}) {Text("Dismiss")}
             }
             if(PortForwards.items.isEmpty()) {
                 Text("Tap a localhost link in a terminal, or add a forward.",Modifier.padding(16.dp),style=SettingsType.detail)
-                TextButton(onClick={editing=true},enabled=canAdd,modifier=Modifier.padding(horizontal=8.dp)) {Text("Add port forward")}
             }
             LazyColumn(Modifier.fillMaxWidth().heightIn(max=sheetBodyMax(440.dp,chrome=200.dp)),contentPadding=PaddingValues(horizontal=16.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
                 PortForwards.items.groupBy {it.serverId.ifBlank {it.endpoint}}.forEach {(serverId,entries)->
@@ -59,7 +49,7 @@ import dev.chrisbanes.haze.HazeState
                         }
                     }
                     items(entries,key={it.id}) {item->
-                        Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f),RoundedCornerShape(12.dp)).padding(start=4.dp,end=0.dp,top=4.dp,bottom=4.dp)) {
+                        Column(Modifier.fillMaxWidth().background(Kit.groupFill(),Kit.row).padding(start=4.dp,end=0.dp,top=4.dp,bottom=4.dp)) {
                             Row(Modifier.heightIn(min=48.dp),verticalAlignment=Alignment.CenterVertically) {
                                 val stateColor=when(item.phase) {
                                     "active"->MaterialTheme.colorScheme.primary
@@ -101,8 +91,11 @@ import dev.chrisbanes.haze.HazeState
                     }
                 }
             }
+            Row(Modifier.fillMaxWidth().padding(start=16.dp,end=10.dp).heightIn(min=48.dp),verticalAlignment=Alignment.CenterVertically) {
+                Text("Port taken",Modifier.weight(1f),style=SettingsType.row)
+                Segmented(listOf(PortConflictPolicy.ASK to "Ask",PortConflictPolicy.AUTO to "Another port",PortConflictPolicy.REPLACE to "Replace"),PortForwards.policy,PortForwards::changePolicy)
+            }
         }
-    }
     if(editing) ForwardEditor(servers,selectedServer,onClose={editing=false}) {target,host,port,local->editing=false;onAdd(target,host,port,local)}
 }
 @Composable private fun ForwardEditor(servers: List<ForwardServer>,selectedServer: String,onClose: ()->Unit,onSave: (ForwardServer,String,Int,Int)->Unit) {
@@ -114,7 +107,7 @@ import dev.chrisbanes.haze.HazeState
     var local by remember {mutableStateOf("")}
     var error by remember {mutableStateOf<String?>(null)}
     var advanced by remember {mutableStateOf(false)}
-    AlertDialog(onDismissRequest=onClose,title={Text("Add port forward",style=SettingsType.title)},text={
+    KitDialog(onDismissRequest=onClose,title={Text("Add port forward",style=SettingsType.title)},text={
         Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Box {
                 TextButton(onClick={serverMenu=true}) {server?.let {ServerGlyph(it.profile.icon,Modifier.size(18.dp));Spacer(Modifier.width(8.dp))};Text("${server?.profile?.label ?: "Choose server"} ▾")}

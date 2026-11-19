@@ -73,7 +73,7 @@ import androidx.compose.ui.unit.dp
             } else Spacer(Modifier.width(4.dp))
             ChromeSymbol(ChromeIcon.CHEVRON,Modifier.size(14.dp),MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        DropdownMenu(open,{open=false},containerColor=MaterialTheme.colorScheme.surface,tonalElevation=0.dp) {
+        DropdownMenu(open,{open=false},containerColor=MaterialTheme.colorScheme.surface,tonalElevation=0.dp,shape=Kit.group) {
             ServerIcon.entries.forEach {icon->
                 DropdownMenuItem(text={Text(icon.label,style=SettingsType.row)},
                     leadingIcon={ServerGlyph(icon)},trailingIcon={if(selected==icon) Text("✓",color=MaterialTheme.colorScheme.primary)},

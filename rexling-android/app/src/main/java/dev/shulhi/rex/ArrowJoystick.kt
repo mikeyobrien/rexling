@@ -54,7 +54,7 @@ private val arrowIcons=mapOf("left" to ChromeIcon.LEFT,"down" to ChromeIcon.DOWN
         override fun calculatePosition(anchorBounds: IntRect,windowSize: IntSize,layoutDirection: LayoutDirection,popupContentSize: IntSize)=
             IntOffset(anchorBounds.center.x-popupContentSize.width/2,anchorBounds.center.y-popupContentSize.height/2)
     }}
-    Box(modifier.fillMaxHeight().systemGestureExclusion().clip(RoundedCornerShape(11.dp))
+    Box(modifier.fillMaxHeight().systemGestureExclusion().clip(KeyCapShape)
         .background(if(active || popupOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
         .semantics {
             contentDescription="Arrow keys";role=Role.Button;selected=active || popupOpen

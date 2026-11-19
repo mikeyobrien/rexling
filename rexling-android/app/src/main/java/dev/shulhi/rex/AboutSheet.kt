@@ -53,14 +53,14 @@ internal data class AppBuildInfo(val version: String,val number: Int,val type: S
             ChromeButton(ChromeIcon.CLOSE,"Close about",onClick=onClose)
         }
         Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(14.dp)) {
-            Image(painterResource(R.drawable.rexlink_dinosaur),contentDescription=null,
+            Image(painterResource(R.drawable.rexling_dinosaur_gruvbox),contentDescription=null,
                 modifier=Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).background(Color.White).padding(4.dp))
             Column(verticalArrangement=Arrangement.spacedBy(4.dp)) {
                 Text(stringResource(R.string.app_name),fontSize=24.sp,fontWeight=FontWeight.Bold)
                 Text(stringResource(R.string.app_subtitle),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f)).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.fillMaxWidth().clip(Kit.row).background(Kit.groupFill()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
             BuildInfoRow("Version",info.version)
             BuildInfoRow("Build","${info.number} · ${info.type}")
             BuildInfoRow("Commit",info.commit)

@@ -89,19 +89,14 @@ private class PopupFrostNode(haze: HazeState,style: HazeStyle,var invalidator: P
     return visible || capture
 }
 
-@Composable internal fun DrawerHandle() {
-    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(16.dp),contentAlignment=androidx.compose.ui.Alignment.Center) {
-        androidx.compose.foundation.layout.Box(Modifier.width(28.dp).height(3.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant,androidx.compose.foundation.shape.RoundedCornerShape(3.dp)))
-    }
-}
-
 /**
  * Max height for a sheet's scrolling body: [preferred], but never more than fits between the
  * status bar and the bottom insets after [chrome] (handle, title, actions). Short windows (an
  * unfolded foldable in landscape, a taskbar) otherwise push the sheet's title under the status bar.
  */
 @Composable internal fun sheetBodyMax(preferred: androidx.compose.ui.unit.Dp,chrome: androidx.compose.ui.unit.Dp=96.dp): androidx.compose.ui.unit.Dp {
+    // Docked, the sheet has its side of the screen to itself and takes what it needs of it.
+    if(sheetDocks()) return androidx.compose.ui.unit.Dp.Infinity
     val density=androidx.compose.ui.platform.LocalDensity.current
     val screen=androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
     val insets=with(density) {(androidx.compose.foundation.layout.WindowInsets.safeDrawing.getTop(this)+

@@ -119,11 +119,11 @@ class PaneChromeTest {
         ui.runOnIdle {terminal.onPaneDrag?.invoke(next,true)};ui.mainClock.advanceTimeByFrame()
         assertEquals(before,fixed.fetchSemanticsNode().boundsInRoot)
         val program=badge().fetchSemanticsNode().boundsInRoot
-        assertEquals(before.center.x,program.center.x,1f)
+        assertTrue("The badge sits in the top right, away from the prompt: $program",program.left>before.center.x && program.bottom<before.top)
         assertTrue("Short labels should fit their content",program.width<before.width*.5f)
         ui.runOnIdle {terminal.onPaneDrag?.invoke(-next,true)};ui.mainClock.advanceTimeByFrame()
         val opposite=badge().fetchSemanticsNode().boundsInRoot
-        assertEquals(program.center.x,opposite.center.x,1f)
+        assertEquals(program.right,opposite.right,1f)
         assertEquals(program.top,opposite.top,1f)
         assertEquals(program.bottom,opposite.bottom,1f)
         assertEquals(before,fixed.fetchSemanticsNode().boundsInRoot)
@@ -144,7 +144,7 @@ class PaneChromeTest {
         ui.runOnIdle {terminal.onPaneDrag?.invoke(-terminal.width*.4f,true)};ui.mainClock.advanceTimeByFrame()
         val latest=ui.onNodeWithText("↓ Latest").fetchSemanticsNode().boundsInRoot
         val program=badge().fetchSemanticsNode().boundsInRoot
-        assertTrue("$latest overlaps $program",latest.bottom<=program.top)
+        assertTrue("$latest overlaps $program",!latest.overlaps(program))
     }
 
     @Test fun switchCaptionUsesTheTopBarTitleAndDirectoryOnSeparateLines() {

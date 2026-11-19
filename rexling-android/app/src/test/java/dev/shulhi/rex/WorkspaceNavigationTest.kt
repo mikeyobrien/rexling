@@ -102,5 +102,15 @@ class WorkspaceNavigationTest {
             assertEquals("a",WorkspaceNavigation.decode(raw).pane("s",listOf(first,second)))
         }
     }
+    @Test fun forgettingADestroyedSessionRemovesEveryTraceOfIt() {
+        val history = WorkspaceNavigation()
+        history.remember("dead", listOf(first, second), "b")
+        history.remember("alive", listOf(first, second), "c")
+        assertTrue(history.forget("dead"))
+        assertFalse(history.forget("dead"))
+        assertFalse(history.forget(""))
+        assertFalse(history.encode().contains("dead"))
+        assertEquals("c", WorkspaceNavigation.decode(history.encode()).pane("alive", second))
+    }
 
 }

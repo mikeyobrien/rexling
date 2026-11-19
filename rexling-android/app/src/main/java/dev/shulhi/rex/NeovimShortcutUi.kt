@@ -209,7 +209,7 @@ import kotlin.math.roundToInt
             Text("One shortcut per line. Use a name followed by = for a custom label.",style=SettingsType.body)
             Text("Examples: :w or LazyGit = <Space>lg. Optional [Git] headers group following shortcuts; [] returns to ungrouped shortcuts. One group level only.",style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(draft,{draft=it;error=null},Modifier.fillMaxWidth(),label={Text("Shortcuts")},minLines=5,maxLines=8,
-                textStyle=SettingsType.body.copy(fontFamily=MonoUi),isError=error!=null,shape=RoundedCornerShape(14.dp))
+                textStyle=SettingsType.body.copy(fontFamily=MonoUi),isError=error!=null,shape=Kit.row)
             error?.let {Text(it,style=SettingsType.detail,color=MaterialTheme.colorScheme.error)}
             Text("Shortcuts start in Normal mode. : commands run immediately. Other key sequences are sent as configured; use <CR> for Enter. Also supports <Esc>, <Tab>, arrow keys and <C-x>. Use <Space> for a Space leader. Drag the floating button to move it.",style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {

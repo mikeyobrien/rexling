@@ -5,7 +5,7 @@ description: Build, launch and drive the Rexling Android app (unofficial Rex cli
 
 # Verify Rexling
 
-The user-facing surface is the Android app (`dev.shulhi.rex`), a client that views and controls Rex terminal sessions. The proof runs through the real path: the app on an emulator, connected over HTTPS to the user's Rex server, typing into a throwaway Rex session, with the result read back on the server with `rex capture`. Secondary surface: the `rex-probe` CLI (`rexling-core/probe/README.md`).
+The user-facing surface is the Android app (`dev.mobrienv.rexling`), a client that views and controls Rex terminal sessions. The proof runs through the real path: the app on an emulator, connected over HTTPS to the user's Rex server, typing into a throwaway Rex session, with the result read back on the server with `rex capture`. Secondary surface: the `rex-probe` CLI (`rexling-core/probe/README.md`).
 
 All paths below are relative to the repo root. Helpers are in `.claude/skills/verify-rexling/scripts/` (`S=` below).
 
@@ -35,13 +35,13 @@ The app connects to the user's live Rex server. Opening one of their sessions in
 
 ## Drive
 
-`$S/ui.py` acts on accessibility labels (`text` or `content-desc`) from `uiautomator`, never coordinates. Its commands: `list`, `has LABEL`, `tap LABEL`, `type TEXT`, `key ENTER`, `shot PATH`. `tap` and `has` wait up to `--timeout` seconds and match substrings.
+`$S/ui.py` acts on accessibility labels (`text` or `content-desc`) from `uiautomator`, never coordinates. Its commands: `list`, `has LABEL`, `tap LABEL`, `hold LABEL`, `swipe LABEL left|right`, `drag LABEL DY`, `type TEXT`, `key ENTER`, `shot PATH`. Commands that take a label wait up to `--timeout` seconds and match substrings; add `--exact` when a short label such as `Close` would also match `Close sheet`.
 
-- Stable handles: `Session strip`, `Terminal menu`, `Terminal output`, `Tabs and panes`, `Activity`, `Close sheet`, `Terminal keys`, `Escape`, `Control`, `Alt`, `Shift`. Session rows are labelled with the session name.
+- Stable handles: `Session strip`, `Terminal menu`, `Terminal output`, `Session program icon` (opens the switcher), `Close switcher`, `Activity`, `Close sheet`, `Terminal keys`, `Escape`, `Control`, `Alt`, `Shift` (the keycaps read `esc`, `ctrl`, `alt`; match the content-desc with `--exact`). Session rows are labelled with the session name.
 - Close sheets with `ui.py tap "Close sheet"`, never `key BACK`. Once the keyboard is hidden, BACK leaves the app.
 - Opening a session takes control automatically. Tapping `Terminal output` takes control if it was released.
 - The app reopens where it was (server, session, control). A run shouldn't assume a fresh UI. Navigate explicitly through `Session strip`.
-- Run `adb shell am force-stop dev.shulhi.rex` before killing a session the app is viewing. Killing a viewed session leaves the app stuck at `reconnecting · input paused` with `No sessions yet`, and `Retry now` doesn't recover it (seen 2026-11-17, likely an app bug). After a force-stop, relaunching falls back to another session, possibly the user's. It takes control only if no other client holds the size. `smoke.sh` force-stops at both start and end.
+- Run `adb shell am force-stop dev.mobrienv.rexling` before killing a session the app is viewing: relaunching falls back to another session, possibly the user's, and it takes control only if no other client holds the size. A session that ended while the client was disconnected used to leave the app at `reconnecting · input paused` with `Retry now` doing nothing, because each reconnect re-attached the same dead session; the engine now clears that selection and keeps the live catalog (see `rexling-android/PROTOCOL.md`). `smoke.sh` force-stops at both start and end.
 
 Feature recipes are in `features/` (index: `features/README.md`). A proof that covers one entry point is incomplete when that feature's file lists others.
 

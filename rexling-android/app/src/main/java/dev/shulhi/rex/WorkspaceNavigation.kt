@@ -29,6 +29,14 @@ class WorkspaceNavigation {
         return true
     }
 
+    /** Forget a session the server no longer has; its history would otherwise encode forever. */
+    fun forget(session: String): Boolean {
+        if(session.isBlank()) return false
+        val removed=windows.keys.remove(session) or blocks.keys.remove(session)
+        val removedPanes=panes.keys.filter {it.first==session}.also {keys->keys.forEach {panes.remove(it)}}.isNotEmpty()
+        return removed || removedPanes
+    }
+
     fun remember(session: String, available: List<WindowItem>, block: String): Boolean {
         if(session.isBlank()) return false
         val window = available.firstOrNull { it.blocks.any { pane -> pane.id == block } } ?: return false

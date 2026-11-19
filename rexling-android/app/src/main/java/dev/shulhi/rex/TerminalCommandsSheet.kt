@@ -26,7 +26,6 @@ import dev.chrisbanes.haze.HazeState
         containerColor=MaterialTheme.colorScheme.surfaceContainerHigh,contentColor=MaterialTheme.colorScheme.onSurface,
         dragHandle=null) {
         Column(Modifier.drawerFrost(hazeState,BottomSheetDefaults.ExpandedShape).fillMaxWidth().imePadding().padding(horizontal=8.dp).padding(bottom=8.dp)) {
-            DrawerHandle()
             Row(Modifier.fillMaxWidth().heightIn(min=48.dp).padding(start=12.dp),verticalAlignment=Alignment.CenterVertically,
                 horizontalArrangement=Arrangement.spacedBy(10.dp)) {
                 Text("Commands",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold)

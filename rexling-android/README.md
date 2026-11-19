@@ -21,9 +21,12 @@ The release APK is `app/build/outputs/apk/release/app-release.apk` (arm64, API 2
 Run `./scripts/gradle.sh :app:shareRelease` for a copy in `dist/` named
 `Rexling-<date>-build<code>-<commit>-arm64-release.apk`, with a SHA-256 checksum.
 Its identity matches **⋮ → About Rexling**; local edits add `-modified`.
-The package remains `dev.shulhi.rex`, preserving existing installs and settings.
-Local releases retain the development signing identity; configure production
-signing separately before publishing. SDK paths and caches remain ignored.
+This fork's application ID is `dev.mobrienv.rexling` and its launcher name is
+Rexling M, so it installs beside upstream's `dev.shulhi.rex`; the code namespace
+is unchanged. Releases are signed with the key named by the `rexling.release.*`
+Gradle properties (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`, set in
+`~/.gradle/gradle.properties` or as `ORG_GRADLE_PROJECT_*` in CI), and fall back
+to the local debug key when those are absent. SDK paths and caches remain ignored.
 
 ## Usage
 
@@ -50,8 +53,9 @@ signing separately before publishing. SDK paths and caches remain ignored.
   queued plain text can be combined without delaying the first keystroke.
 - The one-row keyboard dock offers modifiers, a hold-and-slide arrow joystick, a dedicated Enter key,
   hold/repeat, Ctrl shortcuts and an expandable panel with F1–F12.
-- **⋮ → Preferences → Appearance** saves independent light/dark presets, including the
-  Rexling defaults. Font size changes in 1-sp steps. Theme requests are sent
+- **⋮ → Preferences** shows each setting's choices in its own row: Theme, Text size
+  (1-sp steps), Keep awake, Arrows, Ctrl menu and Floating panes. **Colors** saves
+  independent light/dark presets, including the Rexling defaults. Theme requests are sent
   while owning the pane; programs may override their own colorscheme.
 - Reconnect notices expose input-paused state and Retry now. Network changes
   trigger retry; uncertain input is never automatically resent.
@@ -75,7 +79,7 @@ Configure each Rex server under **⋮ → Preferences → Portside**. Rexling ca
 [Portside](https://github.com/shulhi/portside) 0.3+'s Tailscale-authenticated upload
 API directly; see its repository for server installation and hosting setup.
 Keyboard image paste,
-menu Paste and Attach image upload PNG/JPEG/GIF/WebP files and insert the returned
+the action card's Paste and Image tiles upload PNG/JPEG/GIF/WebP files and insert the returned
 server path without submitting the prompt. Uploaded images remain ready for the
 original pane if you navigate away. The separate Portside app can be opened from
 settings but is not required for transfers. See the root README for setup and

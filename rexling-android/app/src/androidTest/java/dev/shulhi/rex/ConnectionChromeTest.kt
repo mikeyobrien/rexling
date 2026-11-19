@@ -12,19 +12,24 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ConnectionChromeTest {
     @get:Rule val ui=createComposeRule()
-    @Test fun takeoverNoticeIsContextualAndDisappearsWhenTheOtherOwnerLeaves() {
-        val other=mutableStateOf(true);var takes=0;var capture=false
-        ui.setContent {MaterialTheme {OtherOwnerNotice("b",other.value,true,67 to 25,{takes++},onVisibleChange={capture=it})}}
-        ui.mainClock.autoAdvance=false;ui.mainClock.advanceTimeBy(450)
-        ui.onNodeWithText("Sized by another client · 67×25").assertIsDisplayed()
-        ui.onNodeWithText("Take over").performClick();ui.runOnIdle {assertTrue(capture);assertEquals(1,takes);other.value=false}
-        ui.mainClock.advanceTimeByFrame();ui.onNodeWithText("Take over").assertDoesNotExist();ui.runOnIdle {assertFalse(capture)}
-    }
-    @Test fun cancelledOwnershipNoticeDoesNotResurrectAfterItsDelay() {
-        val other=mutableStateOf(true)
-        ui.setContent {MaterialTheme {OtherOwnerNotice("b",other.value,true,67 to 25,{})}}
-        ui.mainClock.autoAdvance=false;ui.mainClock.advanceTimeBy(100);ui.runOnIdle {other.value=false}
-        ui.mainClock.advanceTimeBy(1000);ui.onNodeWithText("Take over").assertDoesNotExist()
+    @Test fun theHeaderStatesWhatIsWrongInItsSecondLineWithOneAction() {
+        val status=mutableStateOf<HeaderStatus?>(null);var retries=0;var takes=0
+        ui.setContent {MaterialTheme {SessionHeader(listOf(SessionItem("a","alpha")),"a",true,true,emptyList(),0,"~/dev",{},{},{},title="fish",
+            paneDots=1 to 3,status=status.value) {}}}
+        ui.onNodeWithContentDescription("Session strip").assertIsDisplayed()
+        ui.onNodeWithContentDescription("Pane 2 of 3").assertIsDisplayed()
+        val height=ui.onRoot().fetchSemanticsNode().boundsInRoot.height
+        ui.runOnIdle {status.value=HeaderStatus("Offline",StatusTone.WARNING,"Retry",enabled=false) {retries++}}
+        ui.onNodeWithContentDescription("Session strip").assertDoesNotExist()
+        ui.onNodeWithText("Offline").assertIsDisplayed()
+        ui.onNode(hasText("Retry") and hasClickAction()).assertIsNotEnabled()
+        // The status takes the session line's place, so the terminal below never moves.
+        assertEquals(height,ui.onRoot().fetchSemanticsNode().boundsInRoot.height)
+        ui.runOnIdle {status.value=HeaderStatus("Viewing only",StatusTone.QUIET,"Take over") {takes++}}
+        ui.onNode(hasText("Take over") and hasClickAction()).performClick()
+        ui.runOnIdle {assertEquals(1,takes);assertEquals(0,retries);status.value=null}
+        ui.onNodeWithText("Take over").assertDoesNotExist()
+        ui.onNodeWithContentDescription("Session strip").assertIsDisplayed()
     }
     @Test fun reconnectNoticeMakesPausedInputAndRetryExplicit() {
         val online=mutableStateOf<Boolean?>(false);var retries=0

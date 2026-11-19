@@ -12,43 +12,51 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class TerminalEditActionsTest {
     @get:Rule val ui=createComposeRule()
-    private val window=mutableStateOf(WindowItem("w","Project",listOf(BlockItem("a","shell"),BlockItem("b","shell"),BlockItem("f","shell")),
+    private val fish=ProgramIdentity.resolve(listOf("fish"))
+    private val claude=ProgramIdentity.resolve(listOf("claude"))
+    private val codex=ProgramIdentity.resolve(listOf("codex"))
+    private val tab=mutableStateOf(TabEntry("w","Project","",listOf(fish,claude,codex),0,false,false,"Project",
+        listOf(PaneEntry("a","fish","","shell",fish),PaneEntry("b","Agent task","","shell",claude),PaneEntry("f","Floating task","","shell",codex,floating=true)),
         listOf(PanePlacement("a",0f,0f,.5f,1f),PanePlacement("b",.5f,0f,.5f,1f),PanePlacement("f",.1f,.1f,.7f,.7f,floating=true))))
     private val calls=mutableListOf<String>()
-    private fun show(page: Int) {
+    private fun show() {
         ui.setContent {RexTheme(false,ThemeCatalog.defaults[1]) {
-            TabPaneSwitcher(listOf(window.value),"w","a",mapOf("a" to ProgramIdentity.resolve(listOf("fish")),"b" to ProgramIdentity.resolve(listOf("claude")),"f" to ProgramIdentity.resolve(listOf("codex"))),
-                mapOf("b" to "Agent task","f" to "Floating task"),emptyMap(),{0},true,true,true,
-                {calls+="open-tab"},{calls+="open-pane"},{},{_,_->},{},{},{},initialPage=page,
-                onRenameTab={id,label->calls+="rename-tab:$id:$label";true},onRenamePane={tab,id,label->calls+="rename-pane:$tab:$id:$label";true},
-                onFloatPane={tab,id->calls+="float:$tab:$id";window.value=window.value.copy(layout=window.value.layout.map {if(it.id==id) it.copy(floating=true) else it});true},
-                onDockPane={tab,id,anchor,split->calls+="dock:$tab:$id:$anchor:${split.name}";true})
+            Switcher(SwitcherModel("Mac","Session",listOf(tab.value),"w","a",openTab={calls+="open-tab"},openPane={calls+="open-pane"},
+                renameTab={id,label->calls+="rename-tab:$id:$label";true},renamePane={window,id,label->calls+="rename-pane:$window:$id:$label";true},
+                floatPane={window,id->
+                    calls+="float:$window:$id"
+                    tab.value=tab.value.copy(panes=tab.value.panes.map {if(it.id==id) it.copy(floating=true) else it},layout=tab.value.layout.map {if(it.id==id) it.copy(floating=true) else it});true
+                },dockPane={window,id,anchor,split->calls+="dock:$window:$id:$anchor:${split.name}";true}),onClose={})
         }}
     }
+    private fun hold(text: String) {ui.onNode(hasText(text,substring=true) and hasClickAction()).performTouchInput {longClick()};ui.waitForIdle()}
     @Test fun tabAndPaneRenameActionsNeverOpenTheTerminal() {
-        show(0)
-        ui.onNodeWithContentDescription("Actions for tab Project").performClick()
-        ui.onNodeWithText("Rename tab").performClick()
+        show()
+        hold("Project")
+        ui.onNodeWithText("Rename").performClick()
+        ui.onNodeWithText("Rename tab").assertIsDisplayed()
         ui.onNode(hasSetTextAction()).performTextReplacement("Release")
         ui.onNodeWithText("Save").performClick()
-        ui.onNodeWithText("Panes").performClick()
-        ui.onNodeWithContentDescription("Actions for pane fish").performClick()
-        ui.onNodeWithText("Rename pane").performClick()
+        hold("fish")
+        ui.onNodeWithText("Rename").performClick()
+        ui.onNodeWithText("Rename pane").assertIsDisplayed()
         ui.onNode(hasSetTextAction()).performTextReplacement("Console")
         ui.onNodeWithText("Save").performClick()
         ui.runOnIdle {assertEquals(listOf("rename-tab:w:Release","rename-pane:w:a:Console"),calls)}
     }
-    @Test fun dockingChoosesTheTargetAndSideWhileFloatingKeepsOneTiledPane() {
-        show(1)
-        ui.onNodeWithContentDescription("Actions for pane Floating task").performClick()
-        ui.onNodeWithText("Dock pane").performClick()
-        ui.onNodeWithText("Split below").performClick()
+    @Test fun dockingChoosesTheTargetAndSideWhileFloatingKeepsOneDockedPane() {
+        show()
+        hold("Floating task")
+        ui.onNodeWithText("Float").assertDoesNotExist()
         ui.onNodeWithText("Dock").performClick()
-        ui.onNodeWithContentDescription("Actions for pane Agent task").performClick()
-        ui.onNodeWithText("Float pane").performClick()
-        ui.onNodeWithContentDescription("Actions for pane fish").performClick()
-        ui.onNodeWithText("Float pane").assertIsNotEnabled()
-        ui.onNodeWithText("Keep one docked pane in this tab").assertIsDisplayed()
+        ui.onNodeWithText("Split below").performClick()
+        ui.onNode(hasText("Dock") and hasClickAction()).performClick()
+        hold("Agent task")
+        ui.onNodeWithText("Float").performClick()
+        // One docked pane is left, and a tab keeps at least one.
+        hold("fish")
+        ui.onNodeWithText("Rename").assertIsDisplayed()
+        ui.onNodeWithText("Float").assertDoesNotExist()
         ui.runOnIdle {assertEquals(listOf("dock:w:f:a:BELOW","float:w:b"),calls)}
     }
     @Test fun rejectedRenameKeepsTheInputAndSupportsResetToAutomatic() {

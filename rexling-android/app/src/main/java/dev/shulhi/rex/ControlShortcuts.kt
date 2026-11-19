@@ -75,7 +75,7 @@ private val controlShortcutRows=(controlShortcuts.size+CONTROL_SHORTCUT_COLUMNS-
         anchor=it.boundsInWindow()
         screenAnchor=Rect(it.localToScreen(Offset.Zero),androidx.compose.ui.geometry.Size(it.size.width.toFloat(),it.size.height.toFloat()))
     }
-        .clip(RoundedCornerShape(11.dp)).background(if(selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+        .clip(KeyCapShape).background(if(selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
         .semantics {
             contentDescription="Control";this.selected=active;role=Role.Button
             if(enabled) {onClick {if(visible) closeFromTrigger() else toggle();true};onLongClick(label="Control shortcuts") {visible=true;true}} else disabled()

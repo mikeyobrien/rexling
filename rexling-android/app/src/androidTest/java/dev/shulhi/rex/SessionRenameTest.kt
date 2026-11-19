@@ -12,13 +12,6 @@ import org.junit.runner.RunWith
 class SessionRenameTest {
     @get:Rule val ui=createComposeRule()
     private val target=SessionTarget(ServerProfile.create("Mac","https://example.test","mac"),SessionItem("s","old name"))
-    @Test fun renameMenuDoesNotSelectOrCloseTheSession() {
-        var selected=0;var closed=0;var renamed=0
-        ui.setContent {MaterialTheme {SessionRow(target,false,false,false,{selected++},{closed++},{renamed++})}}
-        ui.onNodeWithContentDescription("Session actions for old name on Mac").performClick()
-        ui.onNodeWithText("Rename session").performClick()
-        ui.runOnIdle {assertEquals(1,renamed);assertEquals(0,selected);assertEquals(0,closed)}
-    }
     @Test fun dialogPrefillsValidatesAndSubmitsATrimmedName() {
         var saved=""
         ui.setContent {MaterialTheme {SessionRenameDialog(target,true,{saved=it},{})}}
