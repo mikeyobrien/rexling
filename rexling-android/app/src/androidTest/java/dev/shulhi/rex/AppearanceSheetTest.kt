@@ -101,8 +101,8 @@ class AppearanceSheetTest {
     }
     @Test fun theKeyRowPreviewsItsKeysAndOpensTheEditor() {
         var opened=0
-        ui.setContent {MaterialTheme {PreferencesSheet({},toolbarKeys=listOf(ToolbarKey.ESCAPE,ToolbarKey.CTRL_C),onToolbar={opened++})}}
-        ui.onNodeWithText("esc").assertIsDisplayed();ui.onNodeWithText("^C").assertIsDisplayed()
+        ui.setContent {MaterialTheme {PreferencesSheet({},toolbarKeys=listOf(ToolbarKey.HOME,ToolbarKey.CTRL_C),onToolbar={opened++})}}
+        ui.onNodeWithText("home").assertIsDisplayed();ui.onNodeWithText("^C").assertIsDisplayed()
         ui.onNodeWithText("Key row").performClick()
         ui.runOnIdle {assertEquals(1,opened)}
     }

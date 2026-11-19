@@ -118,11 +118,8 @@ private val arrowIcons=mapOf("left" to ChromeIcon.LEFT,"down" to ChromeIcon.DOWN
                 }
             }
         },contentAlignment=Alignment.Center) {
-        // The four arrows spelled out, vim order, so the key says what it sends before it is held.
-        val tint=(if(active || popupOpen) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha=if(readable) 1f else .38f)
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly,verticalAlignment=Alignment.CenterVertically) {
-            arrowIcons.values.forEach {ChromeSymbol(it,Modifier.size(15.dp),tint)}
-        }
+        ChromeSymbol(ChromeIcon.ARROWS,Modifier.size(20.dp),
+            (if(active || popupOpen) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha=if(readable) 1f else .38f))
         if(active && enabled && useJoystick && !popupOpen) Popup(popupPositionProvider=provider,properties=PopupProperties(focusable=false,dismissOnClickOutside=false,dismissOnBackPress=false,clippingEnabled=false)) {
             ArrowJoystickFace(direction,displacement,if(keyboardVisible) 88.dp else 52.dp,if(keyboardVisible) 14.dp else 12.dp)
         }

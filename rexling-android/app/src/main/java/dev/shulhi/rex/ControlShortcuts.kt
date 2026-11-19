@@ -118,7 +118,8 @@ private val controlShortcutRows=(controlShortcuts.size+CONTROL_SHORTCUT_COLUMNS-
                 } finally {timer?.cancel();pressed=false;if(!released || opened) dismiss()}
             }
         },contentAlignment=Alignment.Center) {
-        KeyCapLabel(ToolbarKey.CONTROL.cap,(if(selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha=if(readable) 1f else .38f),selected)
+        ChromeSymbol(ChromeIcon.CONTROL,Modifier.size(20.dp),
+            (if(selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha=if(readable) 1f else .38f))
         if(visible) Popup(popupPositionProvider=provider,onDismissRequest={dismiss()},
             properties=PopupProperties(focusable=false,dismissOnClickOutside=true)) {
             val popupView=LocalView.current.rootView

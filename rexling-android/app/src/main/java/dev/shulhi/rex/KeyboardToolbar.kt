@@ -2,9 +2,9 @@ package dev.shulhi.rex
 
 /** Stable preference IDs; terminal input behavior remains owned by KeyboardBar. */
 internal enum class ToolbarKey(val id: String,val label: String,val icon: ChromeIcon?=null,val terminal: String="",val controlLetter: String="") {
-    ESCAPE("escape","Escape",terminal="esc"),
-    CONTROL("control","Ctrl"),ALT("alt","Alt"),SHIFT("shift","Shift",ChromeIcon.SHIFT),
-    TAB("tab","Tab",terminal="tab"),ARROWS("arrows","Arrows / joystick",ChromeIcon.ARROWS),ENTER("enter","Enter",ChromeIcon.ENTER,"enter"),
+    ESCAPE("escape","Escape",ChromeIcon.ESCAPE,"esc"),
+    CONTROL("control","Ctrl",ChromeIcon.CONTROL),ALT("alt","Alt",ChromeIcon.ALT),SHIFT("shift","Shift",ChromeIcon.SHIFT),
+    TAB("tab","Tab",ChromeIcon.TAB,"tab"),ARROWS("arrows","Arrows / joystick",ChromeIcon.ARROWS),ENTER("enter","Enter",ChromeIcon.ENTER,"enter"),
     PASTE("paste","Paste",ChromeIcon.PASTE),BACKSPACE("backspace","Backspace",ChromeIcon.BACKSPACE,"backspace"),
     DELETE("delete","Delete",null,"delete"),HOME("home","Home",null,"home"),END("end","End",null,"end"),
     PAGE_UP("pageup","Page Up",null,"pageup"),PAGE_DOWN("pagedown","Page Down",null,"pagedown"),INSERT("insert","Insert",null,"insert"),

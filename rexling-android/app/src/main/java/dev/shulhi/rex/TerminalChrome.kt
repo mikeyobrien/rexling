@@ -78,7 +78,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
-internal enum class ChromeIcon { SPLIT, SEARCH, CHEVRON, SESSIONS, COPY, MORE, ADD, KEYBOARD, HIDE_KEYBOARD, LEFT, RIGHT, UP, DOWN, CLOSE, SHIFT, POINTER, EYE, BACKSPACE, ARROWS, ENTER, SETTINGS, PASTE, IMAGE, SERVER, REFRESH, EDIT, UNPLUG, DELETE, FLOAT, CHECK, PLAY, STOP, EXPAND, COLLAPSE, BELL }
+internal enum class ChromeIcon { SPLIT, SEARCH, CHEVRON, SESSIONS, COPY, MORE, ADD, KEYBOARD, HIDE_KEYBOARD, LEFT, RIGHT, UP, DOWN, TAB, CLOSE, ESCAPE, CONTROL, ALT, SHIFT, POINTER, EYE, BACKSPACE, ARROWS, ENTER, SETTINGS, PASTE, IMAGE, SERVER, REFRESH, EDIT, UNPLUG, DELETE, FLOAT, CHECK, PLAY, STOP, EXPAND, COLLAPSE, BELL }
 
 @Composable internal fun ChromeSymbol(icon: ChromeIcon, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurface) {
     Canvas(modifier.size(19.dp)) {
@@ -169,6 +169,10 @@ internal enum class ChromeIcon { SPLIT, SEARCH, CHEVRON, SESSIONS, COPY, MORE, A
             }
             ChromeIcon.BACKSPACE -> {line(9f,5f,21f,5f);line(21f,5f,21f,19f);line(21f,19f,9f,19f);line(9f,19f,2f,12f);line(2f,12f,9f,5f);line(12f,9f,17f,15f);line(17f,9f,12f,15f)}
             ChromeIcon.POINTER -> {line(5f,3f,5f,20f);line(5f,20f,10f,15f);line(10f,15f,14f,22f);line(14f,22f,17f,20f);line(17f,20f,13f,13f);line(13f,13f,20f,13f);line(20f,13f,5f,3f)}
+            ChromeIcon.ESCAPE -> {drawArc(color,-90f,270f,false,Offset(4f*u,4f*u),Size(16f*u,16f*u),style=Stroke(width));line(4f,4f,12f,12f);line(4f,4f,4f,9f);line(4f,4f,9f,4f)}
+            ChromeIcon.CONTROL -> {line(6f,15f,12f,9f);line(12f,9f,18f,15f)}
+            ChromeIcon.ALT -> {line(3f,6f,8f,6f);line(8f,6f,15f,18f);line(15f,18f,21f,18f);line(14f,6f,21f,6f)}
+            ChromeIcon.TAB -> { line(4f,12f,17f,12f); line(12f,7f,17f,12f); line(12f,17f,17f,12f); line(20f,6f,20f,18f) }
             ChromeIcon.SHIFT -> {line(12f,3f,3f,12f);line(3f,12f,8f,12f);line(8f,12f,8f,21f);line(8f,21f,16f,21f);line(16f,21f,16f,12f);line(16f,12f,21f,12f);line(21f,12f,12f,3f)}
             ChromeIcon.KEYBOARD, ChromeIcon.HIDE_KEYBOARD -> {
                 box(2f,4f,20f,14f)
@@ -685,9 +689,7 @@ internal interface TitleHold {
                 ChromeButton(ChromeIcon.CHEVRON,if(expanded) "Hide extra keys" else "Show extra keys",enabled) {expanded=!expanded}
             } else BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
                 val visibleWidth=maxWidth
-                // The arrows are four keys' worth of meaning in one, so they get two keys' width.
-                val units=toolbar.sumOf {keyUnits(it).toDouble()}.toFloat().coerceAtLeast(1f)
-                val keyWidth=(visibleWidth-4.dp*(toolbar.size-1).coerceAtLeast(0))/units
+                val keyWidth=(visibleWidth-4.dp*(toolbar.size-1).coerceAtLeast(0))/toolbar.size.coerceAtLeast(1)
                 Row(Modifier.fillMaxSize().systemGestureExclusion().horizontalScroll(keyScroll)
                     .semantics {contentDescription="Terminal keys"},horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=Alignment.CenterVertically) {
                     Box(Modifier.width(keyWidth).fillMaxHeight().clip(KeyCapShape).background(MaterialTheme.colorScheme.surfaceVariant)
@@ -701,9 +703,9 @@ internal interface TitleHold {
                         toolbar.forEach {item->key(item.id) {
                             when(item) {
                                 ToolbarKey.CONTROL->ControlDockKey(controlled,control,readable,Modifier.weight(1f),onControl,onControlShortcut,shortcutGesture)
-                                ToolbarKey.ALT->DockKey(item.cap,controlled,alt,description="Alt",modifier=Modifier.weight(1f),readable=readable,onClick=onAlt)
+                                ToolbarKey.ALT->DockKey(item.cap,controlled,alt,description="Alt",modifier=Modifier.weight(1f),icon=item.icon,readable=readable,onClick=onAlt)
                                 ToolbarKey.SHIFT->ShiftDockKey(controlled,shift,Modifier.weight(1f),onShift,onShiftPress,onShiftRelease,readable=readable)
-                                ToolbarKey.ARROWS->ArrowJoystickDockKey(controlled,Modifier.weight(keyUnits(item)),onKey,readable,inputKey,keyboardVisible,arrowJoystickEnabled,onPrompt)
+                                ToolbarKey.ARROWS->ArrowJoystickDockKey(controlled,Modifier.weight(1f),onKey,readable,inputKey,keyboardVisible,arrowJoystickEnabled,onPrompt)
                                 ToolbarKey.PASTE->DockKey(item.cap,controlled && onPaste!=null,description="Paste",modifier=Modifier.weight(1f),icon=ChromeIcon.PASTE,readable=readable) {onPaste?.invoke()}
                                 else->DockKey(item.cap,controlled,description=if(item==ToolbarKey.TAB) "Tab key" else item.label,
                                     modifier=Modifier.weight(1f),icon=item.icon,readable=readable,
@@ -739,8 +741,6 @@ internal interface TitleHold {
 internal val KeyCapShape=Kit.key
 /** The key row's outer corner: a keycap's 7 plus the 7 or so of padding between it and the bar's edge. */
 internal val KeyRowCorner=14.dp
-/** How many keys wide a toolbar key is. */
-internal fun keyUnits(key: ToolbarKey)=if(key==ToolbarKey.ARROWS) 2f else 1f
 @Composable internal fun KeyCapLabel(label: String,color: Color,active: Boolean=false) {
     Text(label,fontFamily=MonoUi,fontSize=12.sp,fontWeight=if(active) FontWeight.Bold else FontWeight.Normal,color=color,letterSpacing=0.sp,maxLines=1,softWrap=false)
 }
