@@ -26,6 +26,7 @@ ROOT = os.path.abspath(os.path.join(HERE, "../.."))
 SCRIPTS = os.path.join(ROOT, ".claude/skills/verify-rexling/scripts")
 REXCAST = os.path.join(ROOT, "scripts/rexcast")
 PAGE = os.path.join(HERE, "page.html")
+PACKAGE = os.environ.get("REXLING_PACKAGE", "dev.mobrienv.rexling")
 BITS = 12
 
 
@@ -95,11 +96,16 @@ class Session:
 
     def open(self):
         device = self.device
-        device.adb("shell", "am", "force-stop", "dev.shulhi.rex")
-        device.adb("shell", "monkey", "-p", "dev.shulhi.rex", "-c", "android.intent.category.LAUNCHER", "1")
-        device.ui("has", "Session strip", "--timeout", "20")
+        device.adb("shell", "am", "force-stop", PACKAGE)
+        device.adb("shell", "monkey", "-p", PACKAGE, "-c", "android.intent.category.LAUNCHER", "1")
+        # The header's second line is the session strip, or a status line while only viewing.
+        # Either opens the switcher.
+        deadline = time.monotonic() + 25
+        while not (line := next((name for name in ("Session strip", "Status") if device.ui("has", name, "--timeout", "1", check=False)), None)):
+            if time.monotonic() > deadline:
+                raise RuntimeError("the app's header did not appear")
         time.sleep(3)
-        device.ui("tap", "Session strip")
+        device.ui("tap", line)
         device.ui("tap", self.label, "--timeout", "15")
         device.ui("has", self.label + " · ", "--timeout", "10")
         time.sleep(2)
@@ -114,7 +120,7 @@ class Session:
         return sh("rex", "capture", "-s", self.label, "-b", self.block, "--trim", check=False)
 
     def close(self):
-        self.device.adb("shell", "am", "force-stop", "dev.shulhi.rex", check=False)
+        self.device.adb("shell", "am", "force-stop", PACKAGE, check=False)
         sh(os.path.join(SCRIPTS, "scratch-session.sh"), "kill", self.label, check=False)
 
 

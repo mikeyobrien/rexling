@@ -11,7 +11,8 @@ python3 evals/media/test_rexcast.py             # the sender's unit tests, no de
 ```
 
 A run needs the emulator from the `verify-rexling` skill (`emulator-5554`, Rexling installed
-and pointed at the local Rex server). It creates a throwaway `verify-rexling-media-*` session
+and pointed at the local Rex server). It drives the package `dev.mobrienv.rexling`; set
+`REXLING_PACKAGE` to test another build. It creates a throwaway `verify-rexling-media-*` session
 and removes it afterwards. Results go to `rexling-android/.build/media-evals/<time>-<name>/`:
 `score.json`, a recording and screenshots per case, and each case's sender log.
 
@@ -71,7 +72,11 @@ server, 2026-11-19. "Before" is `mobrienv` at `d5fea76` with only the measuremen
 | `web-type` | 0 | 100 | Keys go through XTest; the browser is resized in place when the keyboard opens. 64 ms median echo. |
 | **Total** | **30.8** | **93.4** | |
 
-Frame-rate cases move by ten points or more when the host is busy. Compare runs taken close
+After the merge with the fork's redesign (`fee3a73`, package `dev.mobrienv.rexling`) the same
+suite scored 93.1: every case within five points of the "After" column.
+
+Frame-rate cases move by ten points or more when the host is busy. An emulator whose log
+fills with `error null ctx` has lost its GL context and halves them; restart it. Compare runs taken close
 together, and trust `fps_shown` only when it agrees with `fps_drawn`.
 
 ## What is still short of a native window
