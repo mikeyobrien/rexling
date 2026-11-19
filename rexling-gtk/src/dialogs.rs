@@ -596,9 +596,14 @@ pub fn confirm_close_session(ui: &Rc<Ui>, label: &str, close: impl Fn(&Rc<Ui>) +
 
 /// Asks for a name. An empty name is passed on: the server then restores its default.
 pub fn rename(ui: &Rc<Ui>, heading: &str, current: &str, apply: impl Fn(&Rc<Ui>, &str) + 'static) {
+    ask(ui, heading, current, "Rename", apply);
+}
+
+/// Asks for a name. An empty answer is allowed: the server then picks one.
+pub fn ask(ui: &Rc<Ui>, heading: &str, current: &str, verb: &str, apply: impl Fn(&Rc<Ui>, &str) + 'static) {
     let entry = gtk::Entry::builder().text(current).activates_default(true).build();
     let dialog = adw::AlertDialog::builder().heading(heading).extra_child(&entry).close_response("cancel").default_response("rename").build();
-    dialog.add_responses(&[("cancel", "Cancel"), ("rename", "Rename")]);
+    dialog.add_responses(&[("cancel", "Cancel"), ("rename", verb)]);
     dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
     let (weak, field) = (Rc::downgrade(ui), entry.clone());
     dialog.connect_response(None, move |_, response| {

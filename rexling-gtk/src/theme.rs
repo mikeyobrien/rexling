@@ -157,11 +157,11 @@ panegrid {{ background: {line}; }}
 .rexling-mini {{ border-radius: 4px; background: alpha({fg}, 0.08); }}
 .rexling-mini.focused {{ box-shadow: inset 0 0 0 1.5px @accent_bg_color; }}
 .rexling-mini.working {{ background: alpha({fg}, 0.16); }}
-.rexling-mini.attention {{ background: alpha({warm}, 0.85); }}
-.rexling-mini.failed {{ background: alpha({red}, 0.85); }}
-.rexling-mini.done {{ background: alpha({green}, 0.7); }}
-.rexling-pane-line {{ border-radius: 6px; padding: 2px 6px; margin-left: 34px; }}
-.rexling-pane-said {{ margin-left: 54px; margin-bottom: 2px; }}
+.rexling-mini.attention {{ background: alpha({warm}, 0.22); box-shadow: inset 0 0 0 2px {warm}; }}
+.rexling-mini.failed {{ background: alpha({red}, 0.22); box-shadow: inset 0 0 0 2px {red}; }}
+.rexling-mini.done {{ background: alpha({green}, 0.22); box-shadow: inset 0 0 0 2px {green}; }}
+.rexling-pane-line {{ border-radius: 6px; padding: 2px 6px; margin-left: 40px; }}
+.rexling-pane-said {{ margin-left: 60px; margin-bottom: 2px; }}
 .rexling-pane-line:hover {{ background: alpha({fg}, 0.06); }}
 .rexling-pane-dot.done {{ background: {green}; }}
 .rexling-dot.done {{ background: {green}; }}

@@ -120,6 +120,12 @@ pub struct Ui {
     floated_from: RefCell<HashMap<String, Vec<crate::client::Split>>>,
     /// The pane the server was last told has the focus.
     synced_focus: RefCell<String>,
+    /// Finished and failed reports the user is looking at now, by pane.
+    reading: RefCell<HashMap<String, (String, String)>>,
+    /// Where the open tab sits in the list, to land beside it if it closes.
+    tab_at: Cell<usize>,
+    /// The tab whose right-click menu is open.
+    menu_tab: RefCell<String>,
     /// The tab the list last scrolled into view.
     scrolled_to: RefCell<String>,
     sidebar_toggle: gtk::Button,
@@ -436,6 +442,9 @@ pub fn build(app: &adw::Application) {
         problem: RefCell::default(),
         forwards: RefCell::default(),
         synced_focus: RefCell::default(),
+        reading: RefCell::default(),
+        tab_at: Cell::new(0),
+        menu_tab: RefCell::default(),
         scrolled_to: RefCell::default(),
         sidebar_toggle,
         told_restart: Cell::new(false),
@@ -574,8 +583,12 @@ pub fn build(app: &adw::Application) {
         // After the chosen command has run, which may itself open a dialog.
         let weak = weak.clone();
         gtk::glib::idle_add_local_once(move || {
-            if let Some(ui) = weak.upgrade().filter(|ui| !ui.modal.get()) {
-                ui.focus_terminal();
+            if let Some(ui) = weak.upgrade() {
+                ui.menu_tab.replace(String::new());
+                ui.sync_actions();
+                if !ui.modal.get() {
+                    ui.focus_terminal();
+                }
             }
         });
     });
@@ -584,8 +597,18 @@ pub fn build(app: &adw::Application) {
     secondary.connect_pressed(move |_, _, x, y| {
         let Some(ui) = weak.upgrade() else { return };
         let Some(row) = ui.tab_list.row_at_y(y as i32).filter(|row| !row.widget_name().starts_with("pane:")) else { return };
-        ui.interact();
-        ui.open_tab(&row.widget_name());
+        // The menu is about the tab under the pointer; the tab on screen stays where it is.
+        let id = row.widget_name().to_string();
+        let (at, count) = {
+            let state = ui.state.borrow();
+            (state.windows.iter().position(|t| t.id == id), state.windows.len())
+        };
+        for (name, enabled) in [("move-tab-up", at.is_some_and(|at| at > 0)), ("move-tab-down", at.is_some_and(|at| at + 1 < count))] {
+            if let Some(action) = ui.window.lookup_action(name).and_downcast::<gio::SimpleAction>() {
+                action.set_enabled(enabled);
+            }
+        }
+        ui.menu_tab.replace(id);
         let at = ui.tab_list.compute_point(&ui.toasts, &gtk::graphene::Point::new(x as f32, y as f32)).unwrap_or_else(|| gtk::graphene::Point::new(x as f32, y as f32));
         tab_popover.set_pointing_to(Some(&gdk::Rectangle::new(at.x() as i32, at.y() as i32, 1, 1)));
         tab_popover.popup();
@@ -865,7 +888,7 @@ impl Ui {
             ui.chrome.close_pane(&focused);
         });
         add("close-tab", |ui| {
-            let tab = ui.tab.borrow().clone();
+            let tab = ui.target_tab();
             ui.chrome.close_tab(&tab);
         });
         add("close-session", |ui| {
@@ -876,11 +899,14 @@ impl Ui {
             }
         });
         add("new-session", |ui| {
-            ui.interact();
-            ui.chrome.new_session("");
+            dialogs::ask(ui, "New Session", "", "Create", |ui, name| {
+                ui.interact();
+                ui.focus_pending.set(true);
+                ui.chrome.new_session(name);
+            });
         });
         add("rename-tab", |ui| {
-            let (tab, state) = (ui.tab.borrow().clone(), ui.state.borrow().clone());
+            let (tab, state) = (ui.target_tab(), ui.state.borrow().clone());
             let Some(current) = state.windows.iter().find(|t| t.id == tab) else { return };
             // Start from what the tab is called now, whether that name was given or derived.
             let shown = ui.shown_tabs.borrow().iter().find(|row| row.id == tab).map(|row| row.title.clone());
@@ -1369,9 +1395,14 @@ impl Ui {
         self.chrome.split(&focused, below);
     }
 
+    /// The tab a command is about: the one right-clicked while its menu is open, otherwise the open one.
+    fn target_tab(&self) -> String {
+        let menu = self.menu_tab.borrow().clone();
+        if menu.is_empty() { self.tab.borrow().clone() } else { menu }
+    }
     fn move_tab(self: &Rc<Self>, step: isize) {
         let state = self.state.borrow().clone();
-        let tab = self.tab.borrow().clone();
+        let tab = self.target_tab();
         let Some(at) = state.windows.iter().position(|t| t.id == tab) else { return };
         let target = at as isize + step;
         if target < 0 || target >= state.windows.len() as isize {
@@ -1559,7 +1590,8 @@ impl Ui {
         }
         if !state.windows.iter().any(|tab| tab.id == *self.tab.borrow()) {
             let remembered = self.config.borrow().tabs.get(&state.selected_session).cloned().unwrap_or_default();
-            let tab = state.windows.iter().find(|tab| tab.id == remembered).or(state.windows.first());
+            let beside = state.windows.get(self.tab_at.get().min(state.windows.len().saturating_sub(1)));
+            let tab = state.windows.iter().find(|tab| tab.id == remembered).or(beside.filter(|_| !self.tab.borrow().is_empty())).or(state.windows.first());
             self.tab.replace(tab.map(|tab| tab.id.clone()).unwrap_or_default());
         }
 
@@ -1830,15 +1862,9 @@ impl Ui {
                 let (status, status_class) = self.status(&blocks, &state.working);
                 // How many panes want the user, and what the first one said.
                 let waiters: Vec<Activity> = self.activity.borrow().iter().filter(|a| a.needs_attention() && blocks.contains(&a.block.as_str())).cloned().collect();
-                let (status, status_class) = if waiters.len() > 1 {
-                    let count = |state: &str| waiters.iter().filter(|a| a.state == state).count();
-                    let (blocked, failed, done) = (count("blocked"), count("error"), count("done"));
-                    let parts: Vec<String> = [(blocked, "need you"), (failed, "failed"), (done, "finished")].iter().filter(|(n, _)| *n > 0).map(|(n, word)| format!("{n} {word}")).collect();
-                    (parts.join(" · "), if blocked > 0 { "attention" } else if failed > 0 { "failed" } else { "done" })
-                } else {
-                    (status, status_class)
-                };
-                let message = if waiters.len() == 1 { waiters[0].message.clone() } else { String::new() };
+                // In a split tab each waiting pane says so on its own line, so the tab keeps its usual subtitle.
+                let (status, status_class) = if tab.blocks.len() > 1 && !waiters.is_empty() { (String::new(), "") } else { (status, status_class) };
+                let message = if waiters.len() == 1 && tab.blocks.len() < 2 { waiters[0].message.clone() } else { String::new() };
                 // A folder on this computer shows its branch.
                 let branch = lead.and_then(|b| state.directories.get(&b.id)).filter(|_| local).and_then(|d| branch(d)).unwrap_or_default();
                 let placed = tab.placements();
@@ -1846,15 +1872,17 @@ impl Ui {
                 let panes: Vec<PaneRow> = if tab.blocks.len() < 2 { Vec::new() } else {
                     tab.blocks.iter().map(|b| {
                         let report = waiters.iter().find(|a| a.block == b.id);
-                        let program = state.program(b);
-                        let shell = state.title(b) != program && state.directories.contains_key(&b.id) && report.is_none_or(|a| a.title.is_empty());
+                        let tile = programs::tile(state.programs.get(&b.id).map_or(&[][..], |p| p.as_slice()), tiles::exists);
+                        // The line is named after the same program its icon shows.
+                        let program = if tile == "shell" { state.program(b) } else { tile.clone() };
+                        let shell = state.title(b) != state.program(b) && state.directories.contains_key(&b.id);
                         PaneRow {
                             id: b.id.clone(),
-                            title: report.map(|a| a.title.clone()).filter(|t| !t.is_empty()).unwrap_or(program),
+                            title: program,
                             place: if shell { state.title(b) } else { String::new() },
                             waiting: report.map(|a| a.label().to_owned()).unwrap_or_default(),
                             message: report.map(|a| a.message.clone()).unwrap_or_default(),
-                            tile: programs::tile(state.programs.get(&b.id).map_or(&[][..], |p| p.as_slice()), tiles::exists),
+                            tile,
                             // Zoomed, the miniature is the one pane on screen.
                             rect: match (zoomed, b.id == focused) {
                                 (true, true) => [0.0, 0.0, 1.0, 1.0],
@@ -1879,6 +1907,9 @@ impl Ui {
         }
         self.tab_list.remove_all();
         let mut selected = None;
+        if let Some(at) = next.iter().position(|row| row.current) {
+            self.tab_at.set(at);
+        }
         let scale = self.window.scale_factor().max(1);
         for row in &next {
             let text = gtk::Box::builder().orientation(gtk::Orientation::Vertical).hexpand(true).valign(gtk::Align::Center).build();
@@ -1923,7 +1954,7 @@ impl Ui {
             // The open tab lists its panes; any other tab lists the ones that want the user.
             let card = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(2).build();
             card.append(&content);
-            for pane in row.panes.iter().filter(|pane| row.current || (!pane.waiting.is_empty() && row.message.is_empty())) {
+            for pane in row.panes.iter().filter(|pane| row.current || !pane.waiting.is_empty()) {
                 let line = gtk::Box::builder().spacing(8).css_classes(["rexling-pane-line"]).build();
                 let dot = gtk::Box::builder().css_classes(["rexling-pane-dot"]).valign(gtk::Align::Center).build();
                 if !pane.status.is_empty() {
@@ -1952,10 +1983,13 @@ impl Ui {
                 line.add_controller(click);
                 card.append(&line);
                 // With several panes waiting, each one's question sits under its own line.
-                if !pane.message.is_empty() && row.message.is_empty() {
+                if !pane.message.is_empty() {
                     line.set_tooltip_text(Some(&pane.message));
                     card.append(&gtk::Label::builder().label(pane.message.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).css_classes(["caption", "dim-label", "rexling-pane-said"]).build());
                 }
+            }
+            if next.len() > 1 && row.number > 9 {
+                content.append(&gtk::Label::builder().label(" ").css_classes(["caption", "numeric"]).build());
             }
             let list_row = gtk::ListBoxRow::builder().child(&card).name(row.id.as_str()).tooltip_text(row.detail.as_str()).build();
             // Tabs can be dragged onto one another to reorder them.
@@ -2076,14 +2110,30 @@ impl Ui {
         let kept: Vec<Activity> = self.reported.borrow().iter().filter(|a| !a.needs_attention() || self.unseen(a)).cloned().collect();
         self.activity.replace(Rc::new(kept));
     }
-    /// Looking at a pane that finished or failed is enough: its report is cleared.
+    /// A finished or failed report is cleared once the user has been in its pane and then typed
+    /// there or moved on. Being on screen beside the pane in use is not enough.
     fn mark_seen(&self) {
-        if !self.window.is_active() {
-            return;
+        let focused = self.focused.borrow().clone();
+        // Reports the user has now left behind.
+        let left: Vec<(String, String)> = {
+            let mut reading = self.reading.borrow_mut();
+            let gone: Vec<String> = reading.keys().filter(|block| **block != focused).cloned().collect();
+            gone.into_iter().filter_map(|block| reading.remove(&block)).collect()
+        };
+        if self.window.is_active() {
+            for report in self.activity.borrow().iter().filter(|a| matches!(a.state.as_str(), "done" | "error") && a.block == focused && !a.attention_key.is_empty()) {
+                self.reading.borrow_mut().insert(report.block.clone(), (report.attention_key.clone(), report.attention_version.clone()));
+            }
         }
-        let visible = self.visible.borrow().clone();
-        let looked: Vec<(String, String)> = self.activity.borrow().iter().filter(|a| matches!(a.state.as_str(), "done" | "error") && visible.contains(&a.block) && !a.attention_key.is_empty()).map(|a| (a.attention_key.clone(), a.attention_version.clone())).collect();
-        if looked.is_empty() {
+        self.forget(left);
+    }
+    /// The user answered in this pane: whatever it reported has been dealt with.
+    fn answered(&self, block: &str) {
+        let read = self.reading.borrow_mut().remove(block);
+        self.forget(read.into_iter().collect());
+    }
+    fn forget(&self, seen: Vec<(String, String)>) {
+        if seen.is_empty() {
             return;
         }
         {
@@ -2092,7 +2142,7 @@ impl Ui {
             if config.seen.len() > 400 {
                 config.seen.clear();
             }
-            config.seen.extend(looked);
+            config.seen.extend(seen);
             config.save();
         }
         self.sift();
@@ -2378,6 +2428,7 @@ impl Ui {
             // Nothing typed while the server is away is sent later by surprise.
             Event::Input(_) | Event::Paste(_) if self.offline.get() => {}
             Event::Input(text) => {
+                self.answered(block);
                 self.interact();
                 client.input(&text);
             }
