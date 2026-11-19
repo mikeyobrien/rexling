@@ -143,9 +143,11 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
     var appearance by remember {mutableStateOf(false)}
     var about by remember {mutableStateOf(false)}
     var networkSettings by remember {mutableStateOf(false)}
+    var sshKeysSettings by remember {mutableStateOf(false)}
     var preferencesOpen by remember {mutableStateOf(false)}
     var neovimSettings by remember {mutableStateOf(false)}
     var toolbarSettings by remember {mutableStateOf(false)}
+    var controlSettings by remember {mutableStateOf(false)}
     var alerts by remember {mutableStateOf(false)}
     var commandFlow by remember {mutableStateOf<CommandFlow?>(null)}
     var restoreCommandIme by remember {mutableStateOf<TerminalCommandTarget?>(null)}
@@ -172,22 +174,40 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
     }
     fun pasteClipboard(): Boolean = runCatching {
         pasteTerminalClipboard(context,{uri->imageCommit(uri,{})},client::paste)
-    }.getOrElse {model.images.notice="Could not read the clipboard image. Try Attach image instead.";false}
+    }.getOrElse {model.images.notice="Could not read the clipboard file. Try Attach file instead.";false}
     val photoPicker=rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) {uri->
         val target=model.pendingImageTarget;model.pendingImageTarget=null
         if(uri!=null) withUploadNetwork({model.attachImage(uri,target)})
     }
     fun chooseImage() {
         val target=model.imageTarget()
-        if(target==null) {model.images.notice="Take control of a pane before attaching an image.";return}
+        if(target==null) {model.images.notice="Take control of a pane before attaching a file.";return}
         model.pendingImageTarget=target
         photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
+    // Rex accepts any file type, so the document picker allows everything.
+    val filePicker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {uri->
+        val target=model.pendingImageTarget;model.pendingImageTarget=null
+        if(uri!=null) withUploadNetwork({model.attachImage(uri,target)})
+    }
+    fun chooseFile() {
+        val target=model.imageTarget()
+        if(target==null) {model.images.notice="Take control of a pane before attaching a file.";return}
+        model.pendingImageTarget=target
+        filePicker.launch(arrayOf("*/*"))
     }
 
     DisposableEffect(client) {onDispose {model.setPaneObscured(true)}}
     val keyboardDensity=LocalDensity.current
     val keyboardInsets=WindowInsets.ime
     val keyboardVisible by remember(keyboardInsets,keyboardDensity) {derivedStateOf {keyboardInsets.getBottom(keyboardDensity)>0}}
+    // Follow where the keyboard is heading, not its animated inset: the inset stays above zero until
+    // the hide animation ends, which left the toolbar showing after the keyboard was gone.
+    @OptIn(ExperimentalLayoutApi::class) val keyboardShown=WindowInsets.isImeVisible
+    val toolbarHidden=model.toolbarWithKeyboardOnly && !keyboardShown
+    // The auto-hidden toolbar's unclipped height (divider + key row until measured). Written during its
+    // measurement and read by the terminal's, so it is a plain holder rather than snapshot state.
+    val toolbarHeight=remember(keyboardDensity) {intArrayOf(with(keyboardDensity) {1.dp.roundToPx()+45.dp.roundToPx()})}
     val blocks=window?.blocks ?: if(state.phase=="preview") listOf(BlockItem("preview","Terminal")) else emptyList()
     val chosen=displayedBlock.ifBlank {blocks.firstOrNull()?.id.orEmpty()}
     val floating=if(model.minimizeFloatingPanes) window?.floatingPanes().orEmpty() else emptyList()
@@ -253,7 +273,7 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
         restoreCommandIme=null
         if(target==currentCommandTarget() && controlled && view.isAttachedToWindow) view.keyboard()
     }
-    SideEffect {model.setPaneObscured((floatingActive && hiddenFloating==chosen) || model.activityVisible || picker.isNotEmpty() || preferencesOpen || networkSettings || servers || addServer || forwards || newSession || appearance || about || neovimSettings || toolbarSettings || alerts || commandFlow!=null)}
+    SideEffect {model.setPaneObscured((floatingActive && hiddenFloating==chosen) || model.activityVisible || picker.isNotEmpty() || preferencesOpen || networkSettings || servers || addServer || forwards || newSession || appearance || about || neovimSettings || toolbarSettings || controlSettings || sshKeysSettings || alerts || commandFlow!=null)}
     fun openPane(id: String) {hiddenFloating="";client.selectBlock(id)}
     fun minimizeFloating() {
         hiddenFloating=chosen
@@ -322,7 +342,7 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
             if(client.keyboardRequest==displayedBlock && terminalView!=null) {terminalView?.keyboard();client.keyboardShown()}
         }
     }
-    val workspaceBackdrop=rememberBackdropCapture(commandFlow!=null || menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || alerts || picker.isNotEmpty() || model.activityVisible)
+    val workspaceBackdrop=rememberBackdropCapture(commandFlow!=null || menu || forwards || preferencesOpen || servers || networkSettings || appearance || about || neovimSettings || toolbarSettings || controlSettings || sshKeysSettings || alerts || picker.isNotEmpty() || model.activityVisible)
     Surface(Modifier.fillMaxSize().then(if(workspaceBackdrop) Modifier.hazeSource(workspaceHaze) else Modifier),color=MaterialTheme.colorScheme.background) {
         // Wide screens (an unfolded Fold, tablets): the tab list sits beside the terminal; maximize hides it.
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
@@ -411,7 +431,7 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
                                 }
                                 else PortForwards.notice="Wait for this pane to connect before forwarding its link."
                             }},
-                            Modifier.fillMaxSize(),paneIndicator=false,floatingDock=floating.isNotEmpty(),paneLayout=window?.layout.orEmpty(),titles=state.titles,directories=state.directories,hazeState=terminalHaze,captureBackdrop=floatingBackdrop || wheelBackdrop || readyBackdrop || model.images.state!=null,onImage=imageCommit,onPaste=::pasteClipboard,
+                            Modifier.fillMaxSize(),paneIndicator=false,floatingDock=floating.isNotEmpty(),paneLayout=window?.layout.orEmpty(),titles=state.titles,directories=state.directories,hazeState=terminalHaze,captureBackdrop=floatingBackdrop || wheelBackdrop || readyBackdrop || model.images.state!=null,onImage=imageCommit,onPaste=::pasteClipboard,imeEnterSubmits=model.enterSubmits,tapOpensKeyboard=model.toolbarWithKeyboardOnly,
                             onShortcut={shortcut-> when(shortcut) {
                                 TerminalShortcut.PreviousPane -> {client.swipePane(-1);true}
                                 TerminalShortcut.NextPane -> {client.swipePane(1);true}
@@ -445,7 +465,7 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
                         // The bar's corner is the key's corner plus the gap around it, so the two curves stay parallel.
                         Column(Modifier.fillMaxWidth().riseWithKeyboard().clip(RoundedCornerShape(topStart=KeyRowCorner,topEnd=KeyRowCorner)).background(MaterialTheme.colorScheme.surface)) {
                             KeyboardBar(controlled,ready,client.controlModifier,client.altModifier,client.shiftModifier,keyboardVisible,
-                                client::toggleControl,client::toggleAlt,client::toggleShift,client::pressShift,client::releaseShift,{client.keyForTarget(it,keyTarget)},readable=state.connected,onControlShortcut=client::controlShortcut,inputKey=keyTarget,shortcutGesture=model.shortcutGesture,arrowJoystickEnabled=model.arrowJoystickEnabled,onPaste={pasteClipboard()},onPrompt=if(client.hasSemanticPrompts && !changingSession) client::scrollPrompt else null,toolbarKeys=model.toolbarKeys,onCommands=if(commandsAvailable) ::openCommands else null) {
+                                client::toggleControl,client::toggleAlt,client::toggleShift,client::pressShift,client::releaseShift,{client.keyForTarget(it,keyTarget)},readable=state.connected,onControlShortcut={client.controlShortcut(it,keyTarget)},inputKey=keyTarget,shortcutGesture=model.shortcutGesture,arrowJoystickEnabled=model.arrowJoystickEnabled,onPaste={pasteClipboard()},onPrompt=if(client.hasSemanticPrompts && !changingSession) client::scrollPrompt else null,toolbarKeys=model.toolbarKeys,controlItems=model.controlItems,onCommands=if(commandsAvailable) ::openCommands else null) {
                                 if(!controlled) client.takeControl() else if(keyboardVisible) terminalView?.hideKeyboard() else terminalView?.keyboard()
                             }
                         }
@@ -483,6 +503,7 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
         places=listOf(
             CardAction("New session",ChromeIcon.ADD,run=if(ready) ({newSession=true}) else null),
             CardAction("Commands",ChromeIcon.COMMANDS,run=if(commandsAvailable) ::openCommands else null),
+            CardAction("Attach file",ChromeIcon.FILE,run=if(controlled && model.images.state==null) ::chooseFile else null),
             CardAction("Port forwarding",ChromeIcon.SERVER,run={forwards=true}),
             // One server that is connected needs no count.
             CardAction("Servers",ChromeIcon.SERVER,detail=if(model.servers.size>1 || model.connectedCount==0) "${model.connectedCount} connected" else "",run={servers=true})),
@@ -493,6 +514,7 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
     if(picker.isNotEmpty()) Switcher(switcher,onClose={picker=""},sessionsFirst=picker=="sessions",hazeState=workspaceHaze)
     if(model.activityVisible) ActivitySheet(model.activitySources,model::refreshActivity,model::openActivity,onClose={model.showActivity(false)},onSeen=model::markActivitySeen,onMarkAll=model::markAllActivitySeen,hazeState=workspaceHaze)
     NetworkPrompts()
+    if(sshKeysSettings) SshKeysSheet(onClose={sshKeysSettings=false},hazeState=workspaceHaze)
     if(networkSettings) NetworkSheet(model.activeServer,state.connected,hazeState=workspaceHaze) {networkSettings=false}
     if(preferencesOpen) PreferencesSheet(onClose={preferencesOpen=false},
         appearance=model.appearance,onAppearance=model::changeAppearance,onColors={preferencesOpen=false;appearance=true},
@@ -501,13 +523,15 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
         toolbarKeys=model.toolbarKeys,onToolbar={preferencesOpen=false;toolbarSettings=true},onNeovim={preferencesOpen=false;neovimSettings=true},
         minimizeFloatingPanes=model.minimizeFloatingPanes,onMinimizeFloatingPanes=model::changeMinimizeFloatingPanes,
         onNetwork={preferencesOpen=false;networkSettings=true},onAlerts={preferencesOpen=false;alerts=true},onForwards={preferencesOpen=false;forwards=true},
+        onControlItems={preferencesOpen=false;controlSettings=true},onSshKeys={preferencesOpen=false;sshKeysSettings=true},
         codexTitleAttention=model.experimentalCodexAttention,onCodexTitleAttention=model::changeCodexAttention,onAbout={preferencesOpen=false;about=true},hazeState=workspaceHaze)
+    if(controlSettings) ControlShortcutsSheet(model.controlItems,model::saveControlShortcuts,onClose={controlSettings=false},hazeState=workspaceHaze)
     if(toolbarSettings) KeyboardToolbarSheet(model.toolbarKeys,model::changeToolbar,onClose={toolbarSettings=false},hazeState=workspaceHaze)
     if(neovimSettings) NeovimShortcutsSheet(model.neovimShortcuts,model::saveNeovimShortcuts,onClose={neovimSettings=false},
         enabled=model.neovimShortcutsEnabled,onEnabled=model::enableNeovimShortcuts,
         layout=model.neovimShortcutLayout,onLayout=model::changeNeovimShortcutLayout,effect=model.neovimShortcutEffect,onEffect=model::changeNeovimShortcutEffect,
         hapticsEnabled=model.neovimShortcutHaptics,onHaptics=model::changeNeovimShortcutHaptics,hazeState=workspaceHaze)
-    if(model.images.notice.isNotEmpty()) KitDialog(onDismissRequest={model.images.notice=""},title={Text("Image upload")},text={Text(model.images.notice)},confirmButton={TextButton(onClick={model.images.notice=""}) {Text("OK")}})
+    if(model.images.notice.isNotEmpty()) KitDialog(onDismissRequest={model.images.notice=""},title={Text("File upload")},text={Text(model.images.notice)},confirmButton={TextButton(onClick={model.images.notice=""}) {Text("OK")}})
     if(about) AboutSheet(hazeState=workspaceHaze) {about=false}
     if(alerts) BackgroundAlertsDialog(model,hazeState=workspaceHaze) {alerts=false}
     activeCommands?.let {flow->
@@ -555,11 +579,11 @@ private fun getClipboard(context: Context)=context.getSystemService(Context.CLIP
     programs: Map<String,ProgramIdentity>,controlled: Boolean,fontSize: Float,
     onInput: (String)->Unit,onScroll: (Int)->Unit,onWheel: (Int,Int,Int,Int,Int)->Unit,onActivate: ()->Unit,onBottom: ()->Unit,onDimensions: (Int,Int)->Unit,
     onSelect: (String)->Unit,onPanes: ()->Unit,onView: (TerminalView)->Unit,modifier: Modifier=Modifier,
-    paneIndicator: Boolean=true,floatingDock: Boolean=false,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},onShortcut: (TerminalShortcut)->Boolean={false}) {
+    paneIndicator: Boolean=true,floatingDock: Boolean=false,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},onShortcut: (TerminalShortcut)->Boolean={false},imeEnterSubmits: Boolean=false,tapOpensKeyboard: Boolean=false) {
     val layout by client.displayLayout.collectAsState()
     val screen=client.screenForLayout(layout)
     TerminalCarousel(blocks,chosen,liveBlock,screen,client.paneFrames,programs,controlled,fontSize,
-        onInput,onScroll,onWheel,onActivate,onBottom,onDimensions,onSelect,onPanes,onView,modifier,client::bindTerminalView,onMouseClick=client::click,mouseTarget=client::keyTarget,onImage=onImage,onPaste=onPaste,imageTarget=client::imageInputTarget,bottomControlsInset=if(floatingDock) 56.dp else 0.dp,paneLayout=paneLayout,titles=titles,directories=directories,hazeState=hazeState,captureBackdrop=captureBackdrop,paneIndicator=paneIndicator,onShortcut=onShortcut)
+        onInput,onScroll,onWheel,onActivate,onBottom,onDimensions,onSelect,onPanes,onView,modifier,client::bindTerminalView,onMouseClick=client::click,mouseTarget=client::keyTarget,onImage=onImage,onPaste=onPaste,imageTarget=client::imageInputTarget,bottomControlsInset=if(floatingDock) 56.dp else 0.dp,paneLayout=paneLayout,titles=titles,directories=directories,hazeState=hazeState,captureBackdrop=captureBackdrop,paneIndicator=paneIndicator,onShortcut=onShortcut,imeEnterSubmits=imeEnterSubmits,tapOpensKeyboard=tapOpensKeyboard)
 }
 
 @Composable private fun BackgroundAlertsDialog(model: RexModel,hazeState: HazeState?=null,onClose: ()->Unit) {

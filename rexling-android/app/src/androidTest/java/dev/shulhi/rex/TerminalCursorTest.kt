@@ -40,5 +40,10 @@ class TerminalCursorTest {
         ui.runOnIdle {view.screen=frame.copy(cursorBlinking=true);view.interactive=false}
         repeat(6) {SystemClock.sleep(120);assertEquals(block,pixels())}
         ui.runOnIdle {view.screen=frame.copy(cursorX=null,cursorY=null)};assertEquals(0,pixels())
+        ui.runOnIdle {
+            view.screen=frame.copy(cursorX=null,cursorY=null,cursorAnchorX=0,cursorAnchorY=8)
+            assertNull(view.keyboardFocus);view.allowHiddenCursorInput=true;assertNotNull(view.keyboardFocus)
+        }
+        assertEquals("An input anchor must not draw a hidden cursor",0,pixels())
     }
 }

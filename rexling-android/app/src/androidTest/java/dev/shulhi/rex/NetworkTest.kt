@@ -87,9 +87,9 @@ class NetworkTest {
         try {
             assertNull(NetworkSettings.importKey(endpoint,text,""))
             assertTrue(NetworkSettings.hasKey(endpoint))
-            val stored=InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("network",0).getString("keys","")!!
+            val stored=InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("network",0).getString("ssh_library","")!!
             assertFalse(stored.contains("PRIVATE KEY"));assertFalse(stored.contains(text))
-        } finally {NetworkSettings.removeKey(endpoint)}
+        } finally {NetworkSettings.selectedKey(endpoint)?.let {NetworkSettings.deleteKey(it)}}
     }
     @Test fun invalidControlServerAndMalformedKeyAreRejected() = runBlocking {
         assertNotNull(NetworkSettings.save(true,"https://user:secret@host"))
