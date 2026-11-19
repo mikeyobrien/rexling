@@ -134,9 +134,13 @@ class PaneChromeTest {
         ui.onAllNodesWithContentDescription("Pane position indicator").assertCountEquals(1)
         assertEquals(before,fixed.fetchSemanticsNode().boundsInRoot)
     }
-    @Test fun theFixedIndicatorStillOpensPaneSelection() {
+    @Test fun aPaneIconSwitchesToThatPaneAndTheShownOneOpensPaneSelection() {
         carousel()
-        ui.onNodeWithContentDescription("Pane position indicator").performClick()
+        fun icons()=ui.onAllNodes(hasClickAction() and hasAnyAncestor(hasContentDescription("Pane position indicator")),useUnmergedTree=true)
+        icons().assertCountEquals(3)
+        icons()[2].performClick();ui.mainClock.advanceTimeBy(600)
+        ui.runOnIdle {assertEquals(listOf("c"),selected);assertEquals(0,opened)}
+        icons()[2].performClick()
         ui.runOnIdle {assertEquals(1,opened)}
     }
     @Test fun theProgramLabelDoesNotOverlapTheReturnToLatestButton() {

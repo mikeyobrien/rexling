@@ -350,7 +350,6 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
                 // Wide: the list shows tabs, so the header names the pane; phones keep the tab position.
                 titleDetail=if(wide && chromeVisible) ""
                     else if(windows.size>1) "${windows.indexOfFirst {it.id==window?.id}+1}/${windows.size}" else "",
-                paneDots=if(carouselBlocks.size>1) carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0) to carouselBlocks.size else null,
                 status=headerStatus,titleAlpha={.25f+.75f*travel.progress.value},
                 subtitle=if(wide && chromeVisible) state.directories[displayedBlock].orEmpty() else null,
                 onTitleSwipe=if(tabsReady && carouselBlocks.size>1) {{step->
@@ -411,7 +410,7 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
                                 }
                                 else PortForwards.notice="Wait for this pane to connect before forwarding its link."
                             }},
-                            Modifier.fillMaxSize(),paneIndicator=false,floatingDock=floating.isNotEmpty(),paneLayout=window?.layout.orEmpty(),titles=state.titles,directories=state.directories,hazeState=terminalHaze,captureBackdrop=floatingBackdrop || wheelBackdrop || readyBackdrop || model.images.state!=null,onImage=imageCommit,onPaste=::pasteClipboard,
+                            Modifier.fillMaxSize(),onNewPane=if(ready && state.selectedSession.isNotBlank() && chosen.isNotBlank()) ({client.createPane()}) else null,floatingDock=floating.isNotEmpty(),paneLayout=window?.layout.orEmpty(),titles=state.titles,directories=state.directories,hazeState=terminalHaze,captureBackdrop=floatingBackdrop || wheelBackdrop || readyBackdrop || model.images.state!=null,onImage=imageCommit,onPaste=::pasteClipboard,
                             onShortcut={shortcut-> when(shortcut) {
                                 TerminalShortcut.PreviousPane -> {client.swipePane(-1);true}
                                 TerminalShortcut.NextPane -> {client.swipePane(1);true}
@@ -555,11 +554,11 @@ private fun getClipboard(context: Context)=context.getSystemService(Context.CLIP
     programs: Map<String,ProgramIdentity>,controlled: Boolean,fontSize: Float,
     onInput: (String)->Unit,onScroll: (Int)->Unit,onWheel: (Int,Int,Int,Int,Int)->Unit,onActivate: ()->Unit,onBottom: ()->Unit,onDimensions: (Int,Int)->Unit,
     onSelect: (String)->Unit,onPanes: ()->Unit,onView: (TerminalView)->Unit,modifier: Modifier=Modifier,
-    paneIndicator: Boolean=true,floatingDock: Boolean=false,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},onShortcut: (TerminalShortcut)->Boolean={false}) {
+    onNewPane: (()->Unit)?=null,floatingDock: Boolean=false,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},onShortcut: (TerminalShortcut)->Boolean={false}) {
     val layout by client.displayLayout.collectAsState()
     val screen=client.screenForLayout(layout)
     TerminalCarousel(blocks,chosen,liveBlock,screen,client.paneFrames,programs,controlled,fontSize,
-        onInput,onScroll,onWheel,onActivate,onBottom,onDimensions,onSelect,onPanes,onView,modifier,client::bindTerminalView,onMouseClick=client::click,mouseTarget=client::keyTarget,onImage=onImage,onPaste=onPaste,imageTarget=client::imageInputTarget,bottomControlsInset=if(floatingDock) 56.dp else 0.dp,paneLayout=paneLayout,titles=titles,directories=directories,hazeState=hazeState,captureBackdrop=captureBackdrop,paneIndicator=paneIndicator,onShortcut=onShortcut)
+        onInput,onScroll,onWheel,onActivate,onBottom,onDimensions,onSelect,onPanes,onView,modifier,client::bindTerminalView,onMouseClick=client::click,mouseTarget=client::keyTarget,onImage=onImage,onPaste=onPaste,imageTarget=client::imageInputTarget,bottomControlsInset=if(floatingDock) 56.dp else 0.dp,paneLayout=paneLayout,titles=titles,directories=directories,hazeState=hazeState,captureBackdrop=captureBackdrop,onNewPane=onNewPane,onShortcut=onShortcut)
 }
 
 @Composable private fun BackgroundAlertsDialog(model: RexModel,hazeState: HazeState?=null,onClose: ()->Unit) {

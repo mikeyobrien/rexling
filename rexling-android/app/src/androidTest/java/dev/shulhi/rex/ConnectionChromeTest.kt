@@ -15,9 +15,8 @@ class ConnectionChromeTest {
     @Test fun theHeaderStatesWhatIsWrongInItsSecondLineWithOneAction() {
         val status=mutableStateOf<HeaderStatus?>(null);var retries=0;var takes=0
         ui.setContent {MaterialTheme {SessionHeader(listOf(SessionItem("a","alpha")),"a",true,true,emptyList(),0,"~/dev",{},{},{},title="fish",
-            paneDots=1 to 3,status=status.value) {}}}
+            status=status.value) {}}}
         ui.onNodeWithContentDescription("Session strip").assertIsDisplayed()
-        ui.onNodeWithContentDescription("Pane 2 of 3").assertIsDisplayed()
         val height=ui.onRoot().fetchSemanticsNode().boundsInRoot.height
         ui.runOnIdle {status.value=HeaderStatus("Offline",StatusTone.WARNING,"Retry",enabled=false) {retries++}}
         ui.onNodeWithContentDescription("Session strip").assertDoesNotExist()

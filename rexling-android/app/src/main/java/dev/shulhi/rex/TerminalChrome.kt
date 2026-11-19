@@ -216,7 +216,6 @@ internal interface TitleHold {
     /** Replaces the session line with plain text (wide layout, where the list shows the session). */
     subtitle: String?=null,
     /** Pane position (index, count) drawn beside the title when the tab has several panes. */
-    paneDots: Pair<Int,Int>?=null,
     /** Read while drawing: the title fades back in as a tab change arrives. */
     titleAlpha: ()->Float={1f},
     /** Takes over the second line while something is wrong, with its one action beside the menu. */
@@ -375,10 +374,8 @@ internal interface TitleHold {
                                 text.placeRelative(0,titleBaseline-text[FirstBaseline])
                             }
                         })
-                    // The chevron says the title opens something; the dots say which pane this is.
+                    // The chevron says the title opens something.
                     if(onTitleTap!=null) ChromeSymbol(ChromeIcon.CHEVRON,Modifier.padding(start=4.dp).size(11.dp),dim)
-                    if(paneDots!=null && paneDots.second>1) PositionDots(paneDots.first,paneDots.second,Modifier.padding(start=8.dp).semantics {
-                        contentDescription="Pane ${paneDots.first+1} of ${paneDots.second}"})
                     }
                 }
             }

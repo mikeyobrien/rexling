@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,8 +39,9 @@ import dev.chrisbanes.haze.hazeSource
     onInput: (String)->Unit,onScroll: (Int)->Unit,onWheel: (Int,Int,Int,Int,Int)->Unit,onActivate: ()->Unit,onBottom: ()->Unit,onDimensions: (Int,Int)->Unit,onSelect: (String)->Unit,onPanes: ()->Unit,
     onView: (TerminalView)->Unit,modifier: Modifier=Modifier,bindLiveView: ((String,TerminalView)->Boolean)?=null,
     onMouseClick: (Int,Int,Int,Int)->Unit={_,_,_,_->},mouseTarget: ()->String={""},onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false},imageTarget: ()->String=mouseTarget,bottomControlsInset: androidx.compose.ui.unit.Dp=0.dp,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onShortcut: (TerminalShortcut)->Boolean={false},
-    /** False when the header shows the pane dots, so nothing covers the last terminal row. */
-    paneIndicator: Boolean=true) {
+    paneIndicator: Boolean=true,
+    /** Adds a pane beside the shown one; null leaves the button out. */
+    onNewPane: (()->Unit)?=null) {
     val switchLayout=remember(paneLayout,blocks) {paneLayout.filter {p->blocks.any {it.id==p.id}}.sortedBy {it.layer}}
     val hasMinimap=blocks.all {b->switchLayout.any {it.id==b.id}}
     val localHaze=remember {HazeState()}
@@ -169,7 +171,7 @@ import dev.chrisbanes.haze.hazeSource
                         }
                     }
                     if(center && (frame?.scroll?.below ?: 0)>0) {
-                        Text("↓ Latest",Modifier.align(Alignment.BottomEnd).padding(end=12.dp,bottom=(if(blocks.size>1 && paneIndicator) 34.dp else 10.dp)+bottomControlsInset)
+                        Text("↓ Latest",Modifier.align(Alignment.BottomEnd).padding(end=12.dp,bottom=(if(blocks.size>1 && paneIndicator) 46.dp else 10.dp)+bottomControlsInset)
                             .clip(Kit.row).background(MaterialTheme.colorScheme.surface)
                             .clickable(role=Role.Button,onClick=onBottom).padding(horizontal=12.dp,vertical=7.dp),
                             fontSize=11.sp,color=MaterialTheme.colorScheme.primary)
@@ -180,10 +182,30 @@ import dev.chrisbanes.haze.hazeSource
         }
         }
         if(blocks.size>1 && paneIndicator) {
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(28.dp)
+            // One program icon per pane in a pill over the bottom of the pane, the shown pane lit, as Rex for iOS
+            // draws it. It never moves with the title. Tap an icon to go to that pane; tap the shown one for the switcher.
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(40.dp)
                 .clickable(role=Role.Button,onClick=onPanes)
                 .semantics {contentDescription="Pane position indicator";stateDescription="Pane ${candidate+1} of ${blocks.size}"},contentAlignment=Alignment.Center) {
-                PanePositionIndicator(index,blocks.size,offset={-drag/stride})
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                    // More panes than fit as icons fall back to dots.
+                    if(blocks.size>7) PanePositionIndicator(index,blocks.size,offset={-drag/stride})
+                    else Row(Modifier.paneFrost(haze,CircleShape).padding(3.dp),verticalAlignment=Alignment.CenterVertically) {
+                        blocks.forEachIndexed {i,block->
+                            val shown=i==candidate
+                            Box(Modifier.size(34.dp,24.dp).clip(CircleShape)
+                                .background(if(shown) MaterialTheme.colorScheme.primary.copy(alpha=.38f) else Color.Transparent)
+                                .clickable(role=Role.Button) {if(shown) onPanes() else onSelect(block.id)},contentAlignment=Alignment.Center) {
+                                ProgramIcon(programs[block.id] ?: ProgramIdentity.Loading,Modifier.size(15.dp),
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha=if(shown) 1f else .6f))
+                            }
+                        }
+                    }
+                    if(onNewPane!=null) Box(Modifier.paneFrost(haze,CircleShape).size(36.dp,30.dp).clip(CircleShape)
+                        .clickable(role=Role.Button,onClick=onNewPane).semantics {contentDescription="New pane"},contentAlignment=Alignment.Center) {
+                        ChromeSymbol(ChromeIcon.ADD,Modifier.size(14.dp))
+                    }
+                }
             }
         }
         if(showSwitch) {
