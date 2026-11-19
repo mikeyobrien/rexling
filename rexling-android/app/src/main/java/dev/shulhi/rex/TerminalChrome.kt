@@ -77,7 +77,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
-internal enum class ChromeIcon { SPLIT, SEARCH, CHEVRON, SESSIONS, COPY, MORE, ADD, KEYBOARD, HIDE_KEYBOARD, LEFT, RIGHT, UP, DOWN, TAB, CLOSE, ESCAPE, CONTROL, ALT, SHIFT, POINTER, EYE, BACKSPACE, ARROWS, ENTER, SETTINGS, PASTE, IMAGE, SERVER, REFRESH, SUN, MOON, EDIT, UNPLUG, DELETE, FLOAT, CHECK, PLAY, STOP, EXPAND, COLLAPSE }
+internal enum class ChromeIcon { SPLIT, SEARCH, CHEVRON, SESSIONS, COPY, MORE, ADD, KEYBOARD, HIDE_KEYBOARD, LEFT, RIGHT, UP, DOWN, TAB, CLOSE, ESCAPE, CONTROL, ALT, SHIFT, POINTER, EYE, BACKSPACE, ARROWS, ENTER, SETTINGS, PASTE, IMAGE, SERVER, REFRESH, SUN, MOON, EDIT, UNPLUG, DELETE, FLOAT, CHECK, PLAY, STOP, EXPAND, COLLAPSE, BELL }
 
 @Composable internal fun ChromeSymbol(icon: ChromeIcon, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurface) {
     Canvas(modifier.size(19.dp)) {
@@ -93,6 +93,14 @@ internal enum class ChromeIcon { SPLIT, SEARCH, CHEVRON, SESSIONS, COPY, MORE, A
             line(x+dx*6,y+dy*6,x+dx*2+dy*4,y+dy*2-dx*4)
         }
         when(icon) {
+            ChromeIcon.BELL -> {
+                drawPath(Path().apply {
+                    moveTo(4.5f*u,17f*u);lineTo(6.5f*u,14f*u);lineTo(6.5f*u,10f*u)
+                    cubicTo(6.5f*u,2.7f*u,17.5f*u,2.7f*u,17.5f*u,10f*u)
+                    lineTo(17.5f*u,14f*u);lineTo(19.5f*u,17f*u);close()
+                },color,style=Stroke(width,join=StrokeJoin.Round))
+                line(10f,20.5f,14f,20.5f)
+            }
             ChromeIcon.PLAY -> {drawPath(Path().apply {moveTo(8f*u,5f*u);lineTo(19f*u,12f*u);lineTo(8f*u,19f*u);close()},color,style=Stroke(width,join=StrokeJoin.Round))}
             ChromeIcon.STOP -> {box(6f,6f,12f,12f,1.5f)}
             ChromeIcon.FLOAT -> {box(3f,7f,14f,14f);box(10f,3f,11f,10f)}
@@ -217,7 +225,11 @@ internal interface TitleHold {
     /** Dim text after the title, such as the tab position "1/2". */
     titleDetail: String="", leading: (@Composable ()->Unit)?=null,
     /** Replaces the session line with plain text (wide layout, where the list shows the session). */
-    subtitle: String?=null, menu: @Composable ()->Unit) {
+    subtitle: String?=null,
+    /** Pane position (index, count) drawn beside the title when the tab has several panes. */
+    paneDots: Pair<Int,Int>?=null,
+    /** Takes over the second line while something is wrong, with its one action beside the menu. */
+    status: HeaderStatus?=null, menu: @Composable ()->Unit) {
     val program=programs.getOrNull(paneIndex) ?: ProgramIdentity.Terminal
     val titleHeight=with(LocalDensity.current) {16.sp.toDp()}
     val directoryHeight=with(LocalDensity.current) {12.sp.toDp()}
@@ -360,20 +372,32 @@ internal interface TitleHold {
                             onTitleSwipe?.let {swipe->CustomAccessibilityAction("Previous pane") {swipe(-1);true}})
                     }) {
                     val dim=MaterialTheme.colorScheme.onSurfaceVariant
+                    Row(Modifier.fillMaxWidth().height(titleHeight),verticalAlignment=Alignment.CenterVertically) {
                     Text(androidx.compose.ui.text.buildAnnotatedString {
                         append(title.ifBlank {program.title})
                         if(titleDetail.isNotBlank()) {append("  ");pushStyle(androidx.compose.ui.text.SpanStyle(color=dim,fontWeight=FontWeight.Normal));append(titleDetail);pop()}
                     },fontWeight=FontWeight.Bold,fontSize=13.sp,lineHeight=16.sp,style=lineStyle,letterSpacing=0.sp,maxLines=1,
-                        overflow=TextOverflow.Ellipsis,modifier=Modifier.fillMaxWidth().height(titleHeight).layout {measurable,constraints->
+                        overflow=TextOverflow.Ellipsis,modifier=Modifier.weight(1f,fill=false).height(titleHeight).layout {measurable,constraints->
                             // Fallback/emoji metrics must not move the ordinary title text.
                             val text=measurable.measure(constraints.copy(minHeight=0,maxHeight=Constraints.Infinity))
                             layout(text.width,constraints.maxHeight,mapOf(FirstBaseline to titleBaseline)) {
                                 text.placeRelative(0,titleBaseline-text[FirstBaseline])
                             }
                         })
+                    // The chevron says the title opens something; the dots say which pane this is.
+                    if(onTitleTap!=null) ChromeSymbol(ChromeIcon.CHEVRON,Modifier.padding(start=4.dp).size(11.dp),dim)
+                    if(paneDots!=null && paneDots.second>1) PositionDots(paneDots.first,paneDots.second,Modifier.padding(start=8.dp).semantics {
+                        contentDescription="Pane ${paneDots.first+1} of ${paneDots.second}"})
+                    }
                 }
             }
-            if(subtitle!=null && !expanded) Text(subtitle,Modifier.fillMaxWidth().height(sessionHeight),fontFamily=MonoUi,fontSize=9.sp,lineHeight=12.sp,
+            if(status!=null && !expanded) Row(Modifier.fillMaxWidth().height(sessionHeight).semantics(mergeDescendants=true) {contentDescription="Status"},
+                verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+                val tone=if(status.tone==StatusTone.WARNING) attentionColor() else MaterialTheme.colorScheme.onSurfaceVariant
+                if(status.tone==StatusTone.WARNING) Box(Modifier.size(5.dp).background(tone,RoundedCornerShape(4.dp)))
+                Text(status.text,fontSize=10.sp,lineHeight=12.sp,fontWeight=FontWeight.Medium,style=lineStyle,letterSpacing=0.sp,maxLines=1,overflow=TextOverflow.Ellipsis,color=tone)
+            }
+            else if(subtitle!=null && !expanded) Text(subtitle,Modifier.fillMaxWidth().height(sessionHeight),fontFamily=MonoUi,fontSize=9.sp,lineHeight=12.sp,
                 style=lineStyle,letterSpacing=0.sp,maxLines=1,overflow=TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurfaceVariant)
             else             BoxWithConstraints(Modifier.fillMaxWidth().height(if(expanded) 42.dp else sessionHeight)) {
                 val pageWidth=if(expanded) 160.dp else maxWidth.coerceAtLeast(40.dp)
@@ -404,6 +428,11 @@ internal interface TitleHold {
             }
         }
         if(!expanded) {
+            if(status!=null) Box(Modifier.padding(end=6.dp).heightIn(min=30.dp).clip(RoundedCornerShape(15.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha=if(status.enabled) .22f else .10f))
+                .clickable(enabled=status.enabled,role=Role.Button,onClick=status.onAction).padding(horizontal=13.dp),contentAlignment=Alignment.Center) {
+                Text(status.action,fontSize=12.sp,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.onSurface.copy(alpha=if(status.enabled) 1f else .45f))
+            }
             menu()
         }
     }
@@ -622,6 +651,8 @@ internal interface TitleHold {
 
 @Composable internal fun TerminalActions(enabled: Boolean,activityEnabled: Boolean,
     onActivity: ()->Unit,onSwitcher: (()->Unit)?,attentionCount: Int=0,tabCount: Int=0,
+    /** Something is working somewhere: a quiet blue dot, unless something needs you. */
+    working: Boolean=false,
     /** Quiet: no filled circle, matching the bare menu button (wide layout). */
     quiet: Boolean=false) {
     Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)) {
@@ -638,12 +669,17 @@ internal interface TitleHold {
             if(!quiet) Box(Modifier.matchParentSize().clip(RoundedCornerShape(23.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
             Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).clickable(enabled=activityEnabled,role=Role.Button,onClick=onActivity)
                 .semantics {contentDescription="Activity";stateDescription=if(attentionCount>0) "$attentionCount new activity items" else "All activity seen"},contentAlignment=Alignment.Center) {
-                ChromeSymbol(ChromeIcon.EYE,color=MaterialTheme.colorScheme.onSurface.copy(alpha=if(activityEnabled) .85f else .3f))
+                ChromeSymbol(ChromeIcon.BELL,color=MaterialTheme.colorScheme.onSurface.copy(alpha=if(activityEnabled) .85f else .3f))
             }
-            // Badge the eye glyph, rather than the corner of its larger touch target.
-            if(attentionCount>0) Box(Modifier.align(Alignment.Center).offset(x=7.dp,y=(-4).dp).size(9.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(5.dp)).padding(1.dp)
-                .background(MaterialTheme.colorScheme.primary,RoundedCornerShape(4.dp)).semantics {testTag="Activity unread dot"})
+            // Badge the bell glyph, rather than the corner of its larger touch target. Amber with a
+            // count means something needs you; a small blue dot only says work is running.
+            if(attentionCount>0) Box(Modifier.align(Alignment.Center).offset(x=8.dp,y=(-7).dp).defaultMinSize(15.dp,15.dp)
+                .background(attentionColor(),RoundedCornerShape(8.dp)).padding(horizontal=4.dp).semantics {testTag="Activity unread dot"},contentAlignment=Alignment.Center) {
+                Text(if(attentionCount>9) "9+" else "$attentionCount",color=Color(0xff1e1604),fontSize=9.sp,lineHeight=9.sp,fontWeight=FontWeight.Bold,
+                    style=androidx.compose.ui.text.TextStyle(platformStyle=androidx.compose.ui.text.PlatformTextStyle(includeFontPadding=false)))
+            }
+            else if(working) Box(Modifier.align(Alignment.Center).offset(x=7.dp,y=(-6).dp).size(7.dp)
+                .background(MaterialTheme.colorScheme.primary,RoundedCornerShape(4.dp)).semantics {testTag="Activity working dot"})
         }
     }
 }

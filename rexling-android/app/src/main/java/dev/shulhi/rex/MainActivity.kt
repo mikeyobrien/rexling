@@ -137,7 +137,6 @@ class MainActivity : ComponentActivity() {
     var readyBackdrop by remember {mutableStateOf(false)}
     var floatingBackdrop by remember {mutableStateOf(false)}
     var wheelBackdrop by remember {mutableStateOf(false)}
-    var ownerBackdrop by remember {mutableStateOf(false)}
     val palette=LocalTerminalPalette.current
     var endpoint by rememberSaveable {mutableStateOf(client.savedEndpoint)}
     var showServer by rememberSaveable {mutableStateOf(true)}
@@ -243,6 +242,19 @@ class MainActivity : ComponentActivity() {
     SideEffect {window?.let {client.floatingNavigation.remember(displayedSession,it,chosen)}}
     BackHandler(enabled=ready && model.minimizeFloatingPanes && !newSession && !appearance && !about && !neovimSettings && !alerts && !fontPicker && floatingActive && hiddenFloating!=chosen && picker.isEmpty() && !preferencesOpen && !model.activityVisible) {minimizeFloating()}
     val liveBlock=state.selectedBlock.ifBlank {if(state.phase=="preview") "preview" else ""}
+    // The header's second line states what is wrong, with the one thing to do about it.
+    val paused=connectionStatus(state.phase,model.networkAvailable).takeIf {blocks.isNotEmpty()}
+    // Settle first: every pane switch is briefly unowned before this device claims it.
+    var viewing by remember {mutableStateOf(false)}
+    LaunchedEffect(ready,client.hasScreen,state.controlled,chosen) {
+        viewing=false
+        if(ready && client.hasScreen && !state.controlled) {kotlinx.coroutines.delay(600);viewing=true}
+    }
+    val headerStatus=when {
+        paused!=null->HeaderStatus(paused,StatusTone.WARNING,"Retry",model.networkAvailable!=false,client::retryNow)
+        viewing->HeaderStatus("Viewing only",StatusTone.QUIET,"Take over",onAction=client::takeControl)
+        else->null
+    }
     // One model for the switcher card and the wide list: what they show, and what each row can do.
     val sessionActivity=remember(model.activitySources) {ActivityBadgePolicy.sessions(model.activitySources)}
     val switcher=SwitcherModel(model.activeServer.label,
@@ -305,8 +317,10 @@ class MainActivity : ComponentActivity() {
                 onTitleTap=if(tabsReady && windows.isNotEmpty()) {{picker="tabs"}} else null,
                 onTitleHold=if(tabsReady && windows.size>1) titleHold else null,
                 // Wide: the list shows tabs, so the header names the pane; phones keep the tab position.
-                titleDetail=if(wide && chromeVisible) {if(carouselBlocks.size>1) "pane ${carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0)+1}/${carouselBlocks.size}" else ""}
+                titleDetail=if(wide && chromeVisible) ""
                     else if(windows.size>1) "${windows.indexOfFirst {it.id==window?.id}+1}/${windows.size}" else "",
+                paneDots=if(carouselBlocks.size>1) carouselBlocks.indexOfFirst {it.id==chosen}.coerceAtLeast(0) to carouselBlocks.size else null,
+                status=headerStatus,
                 subtitle=if(wide && chromeVisible) state.directories[displayedBlock].orEmpty() else null,
                 leading=if(wide && chromeVisible && listHidden) {{
                     ChromeButton(ChromeIcon.CHEVRON,"Show tab list",modifier=Modifier.graphicsLayer {rotationZ=-90f}) {listHidden=false}
@@ -317,7 +331,10 @@ class MainActivity : ComponentActivity() {
                 }} else null,menu={
                     Row(verticalAlignment=Alignment.CenterVertically) {
                     if(chromeVisible) TerminalActions(state.connected && state.selectedSession.isNotBlank(),model.connectedCount>0,
-                        {model.showActivity(true)},null,attentionCount=activityBadges.elsewhere,quiet=wide)
+                        {model.showActivity(true)},null,
+                        // Everything that needs you and is not on screen: other sessions, and this session's other tabs.
+                        attentionCount=activityBadges.elsewhere+activityBadges.tabs.filterKeys {it!=window?.id}.values.sum(),quiet=wide,
+                        working=state.workingBlocks.any {it!=chosen} || sessionActivity.any {it.key!=currentSessionKey && it.value.working})
                     Box {
                         ChromeButton(ChromeIcon.MORE,"Terminal menu"){menu=true}
                         DropdownMenu(menu,{menu=false},modifier=Modifier.drawerFrost(workspaceHaze,RoundedCornerShape(16.dp),workspaceBackdrop),shape=RoundedCornerShape(16.dp),containerColor=Color.Transparent,tonalElevation=0.dp) {
@@ -388,18 +405,18 @@ class MainActivity : ComponentActivity() {
                                 }
                                 else PortForwards.notice="Wait for this pane to connect before forwarding its link."
                             }},
-                            Modifier.fillMaxSize(),floatingDock=floating.isNotEmpty(),paneLayout=window?.layout.orEmpty(),titles=state.titles,directories=state.directories,hazeState=terminalHaze,captureBackdrop=floatingBackdrop || wheelBackdrop || ownerBackdrop || readyBackdrop || model.images.state!=null,onImage=imageCommit,onPaste=::pasteClipboard)
+                            Modifier.fillMaxSize(),paneIndicator=false,floatingDock=floating.isNotEmpty(),paneLayout=window?.layout.orEmpty(),titles=state.titles,directories=state.directories,hazeState=terminalHaze,captureBackdrop=floatingBackdrop || wheelBackdrop || readyBackdrop || model.images.state!=null,onImage=imageCommit,onPaste=::pasteClipboard)
                         if(floatingActive && hiddenFloating==chosen) Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center) {
                             Text("Floating panes minimized",style=SettingsType.detail,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         }
 
-                        ConnectionNotice(state.phase,model.networkAvailable,client::retryNow,Modifier.align(Alignment.TopCenter).padding(8.dp))
+                        // Paused input shows as a dimmed terminal; the header says why, so nothing covers the text.
+                        if(paused!=null) Box(Modifier.matchParentSize().background(MaterialTheme.colorScheme.background.copy(alpha=.5f)))
                         ReadyNotice(state.connectionEpoch,controlled,ready,Modifier.align(Alignment.TopCenter).padding(8.dp),hazeState=terminalHaze,onVisibleChange={readyBackdrop=it})
-                        OtherOwnerNotice(chosen,state.otherOwner && !controlled,ready,client.screenDimensions,client::takeControl,Modifier.align(Alignment.TopEnd).padding(10.dp),hazeState=terminalHaze,onVisibleChange={ownerBackdrop=it})
                         if((!floatingActive || hiddenFloating!=chosen) && model.neovimShortcutsEnabled && ready && chosen==liveBlock && chosen !in state.cachedPrograms && state.programs[chosen]?.kind==ProgramKind.NEOVIM && model.neovimShortcuts.isNotEmpty()) {
                             NeovimShortcutButton(model.neovimShortcuts,keyTarget,controlled,
                                 onChoose={item,target->client.neovimShortcut(item,target)},onCustomize={neovimSettings=true},layout=model.neovimShortcutLayout,effect=model.neovimShortcutEffect,hapticsEnabled=model.neovimShortcutHaptics,hazeState=terminalHaze,onExpandedChange={wheelBackdrop=it},
-                                modifier=Modifier.fillMaxSize(),position=model.neovimShortcutPosition,onPosition=model::moveNeovimShortcut,bottomInset=if(floating.isNotEmpty() || carouselBlocks.size>1) 64.dp else 10.dp)
+                                modifier=Modifier.fillMaxSize(),position=model.neovimShortcutPosition,onPosition=model::moveNeovimShortcut,bottomInset=if(floating.isNotEmpty()) 64.dp else 10.dp)
                         }
                         if(floating.isNotEmpty()) FloatingPaneDock(floating,chosen.takeIf {floatingActive && hiddenFloating!=chosen},state.programs,state.titles,ready,
                             ::openPane,::minimizeFloating,Modifier.align(Alignment.BottomEnd).padding(end=6.dp),directories=state.directories,hazeState=terminalHaze,onExpandedChange={floatingBackdrop=it})
@@ -469,11 +486,11 @@ private fun getClipboard(context: Context)=context.getSystemService(Context.CLIP
     programs: Map<String,ProgramIdentity>,controlled: Boolean,fontSize: Float,
     onInput: (String)->Unit,onScroll: (Int)->Unit,onWheel: (Int,Int,Int,Int,Int)->Unit,onActivate: ()->Unit,onBottom: ()->Unit,onDimensions: (Int,Int)->Unit,
     onSelect: (String)->Unit,onPanes: ()->Unit,onView: (TerminalView)->Unit,modifier: Modifier=Modifier,
-    floatingDock: Boolean=false,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false}) {
+    paneIndicator: Boolean=true,floatingDock: Boolean=false,paneLayout: List<PanePlacement> = emptyList(),titles: Map<String,String> = emptyMap(),directories: Map<String,String> = emptyMap(),hazeState: HazeState?=null,captureBackdrop: Boolean=false,onImage: (android.net.Uri,()->Unit)->Boolean={_,release->release();false},onPaste: ()->Boolean={false}) {
     val layout by client.displayLayout.collectAsState()
     val screen=client.screenForLayout(layout)
     TerminalCarousel(blocks,chosen,liveBlock,screen,client.paneFrames,programs,controlled,fontSize,
-        onInput,onScroll,onWheel,onActivate,onBottom,onDimensions,onSelect,onPanes,onView,modifier,client::bindTerminalView,onMouseClick=client::click,mouseTarget=client::keyTarget,onImage=onImage,onPaste=onPaste,imageTarget=client::imageInputTarget,bottomControlsInset=if(floatingDock) 56.dp else 0.dp,paneLayout=paneLayout,titles=titles,directories=directories,hazeState=hazeState,captureBackdrop=captureBackdrop)
+        onInput,onScroll,onWheel,onActivate,onBottom,onDimensions,onSelect,onPanes,onView,modifier,client::bindTerminalView,onMouseClick=client::click,mouseTarget=client::keyTarget,onImage=onImage,onPaste=onPaste,imageTarget=client::imageInputTarget,bottomControlsInset=if(floatingDock) 56.dp else 0.dp,paneLayout=paneLayout,titles=titles,directories=directories,hazeState=hazeState,captureBackdrop=captureBackdrop,paneIndicator=paneIndicator)
 }
 
 @Composable private fun BackgroundAlertsDialog(model: RexModel,hazeState: HazeState?=null,onClose: ()->Unit) {

@@ -4,7 +4,7 @@ The user takes control of a pane and types. Keys go to the server's PTY, and out
 
 ## Sub-features
 
-- Taking control: tap `Terminal output`, or open a session. The `Terminal menu` shows `In control` or viewing, the grid size (`63 × 50`) and `Release control`. Another client's sizing shows as `Sized by another client · 69×32` with `Take over`.
+- Taking control: tap `Terminal output`, or open a session. The `Terminal menu` shows `In control` or viewing, the grid size (`63 × 50`) and `Release control`. When this device is not in control, the header's second line reads `Viewing only` (content-desc `Status`) with `Take over` beside it. While the connection is down it reads `Offline`, `Connecting…` or `Reconnecting…` with `Retry`, and the terminal dims.
 - Keyboard accessory (`Terminal keys`): `Escape`, `Control`, `Alt`, `Shift`, Tab, the arrow group and the keyboard toggle. Holding `Control` opens a 3×3 popup (^C ^D ^Z ^R ^L ^A ^E ^W ^J).
 - Links, selection and copy: long-press. Mouse-mode taps go to TUI apps. See `rexling-android/TESTING.md`.
 
