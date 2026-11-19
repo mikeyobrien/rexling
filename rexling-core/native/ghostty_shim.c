@@ -88,7 +88,8 @@ int rp_render_hold_state(RpTerminal *t,uint8_t *held,uint64_t *generation) {
   *held=mode.value?1:0;*generation=t->render_hold_generation;
   return r;
 }
-#define RP_IMAGE_LIMIT (16ull * 1024 * 1024)
+/* Room for a full-screen picture twice over: a streamed frame in motion and the exact tiles replacing it. */
+#define RP_IMAGE_LIMIT (32ull * 1024 * 1024)
 int rp_graphics_init(GhosttySysDecodePngFn decode) {
   return ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, (const void *)decode);
 }
@@ -333,7 +334,9 @@ int rp_input_flags(RpTerminal *t, uint8_t *flags) {
   *flags=(accepting?16:0)|(known?32:0)|(mouse?1:0)|(screen==GHOSTTY_TERMINAL_SCREEN_ALTERNATE?2:0)|(alt.value?4:0)|(cursor.value?8:0);
   return r;
 }
-static int rp_mouse(RpTerminal *t,GhosttyMouseButton button,int release,int col,int row,uint32_t cw,uint32_t ch,char *out,size_t capacity,size_t *len) {
+/* phase: 0 press then release, 1 press, 2 release, 3 motion with the button held.
+   x and y are pixels from the grid's top-left corner, in cells of cw by ch pixels. */
+int rp_pointer(RpTerminal *t,int button,int phase,float x,float y,uint32_t cw,uint32_t ch,char *out,size_t capacity,size_t *len) {
   GhosttyMouseEncoder encoder=NULL;GhosttyMouseEvent event=NULL;
   uint16_t cols=0,rows=0;*len=0;
   int r=ghostty_terminal_get(t->terminal,GHOSTTY_TERMINAL_DATA_COLS,&cols);
@@ -341,17 +344,24 @@ static int rp_mouse(RpTerminal *t,GhosttyMouseButton button,int release,int col,
   if(r==0) r=ghostty_mouse_encoder_new(NULL,&encoder);
   if(r==0) r=ghostty_mouse_event_new(NULL,&event);
   if(r==0) {
-    if(col<0)col=0;if(col>=cols)col=cols-1;if(row<0)row=0;if(row>=rows)row=rows-1;
-    if(cw==0)cw=1;if(ch==0)ch=1;
+    if(cw==0) cw=1;
+    if(ch==0) ch=1;
+    float width=(float)cols*cw,height=(float)rows*ch;
+    if(x<0) x=0;
+    if(x>width-1) x=width-1;
+    if(y<0) y=0;
+    if(y>height-1) y=height-1;
     GhosttyMouseEncoderSize geometry=GHOSTTY_INIT_SIZED(GhosttyMouseEncoderSize);
     geometry.screen_width=cols*cw;geometry.screen_height=rows*ch;geometry.cell_width=cw;geometry.cell_height=ch;
+    bool held=phase==3;
     ghostty_mouse_encoder_set_from_terminal(encoder,t->terminal);
     ghostty_mouse_encoder_set(encoder,GHOSTTY_MOUSE_ENCODER_OPT_SIZE,&geometry);
-    ghostty_mouse_event_set_action(event,GHOSTTY_MOUSE_ACTION_PRESS);
-    ghostty_mouse_event_set_button(event,button);
-    ghostty_mouse_event_set_position(event,(GhosttyMousePosition){(col+.5f)*cw,(row+.5f)*ch});
+    ghostty_mouse_encoder_set(encoder,GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED,&held);
+    ghostty_mouse_event_set_action(event,phase==2?GHOSTTY_MOUSE_ACTION_RELEASE:phase==3?GHOSTTY_MOUSE_ACTION_MOTION:GHOSTTY_MOUSE_ACTION_PRESS);
+    ghostty_mouse_event_set_button(event,(GhosttyMouseButton)button);
+    ghostty_mouse_event_set_position(event,(GhosttyMousePosition){x,y});
     r=ghostty_mouse_encoder_encode(encoder,event,(uint8_t *)out,capacity,len);
-    if(r==0 && release && *len<=capacity) {
+    if(r==0 && phase==0 && *len<=capacity) {
       size_t tail=0;
       ghostty_mouse_event_set_action(event,GHOSTTY_MOUSE_ACTION_RELEASE);
       r=ghostty_mouse_encoder_encode(encoder,event,(uint8_t *)out+*len,capacity-*len,&tail);
@@ -361,10 +371,14 @@ static int rp_mouse(RpTerminal *t,GhosttyMouseButton button,int release,int col,
   ghostty_mouse_event_free(event);ghostty_mouse_encoder_free(encoder);return r;
 }
 int rp_wheel(RpTerminal *t,int down,int col,int row,uint32_t cw,uint32_t ch,char *out,size_t capacity,size_t *len) {
-  return rp_mouse(t,down?GHOSTTY_MOUSE_BUTTON_FIVE:GHOSTTY_MOUSE_BUTTON_FOUR,0,col,row,cw,ch,out,capacity,len);
+  if(cw==0) cw=1;
+  if(ch==0) ch=1;
+  return rp_pointer(t,down?GHOSTTY_MOUSE_BUTTON_FIVE:GHOSTTY_MOUSE_BUTTON_FOUR,1,(col+.5f)*cw,(row+.5f)*ch,cw,ch,out,capacity,len);
 }
 int rp_click(RpTerminal *t,int col,int row,uint32_t cw,uint32_t ch,char *out,size_t capacity,size_t *len) {
-  return rp_mouse(t,GHOSTTY_MOUSE_BUTTON_LEFT,1,col,row,cw,ch,out,capacity,len);
+  if(cw==0) cw=1;
+  if(ch==0) ch=1;
+  return rp_pointer(t,GHOSTTY_MOUSE_BUTTON_LEFT,0,(col+.5f)*cw,(row+.5f)*ch,cw,ch,out,capacity,len);
 }
 static int semantic_row(RpTerminal *t,uint16_t y,GhosttyRowSemanticPrompt *kind,bool *continuation) {
   GhosttyPoint point={.tag=GHOSTTY_POINT_TAG_VIEWPORT,.value.coordinate={.x=0,.y=y}};

@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>rexcast eval</title>
+<style>
+html,body{margin:0;height:100%;background:#282c34;overflow:hidden}
+.strip{position:fixed;left:0;right:0;display:flex}
+.strip i{display:block;height:100%}
+#square{position:fixed;background:#c80000}
+#field{position:fixed;left:10%;right:10%;bottom:22%;font:20px sans-serif;padding:8px}
+</style>
+<div class="strip" id="top" style="top:0"></div>
+<div class="strip" id="bottom" style="bottom:0"></div>
+<div class="strip" id="mid" style="bottom:calc(22% + 64px)"></div>
+<div id="square"></div>
+<input id="field" autofocus>
+<script>
+// Mirrors rexcast's measurement pattern, so the same recording analysis reads a real browser.
+const BITS=12;let index=0,taps=0;
+function layout(){
+  const w=innerWidth,h=innerHeight,strip=Math.max(16,Math.floor(h/24)),block=Math.floor(w/(BITS+2));
+  for(const el of [top_,bottom_,mid_]){
+    el.style.height=strip+'px';el.innerHTML='';
+    const f=document.createElement('i');f.style.width=block*2+'px';f.style.background='#f0f';el.append(f);
+    for(let b=0;b<BITS;b++){const i=document.createElement('i');i.style.width=block+'px';
+      i.style.background=(index>>(BITS-1-b)&1)?'#fff':'#000';el.append(i)}
+  }
+  const side=Math.floor(Math.min(w,h)/4);
+  Object.assign(square.style,{width:side+'px',height:side+'px',left:(w-side)/2+'px',top:((h-side)/2-side)+'px',
+    background:taps%2?'#00c800':'#c80000'});
+}
+const top_=document.getElementById('top'),bottom_=document.getElementById('bottom'),mid_=document.getElementById('mid');
+function bump(){index=(index+1)%(1<<BITS);layout()}
+addEventListener('mousedown',()=>{taps++;bump()});
+addEventListener('wheel',bump);addEventListener('keydown',bump);addEventListener('resize',layout);
+layout();
+</script>

@@ -1,0 +1,1047 @@
+#!/usr/bin/env python3
+"""Show images, video, web pages and desktop apps in a terminal pane with Kitty graphics.
+
+  rexcast image FILE            a picture, fitted to the pane
+  rexcast video FILE|URL        a video, played at its own frame rate
+  rexcast web URL               a browser you can tap, scroll and type into
+  rexcast app -- COMMAND...     any X11 program, on a private virtual display
+  rexcast pattern NAME          measurement patterns used by evals/media
+
+Interactive sources (web, app) run on a private Xvfb display sized to the pane, so
+nothing appears on the real desktop. Taps, drags, scrolling and typing are forwarded.
+Only the parts of the picture that changed are sent. Ctrl+\\ quits.
+"""
+import argparse
+import base64
+import ctypes
+import ctypes.util
+import fcntl
+import io
+import json
+import os
+import select
+import shutil
+import signal
+import struct
+import subprocess
+import tempfile
+import termios
+import threading
+import time
+import tty
+import zlib
+
+from PIL import Image, ImageChops, ImageDraw, ImageFont
+
+ESC = "\033"
+
+
+# ── terminal ────────────────────────────────────────────────────────────────
+
+class Pane:
+    """The terminal the pictures go to: its size, raw input and buffered output."""
+
+    def __init__(self, cell=None):
+        self.fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+        self.cell_override = cell
+        self.saved = None
+        self.buffer = []
+        self.sent = 0
+        self.resized = threading.Event()
+        signal.signal(signal.SIGWINCH, lambda *_: self.resized.set())
+        for name in ("SIGQUIT", "SIGTERM", "SIGHUP"):
+            signal.signal(getattr(signal, name), self.quit)
+        self.measure()
+
+    @staticmethod
+    def quit(*_):
+        raise KeyboardInterrupt
+
+    def measure(self):
+        rows, cols, xpix, ypix = struct.unpack("HHHH", fcntl.ioctl(self.fd, termios.TIOCGWINSZ, b"\0" * 8))
+        self.cols, self.rows = max(1, cols), max(1, rows)
+        if self.cell_override:
+            self.cw, self.ch = self.cell_override
+        elif xpix and ypix:
+            self.cw, self.ch = max(1, xpix // self.cols), max(1, ypix // self.rows)
+        else:
+            self.cw, self.ch = 8, 16
+        return self.cols, self.rows, self.cw, self.ch
+
+    def raw(self):
+        self.saved = termios.tcgetattr(self.fd)
+        tty.setraw(self.fd)
+
+    def restore(self):
+        if self.saved:
+            termios.tcsetattr(self.fd, termios.TCSADRAIN, self.saved)
+            self.saved = None
+
+    def write(self, text):
+        self.buffer.append(text)
+
+    def flush(self):
+        data = "".join(self.buffer).encode()
+        self.buffer.clear()
+        view = memoryview(data)
+        while view:
+            view = view[os.write(self.fd, view):]
+        self.sent += len(data)
+        return len(data)
+
+    def read(self, timeout):
+        if select.select([self.fd], [], [], timeout)[0]:
+            return os.read(self.fd, 65536)
+        return b""
+
+    def query(self, request, final, timeout=0.3):
+        """Send a query and return the reply up to its final byte, or b'' when unanswered."""
+        os.write(self.fd, request.encode())
+        reply, deadline = b"", time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            reply += self.read(deadline - time.monotonic())
+            if final in reply:
+                return reply
+        return b""
+
+
+# ── Kitty graphics ──────────────────────────────────────────────────────────
+
+class Tiles:
+    """A grid of Kitty images covering a cell box. Only tiles whose pixels changed are sent.
+
+    With the "auto" codec and a viewer that decodes JPEG, a region in motion (video, scrolling)
+    is shown as one JPEG underneath the grid, and its tiles are removed so it shows through.
+    Each tile comes back as an exact copy once it has held still, and the JPEG goes when the
+    last one has.
+    """
+    SETTLE = 0.25
+
+    def __init__(self, pane, col, row, cols, rows, width, height, tile=(12, 6), codec="rgbz", base=4000, lossy=False):
+        self.pane, self.base = pane, base
+        self.codec = ("jpeg" if lossy else "rgbz") if codec == "auto" else codec
+        self.adaptive = codec == "auto" and lossy
+        self.quality, self.shrink = 70, 1.0
+        self.col, self.row, self.cols, self.rows = col, row, cols, rows
+        self.width, self.height = width, height
+        self.grid = []
+        tc, tr = (cols, rows) if codec.startswith("full") else tile
+        index = 0
+        for r in range(0, rows, tr):
+            for c in range(0, cols, tc):
+                c2, r2 = min(cols, c + tc), min(rows, r + tr)
+                box = (c * width // cols, r * height // rows, c2 * width // cols, r2 * height // rows)
+                self.grid.append((index, c, r, c2 - c, r2 - r, box))
+                index += 1
+        self.last = [None] * len(self.grid)
+        self.rough = {}  # tile index -> (when it last changed, its pixels), while the JPEG stands in for it
+        self.covered = False
+
+    def encode(self, image, raw, codec):
+        if codec.endswith("png"):
+            out = io.BytesIO()
+            image.save(out, "PNG", compress_level=1)
+            return "f=100", out.getvalue()
+        if codec.endswith("jpeg"):
+            out = io.BytesIO()
+            if self.shrink < 1:
+                # Fewer pixels over the same cells: the viewer stretches the picture back.
+                image = image.resize((max(1, int(image.width * self.shrink)), max(1, int(image.height * self.shrink))), Image.BILINEAR)
+            image.save(out, "JPEG", quality=self.quality)
+            return "f=100", out.getvalue()
+        if codec.endswith("rgb"):
+            return f"f=24,s={image.width},v={image.height}", raw
+        return f"f=24,o=z,s={image.width},v={image.height}", zlib.compress(raw, 1)
+
+    def place(self, identity, c, r, tc, tr, head, payload, under=False):
+        data = base64.standard_b64encode(payload).decode()
+        self.pane.write(f"{ESC}[{self.row + r + 1};{self.col + c + 1}H")
+        first = f"a=T,q=2,C=1,i={identity},c={tc},r={tr},{'z=-1,' if under else ''}{head},"
+        for start in range(0, len(data), 4096):
+            more = 1 if start + 4096 < len(data) else 0
+            self.pane.write(f"{ESC}_G{first}m={more};{data[start:start + 4096]}{ESC}\\")
+            first = ""
+
+    def send(self, entry, image, raw, codec):
+        index, c, r, tc, tr, _ = entry
+        self.place(self.base + index, c, r, tc, tr, *self.encode(image, raw, codec))
+
+    def remove(self, identity):
+        self.pane.write(f"{ESC}_Ga=d,d=I,i={identity},q=2{ESC}\\")
+
+    def cover(self, frame):
+        """One JPEG under every tile that is in motion."""
+        entries = [self.grid[index] for index in self.rough]
+        c0, r0 = min(e[1] for e in entries), min(e[2] for e in entries)
+        c1, r1 = max(e[1] + e[3] for e in entries), max(e[2] + e[4] for e in entries)
+        box = (c0 * self.width // self.cols, r0 * self.height // self.rows,
+               c1 * self.width // self.cols, r1 * self.height // self.rows)
+        self.place(self.base - 1, c0, r0, c1 - c0, r1 - r0, *self.encode(frame.crop(box), None, "jpeg"), under=True)
+        self.covered = True
+
+    def draw(self, frame):
+        """Queue the changed parts of an RGB frame. Returns how many tiles changed."""
+        changed = []
+        for entry in self.grid:
+            box = entry[5]
+            tile = frame if box == (0, 0, frame.width, frame.height) else frame.crop(box)
+            raw = tile.tobytes()
+            if raw != self.last[entry[0]]:
+                self.last[entry[0]] = raw
+                changed.append((entry, tile, raw))
+        # A few changed tiles are a caret or a button and stay exact; many are motion.
+        if self.adaptive and len(changed) * 4 > len(self.grid):
+            now = time.monotonic()
+            for entry, tile, _ in changed:
+                if entry[0] not in self.rough:
+                    self.remove(self.base + entry[0])
+                self.rough[entry[0]] = (now, tile)
+            self.cover(frame)
+        else:
+            for entry, tile, raw in changed:
+                self.send(entry, tile, raw, "rgbz" if self.adaptive else self.codec)
+                self.rough.pop(entry[0], None)
+            self.uncover()
+        return len(changed)
+
+    def uncover(self):
+        if self.covered and not self.rough:
+            self.remove(self.base - 1)
+            self.covered = False
+
+    def hurry(self):
+        """Let exact copies replace the moving picture now, without waiting for it to settle."""
+        self.rough = {index: (0.0, tile) for index, (_, tile) in self.rough.items()}
+
+    def refine(self):
+        """Lay exact tiles back over the settled part of the picture, a few per call. Returns how many."""
+        if not self.rough:
+            return 0
+        now, sent = time.monotonic(), 0
+        for index in sorted(self.rough):
+            at, tile = self.rough[index]
+            if now - at < self.SETTLE:
+                continue
+            self.send(self.grid[index], tile, self.last[index], "rgbz")
+            del self.rough[index]
+            sent += 1
+            if sent * 6 >= len(self.grid):
+                break
+        self.uncover()
+        return sent
+
+    def clear(self):
+        for index, *_ in self.grid:
+            self.remove(self.base + index)
+        self.remove(self.base - 1)
+
+
+def viewer():
+    """Name and version of the client that owns this pane, from the Rex server. ('', ()) outside Rex."""
+    session, block = os.environ.get("REX_SESSION"), os.environ.get("REX_BLOCK")
+    if not session or not block or not shutil.which("rex"):
+        return "", ()
+    try:
+        def call(method):
+            return json.loads(subprocess.run(["rex", "api", "call", "-s", session, method], capture_output=True,
+                                             text=True, timeout=5).stdout)
+        owner = None
+        stack = [call("session.view")]
+        while stack and owner is None:
+            node = stack.pop()
+            if isinstance(node, dict):
+                if node.get("block_id") == block and "flavor" in node:
+                    owner = node.get("owner") or ""
+                stack.extend(node.values())
+            elif isinstance(node, list):
+                stack.extend(node)
+        for client in call("session.list_clients").get("clients", []):
+            if client.get("client_id") == owner:
+                info = client.get("info", {})
+                return info.get("name", ""), tuple(int(v) for v in info.get("version", "0").split(".") if v.isdigit())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return "", ()
+
+
+def fit(pane, width, height, fill=False):
+    """Cell box and pixel size for a picture of this shape, centred in the pane."""
+    if fill:
+        return 0, 0, pane.cols, pane.rows, pane.cols * pane.cw, pane.rows * pane.ch
+    scale = min(pane.cols * pane.cw / width, pane.rows * pane.ch / height)
+    cols = max(1, min(pane.cols, int(width * scale / pane.cw)))
+    rows = max(1, min(pane.rows, int(height * scale / pane.ch)))
+    return (pane.cols - cols) // 2, (pane.rows - rows) // 2, cols, rows, cols * pane.cw, rows * pane.ch
+
+
+# ── sources ─────────────────────────────────────────────────────────────────
+
+class Source:
+    """Produces RGB frames at the size the pane asks for."""
+    fill = False
+    interactive = False
+    fps = 30.0
+
+    def shape(self):
+        return 16, 9
+
+    def start(self, width, height):
+        pass
+
+    def frame(self, timeout):
+        """The newest frame, or None when nothing new arrived in time. Raises EOFError at the end."""
+        raise NotImplementedError
+
+    def pointer(self, kind, x, y, button):
+        pass
+
+    def key(self, data):
+        pass
+
+    def stop(self):
+        pass
+
+
+class Still(Source):
+    def __init__(self, path):
+        self.image = Image.open(path).convert("RGB")
+        self.pending = None
+
+    def shape(self):
+        return self.image.size
+
+    def start(self, width, height):
+        self.pending = self.image.resize((width, height), Image.LANCZOS)
+
+    def frame(self, timeout):
+        frame, self.pending = self.pending, None
+        if frame is None:
+            time.sleep(timeout)
+        return frame
+
+
+class Pipe(Source):
+    """Frames from an ffmpeg process. A reader thread keeps only the newest one."""
+
+    def __init__(self):
+        self.process = None
+        self.lock = threading.Condition()
+        self.latest = None
+        self.ended = False
+        self.produced = 0
+
+    def command(self, width, height):
+        raise NotImplementedError
+
+    def start(self, width, height):
+        self.stop_pipe()
+        self.ended = False
+        self.latest = None
+        self.process = subprocess.Popen(self.command(width, height), stdout=subprocess.PIPE,
+                                        stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        threading.Thread(target=self.pump, args=(self.process, width, height), daemon=True).start()
+
+    def pump(self, process, width, height):
+        size = width * height * 3
+        while True:
+            data = process.stdout.read(size)
+            if len(data) < size:
+                break
+            with self.lock:
+                self.latest = Image.frombuffer("RGB", (width, height), data, "raw", "RGB", 0, 1)
+                self.produced += 1
+                self.lock.notify()
+        with self.lock:
+            if process is self.process:
+                self.ended = True
+            self.lock.notify()
+
+    def frame(self, timeout):
+        with self.lock:
+            if self.latest is None and not self.ended:
+                self.lock.wait(timeout)
+            frame, self.latest = self.latest, None
+            if frame is None and self.ended:
+                raise EOFError
+            return frame
+
+    def stop_pipe(self):
+        process, self.process = self.process, None
+        if process:
+            process.kill()
+            process.wait()
+
+    def stop(self):
+        self.stop_pipe()
+
+
+class Video(Pipe):
+    def __init__(self, path, fps=None):
+        super().__init__()
+        self.path = path
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                "stream=width,height,r_frame_rate", "-of", "csv=p=0", path],
+                               capture_output=True, text=True).stdout.strip().split(",")
+        self.size = (int(probe[0]), int(probe[1])) if len(probe) >= 2 and probe[0].isdigit() else (16, 9)
+        try:
+            n, d = probe[2].split("/")
+            native = float(n) / float(d)
+        except (IndexError, ValueError, ZeroDivisionError):
+            native = 30.0
+        self.fps = min(fps or native, 60.0)
+
+    def shape(self):
+        return self.size
+
+    def command(self, width, height):
+        return ["ffmpeg", "-v", "error", "-re", "-i", self.path, "-an", "-vf",
+                f"fps={self.fps},scale={width}:{height}:flags=bicubic", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
+
+
+class Desktop(Pipe):
+    """A program on a private Xvfb display, captured with x11grab and driven with XTest."""
+    fill = True
+    interactive = True
+
+    def __init__(self, command, fps=30.0, browser=False, scale=1.0):
+        super().__init__()
+        self.program, self.fps, self.browser, self.scale = command, fps, browser, scale
+        self.display = None
+        self.xvfb = self.wm = self.child = None
+        self.x = self.env = None
+        self.size = (0, 0)
+        self.home = tempfile.mkdtemp(prefix="rexcast-")
+
+    SCREEN = 4096  # the virtual screen's largest side; it is resized down to the pane
+
+    def start(self, width, height):
+        width, height = min(self.SCREEN, width - width % 2), min(self.SCREEN, height - height % 2)
+        resized = self.xvfb and (width, height) != self.size
+        self.size = (width, height)
+        if resized:
+            # The pane changed size (a keyboard opened, the phone turned): resize the screen
+            # under the running program instead of starting it again.
+            self.resize_screen()
+        if not self.xvfb:
+            self.launch()
+        super().start(width, height)
+
+    def resize_screen(self):
+        width, height = self.size
+        name = f"{width}x{height}"
+        for arguments in (["--newmode", name, "60", str(width), str(width + 8), str(width + 16), str(width + 24),
+                           str(height), str(height + 2), str(height + 4), str(height + 6)],
+                          ["--addmode", "screen", name], ["--output", "screen", "--mode", name]):
+            subprocess.run(["xrandr", *arguments], env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def launch(self):
+        width, height = self.size
+        read, write = os.pipe()
+        self.xvfb = subprocess.Popen(["Xvfb", "-displayfd", str(write), "-screen", "0", f"{self.SCREEN}x{self.SCREEN}x24",
+                                      "-nolisten", "tcp", "-dpi", "96"], pass_fds=[write],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.close(write)
+        self.display = ":" + os.read(read, 16).decode().strip()
+        os.close(read)
+        # A phone's cells are two or three times a desktop's; scale programs so text stays readable.
+        whole = max(1, round(self.scale))
+        env = dict(os.environ, DISPLAY=self.display, GDK_BACKEND="x11", QT_QPA_PLATFORM="xcb",
+                   MOZ_ENABLE_WAYLAND="0", XDG_SESSION_TYPE="x11", GDK_SCALE=str(whole),
+                   GDK_DPI_SCALE=f"{self.scale / whole:.3f}", QT_SCALE_FACTOR=f"{self.scale:.3f}",
+                   XCURSOR_SIZE=str(round(24 * self.scale)))
+        env.pop("WAYLAND_DISPLAY", None)
+        self.env = env
+        self.x = XTest(self.display)
+        self.resize_screen()
+        if shutil.which("openbox"):
+            config = os.path.join(self.home, "openbox.xml")
+            with open(config, "w") as out:
+                out.write('<openbox_config xmlns="http://openbox.org/3.4/rc"><applications>'
+                          '<application class="*" type="normal"><decor>no</decor><maximized>yes</maximized>'
+                          '<focus>yes</focus></application></applications></openbox_config>')
+            self.wm = subprocess.Popen(["openbox", "--config-file", config], env=env,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        program = list(self.program)
+        if self.browser:
+            program = ["chromium", f"--user-data-dir={self.home}/profile", "--no-first-run", "--ozone-platform=x11",
+                       "--disable-features=Translate", "--hide-crash-restore-bubble", "--no-default-browser-check",
+                       f"--force-device-scale-factor={self.scale:.3f}",
+                       f"--window-size={width},{height}", "--window-position=0,0", f"--app={self.program[0]}"]
+        self.child = subprocess.Popen(program, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def command(self, width, height):
+        return ["ffmpeg", "-v", "error", "-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32",
+                "-f", "x11grab", "-draw_mouse", "1", "-framerate", str(self.fps), "-video_size", f"{width}x{height}",
+                "-i", self.display, "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
+
+    def frame(self, timeout):
+        if self.child and self.child.poll() is not None:
+            raise EOFError
+        return super().frame(timeout)
+
+    def pointer(self, kind, x, y, button):
+        if self.x:
+            self.x.pointer(kind, x, y, button)
+
+    def key(self, data):
+        if self.x:
+            self.x.keys(data)
+
+    def stop(self):
+        super().stop()
+        for process in (self.child, self.wm, self.xvfb):
+            if process and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        self.child = self.wm = self.xvfb = self.x = None
+
+
+class XTest:
+    """Pointer and keyboard injection into one X display."""
+    NAMED = {b"\r": "Return", b"\n": "Return", b"\t": "Tab", b"\x7f": "BackSpace", b"\x08": "BackSpace",
+             b"\x1b": "Escape", b"\x1b[A": "Up", b"\x1b[B": "Down", b"\x1b[C": "Right", b"\x1b[D": "Left",
+             b"\x1bOA": "Up", b"\x1bOB": "Down", b"\x1bOC": "Right", b"\x1bOD": "Left",
+             b"\x1b[H": "Home", b"\x1b[F": "End", b"\x1b[1~": "Home", b"\x1b[4~": "End", b"\x1b[2~": "Insert",
+             b"\x1b[3~": "Delete", b"\x1b[5~": "Prior", b"\x1b[6~": "Next", b"\x1b[Z": "shift+Tab",
+             b"\x1bOP": "F1", b"\x1bOQ": "F2", b"\x1bOR": "F3", b"\x1bOS": "F4", b"\x1b[15~": "F5",
+             b"\x1b[17~": "F6", b"\x1b[18~": "F7", b"\x1b[19~": "F8", b"\x1b[20~": "F9", b"\x1b[21~": "F10",
+             b"\x1b[23~": "F11", b"\x1b[24~": "F12"}
+
+    def __init__(self, display):
+        self.env = dict(os.environ, DISPLAY=display)
+        self.x11 = ctypes.CDLL(ctypes.util.find_library("X11"))
+        self.xtst = ctypes.CDLL(ctypes.util.find_library("Xtst"))
+        self.x11.XOpenDisplay.restype = ctypes.c_void_p
+        self.x11.XStringToKeysym.restype = ctypes.c_ulong
+        self.x11.XkbKeycodeToKeysym.restype = ctypes.c_ulong
+        self.x11.XkbKeycodeToKeysym.argtypes = [ctypes.c_void_p, ctypes.c_ubyte, ctypes.c_uint, ctypes.c_uint]
+        self.x11.XKeysymToKeycode.restype = ctypes.c_ubyte
+        self.x11.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        self.handle = None
+        for _ in range(50):
+            self.handle = self.x11.XOpenDisplay(display.encode())
+            if self.handle:
+                break
+            time.sleep(0.1)
+        self.handle = ctypes.c_void_p(self.handle)
+        self.lock = threading.Lock()
+
+    def pointer(self, kind, x, y, button):
+        with self.lock:
+            self.xtst.XTestFakeMotionEvent(self.handle, -1, int(x), int(y), 0)
+            if kind == "press":
+                self.xtst.XTestFakeButtonEvent(self.handle, button, 1, 0)
+            elif kind == "release":
+                self.xtst.XTestFakeButtonEvent(self.handle, button, 0, 0)
+            elif kind == "wheel":
+                self.xtst.XTestFakeButtonEvent(self.handle, button, 1, 0)
+                self.xtst.XTestFakeButtonEvent(self.handle, button, 0, 0)
+            self.x11.XFlush(self.handle)
+
+    def stroke(self, keysym, modifiers=()):
+        """Press and release one key with modifiers held. False when the keyboard has no such key."""
+        code = self.x11.XKeysymToKeycode(self.handle, keysym)
+        if not code:
+            return False
+        held = list(modifiers)
+        if self.x11.XkbKeycodeToKeysym(self.handle, code, 0, 0) != keysym and \
+                self.x11.XkbKeycodeToKeysym(self.handle, code, 0, 1) == keysym and "Shift_L" not in held:
+            held.append("Shift_L")
+        codes = [self.x11.XKeysymToKeycode(self.handle, self.x11.XStringToKeysym(name.encode())) for name in held]
+        with self.lock:
+            for held_code in codes:
+                self.xtst.XTestFakeKeyEvent(self.handle, held_code, 1, 0)
+            self.xtst.XTestFakeKeyEvent(self.handle, code, 1, 0)
+            self.xtst.XTestFakeKeyEvent(self.handle, code, 0, 0)
+            for held_code in reversed(codes):
+                self.xtst.XTestFakeKeyEvent(self.handle, held_code, 0, 0)
+            self.x11.XFlush(self.handle)
+        return True
+
+    def named(self, name):
+        *modifiers, key = name.split("+")
+        held = [{"shift": "Shift_L", "ctrl": "Control_L", "alt": "Alt_L"}[m] for m in modifiers]
+        return self.stroke(self.x11.XStringToKeysym(key.encode()), held)
+
+    def keys(self, data):
+        """Translate terminal input bytes into key presses."""
+        while data:
+            for length in range(min(len(data), 6), 0, -1):
+                name = self.NAMED.get(data[:length])
+                if name:
+                    self.named(name)
+                    data = data[length:]
+                    break
+            else:
+                first = data[0]
+                if first == 0x1b and len(data) > 1 and 0x20 <= data[1] < 0x7f:
+                    self.stroke(data[1], ["Alt_L"])
+                    data = data[2:]
+                elif first < 0x20:
+                    self.stroke(first + 96, ["Control_L"])
+                    data = data[1:]
+                else:
+                    end = 1
+                    while end < len(data) and data[end] >= 0x20 and data[end] != 0x7f:
+                        end += 1
+                    for char in data[:end].decode("utf-8", "ignore"):
+                        # Latin-1 keysyms are the code points. Anything the keyboard lacks goes through xdotool.
+                        if ord(char) > 0xff or not self.stroke(ord(char)):
+                            subprocess.run(["xdotool", "type", "--delay", "0", "--", char], env=self.env,
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    data = data[end:]
+
+
+# ── measurement patterns ────────────────────────────────────────────────────
+
+MAGENTA, BITS = (255, 0, 255), 12
+
+
+class Pattern(Source):
+    """Frames that a screen recording can read back.
+
+    The top strip is a magenta finder block, then BITS black or white blocks that spell the
+    frame number, most significant first. The same strip repeats along the bottom edge, so a
+    recorded frame whose two strips disagree was torn. A tap flips the square in the centre.
+    """
+    fill = True
+    interactive = True
+
+    def __init__(self, kind, fps, seconds):
+        self.kind, self.fps, self.seconds = kind, fps, seconds
+        self.index = 0
+        self.taps = 0
+        self.next_at = None
+        self.base = None
+        self.started = None
+
+    def start(self, width, height):
+        self.width, self.height = width, height
+        self.strip = max(16, height // 24)
+        self.block = width // (BITS + 2)
+        self.base = self.page(width, height) if self.kind in ("ui", "chart") else None
+        self.noise = None
+        self.next_at = time.monotonic()
+        self.started = self.started or time.monotonic()
+        self.dirty = True
+
+    def page(self, width, height):
+        """A static page of text, like a document or a web page."""
+        image = Image.new("RGB", (width, height), (250, 250, 247))
+        draw = ImageDraw.Draw(image)
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/inter/Inter.ttc", max(10, height // 60))
+        except OSError:
+            font = ImageFont.load_default()
+        line = max(12, height // 45)
+        text = "The quick brown fox jumps over the lazy dog 0123456789 "
+        for i, y in enumerate(range(self.strip * 2, height - self.strip * 2, line)):
+            draw.text((self.block // 2, y), (text * 4)[i % 9:][:max(10, width // (line // 2))], font=font, fill=(30, 30, 34))
+        return image
+
+    def marker(self, draw, top, value):
+        draw.rectangle((0, top, self.block * 2 - 1, top + self.strip - 1), fill=MAGENTA)
+        for bit in range(BITS):
+            on = value >> (BITS - 1 - bit) & 1
+            left = self.block * (2 + bit)
+            draw.rectangle((left, top, left + self.block - 1, top + self.strip - 1), fill=(255, 255, 255) if on else (0, 0, 0))
+
+    def frame(self, timeout):
+        now = time.monotonic()
+        if self.seconds and now - self.started > self.seconds:
+            raise EOFError
+        animated = self.kind in ("motion", "ui", "film")
+        if animated and now < self.next_at or not animated and not self.dirty:
+            time.sleep(min(timeout, max(0.001, self.next_at - now)) if animated else timeout)
+            return None
+        self.dirty = False
+        if animated:
+            self.next_at = max(self.next_at + 1 / self.fps, now - 1 / self.fps)
+            self.index = (self.index + 1) % (1 << BITS)
+        width, height, i = self.width, self.height, self.index
+        if self.kind in ("motion", "film"):
+            # Every pixel changes each frame: a gradient with bars, sliding diagonally. Film adds
+            # grain that never repeats in place, like camera footage: little for a lossless coder
+            # to find, ordinary work for a lossy one.
+            if not self.noise:
+                scene = Image.linear_gradient("L").resize((width, height)).rotate(25).convert("RGB")
+                bars = ImageDraw.Draw(scene)
+                for k in range(6):
+                    x = k * width // 6
+                    bars.rectangle((x, 0, x + width // 24, height), fill=((k * 47) % 256, (k * 91) % 256, 255 - k * 40))
+                self.noise = [scene, Image.effect_noise((width, height), 12).convert("RGB")]
+            image = ImageChops.offset(self.noise[0], i * 9 % width, i * 5 % height)
+            if self.kind == "film":
+                image = ImageChops.add(image, ImageChops.offset(self.noise[1], i * 35 % width, i * 21 % height), 1, -128)
+            draw = ImageDraw.Draw(image)
+        elif self.kind == "swap":
+            # A tap replaces the whole picture with one that doesn't compress, like opening a photo.
+            if not self.noise:
+                self.noise = [Image.effect_noise((width, height), 70).convert("RGB") for _ in range(2)]
+            image = self.noise[self.taps % 2].copy()
+            draw = ImageDraw.Draw(image)
+        elif self.kind == "chart":
+            image = self.base.copy()
+            draw = ImageDraw.Draw(image)
+            i = 0b101001011010
+        else:
+            image = self.base.copy() if self.base else Image.new("RGB", (width, height), (40, 44, 52))
+            draw = ImageDraw.Draw(image)
+            if self.kind == "ui":
+                # A caret-sized change, like typing into a page.
+                x = self.block + (i * 6) % max(1, width - 2 * self.block)
+                draw.rectangle((x, height // 2, x + 6, height // 2 + self.strip), fill=(20, 90, 220))
+        self.marker(draw, 0, i)
+        self.marker(draw, height - self.strip, i)
+        side = min(width, height) // 4
+        left, top = (width - side) // 2, (height - side) // 2 - side
+        if self.kind == "chart":
+            return image
+        draw.rectangle((left, top, left + side, top + side), fill=(0, 200, 0) if self.taps % 2 else (200, 0, 0))
+        return image
+
+    def pointer(self, kind, x, y, button):
+        if kind == "press":
+            self.taps += 1
+            self.dirty = True
+            if self.kind not in ("motion", "ui", "film"):
+                self.index = (self.index + 1) % (1 << BITS)
+
+
+# ── main loop ───────────────────────────────────────────────────────────────
+
+class Flow:
+    """Paces frames by the viewer's acknowledgements and sizes them to what the link carries.
+
+    Rexling answers each numbered frame once it is on screen. At most WINDOW frames are sent
+    ahead of the last answer, so a slow link shows fewer, current frames instead of old ones.
+    When frames are held back often, pictures in motion are sent smaller; when answers come
+    quickly again, larger. Viewers that never answer are not paced.
+    """
+    WINDOW = 3
+    LEVELS = ((1.0, 70), (1.0, 50), (0.75, 50), (0.5, 50), (0.5, 35), (0.34, 35), (0.25, 30))
+
+    def __init__(self, enabled, fps):
+        self.enabled, self.target = enabled, min(fps, 30.0)
+        self.serial = self.acked = 0
+        self.sent = {}
+        self.last_sent = self.last_ack = self.period = time.monotonic()
+        # Start at the smallest size, for a quick first picture on any link.
+        self.level = len(self.LEVELS) - 1
+        self.delay = 0.0
+        self.blocked = self.block_from = 0.0
+        self.answers = 0
+        # Grow a step every period at first, so a fast link reaches full size within two seconds.
+        self.calm, self.patience, self.grew_at = 0, 1, 0.0
+        self.silence = 1.0
+        # The largest size that recently proved too much, and until when not to try it again.
+        self.ceiling, self.ceiling_until = 0, 0.0
+
+    def ready(self, now):
+        """Whether another frame may go out now.
+
+        One frame is in flight until the link has shown it is quick, then up to WINDOW. A viewer
+        that stops answering gets a smaller frame after a wait that doubles each time.
+        """
+        if not self.enabled:
+            return True
+        window = 1 if not self.delay or self.delay > .4 else 2 if self.delay > .2 else self.WINDOW
+        silent = now - max(self.last_sent, self.last_ack) > self.silence
+        if self.serial - self.acked < window or silent:
+            if silent and self.serial > self.acked:
+                self.silence = min(8.0, self.silence * 2)
+                self.shrink(now, 1)
+            if self.block_from:
+                self.blocked += now - self.block_from
+                self.block_from = 0.0
+            return True
+        self.block_from = self.block_from or now
+        return False
+
+    def shrink(self, now, steps):
+        """Send smaller pictures. A size that failed right after growing into it is left alone for a while."""
+        self.level = min(len(self.LEVELS) - 1, self.level + steps)
+        if now - self.grew_at < 3:
+            self.ceiling, self.ceiling_until = self.level, now + 30
+            self.patience = min(32, self.patience * 2)
+        else:
+            self.patience = max(4, self.patience)
+        self.calm = 0
+
+    def mark(self, pane, now):
+        """Number the frame just queued."""
+        if not self.enabled:
+            return
+        self.serial += 1
+        self.sent[self.serial] = now
+        self.last_sent = now
+        pane.write(f"{ESC}_rexcast;frame={self.serial}{ESC}\\")
+
+    def answer(self, serial, now, tiles):
+        if serial <= self.acked or serial > self.serial:
+            return
+        at = self.sent.get(serial)
+        for old in [k for k in self.sent if k <= serial]:
+            del self.sent[old]
+        self.acked, self.last_ack, self.silence = serial, now, 1.0
+        self.answers += 1
+        first = not self.delay
+        if at is not None:
+            self.delay = .7 * self.delay + .3 * (now - at) if self.delay else max(.001, now - at)
+        if first and self.delay < .12:
+            # One small frame arriving quickly says little about a metered link; step up, don't jump.
+            self.level = 3
+            tiles.shrink, tiles.quality = self.LEVELS[3]
+            tiles.hurry()
+        if now - self.period < 0.5:
+            return
+        span = now - self.period
+        held = (self.blocked + (now - self.block_from if self.block_from else 0)) / span
+        rate = self.answers / span
+        if (held > .3 and rate < .9 * self.target or self.delay > .25) and self.level < len(self.LEVELS) - 1:
+            # Held back or late: shrink a step, or two when far behind.
+            self.shrink(now, 2 if self.delay > .5 else 1)
+        elif self.level and self.delay < .12 and (held < .05 or rate >= .9 * self.target) and \
+                (self.level > self.ceiling or now > self.ceiling_until):
+            self.calm += 1
+            if self.calm >= self.patience:
+                self.level -= 1
+                self.calm, self.grew_at = 0, now
+        else:
+            self.calm = 0
+        tiles.shrink, tiles.quality = self.LEVELS[self.level]
+        self.period, self.blocked, self.answers = now, 0.0, 0
+        if self.block_from:
+            self.block_from = now
+
+
+class Input:
+    """Splits terminal input into mouse reports and everything else."""
+
+    def __init__(self):
+        self.pending = b""
+
+    ACK = b"\x1b_rexcast;ack="
+
+    def feed(self, data):
+        data, self.pending = self.pending + data, b""
+        while data:
+            mouse, ack = data.find(b"\x1b[<"), data.find(self.ACK)
+            start = min((i for i in (mouse, ack) if i >= 0), default=-1)
+            if start < 0:
+                # The start of an answer may be split across reads; a lone Escape is a key.
+                for size in range(min(len(self.ACK) - 1, len(data)), 1, -1):  # a lone Escape is a key
+                    if self.ACK.startswith(data[-size:]):
+                        data, self.pending = data[:-size], data[-size:]
+                        break
+                if data:
+                    yield "key", data
+                return
+            if start:
+                yield "key", data[:start]
+            if start == ack:
+                end = data.find(b"\x1b\\", start)
+                if end < 0:
+                    self.pending = data[start:]
+                    return
+                number = data[start + len(self.ACK):end]
+                if number.isdigit():
+                    yield "ack", int(number)
+                data = data[end + 2:]
+                continue
+            end = start + 3
+            while end < len(data) and data[end:end + 1] not in (b"M", b"m"):
+                end += 1
+            if end >= len(data):
+                self.pending = data[start:]
+                return
+            try:
+                code, x, y = (int(v) for v in data[start + 3:end].split(b";"))
+                yield "mouse", (code, x, y, data[end:end + 1] == b"M")
+            except ValueError:
+                pass
+            data = data[end + 1:]
+
+
+def run(source, pane, arguments):
+    interactive = source.interactive
+    pixels = False
+    pane.raw()
+    if interactive:
+        pane.write(f"{ESC}[?1000h{ESC}[?1002h{ESC}[?1006h{ESC}[?1016h")
+        pane.flush()
+        pixels = b"1016;1$y" in pane.query(f"{ESC}[?1016$p", b"$y")
+    pane.write(f"{ESC}[?1049h{ESC}[?25l{ESC}[2J")
+    pane.flush()
+    parser, tiles, box = Input(), None, None
+    # Where the terminal cursor rests. The viewer keeps that row above its keyboard, so it follows the last tap.
+    caret = [1, 1]
+    flow = Flow(False, source.fps)
+    stats = {"frames": 0, "tiles": 0, "bytes": 0, "encode": 0.0, "start": time.monotonic()}
+    log = open(arguments.log, "w") if arguments.log else None
+
+    def layout():
+        nonlocal tiles, box
+        pane.measure()
+        if tiles:
+            tiles.clear()
+        width, height = source.shape() if not source.fill else (1, 1)
+        col, row, cols, rows, w, h = fit(pane, width, height, source.fill)
+        if arguments.max_pixels and w * h > arguments.max_pixels:
+            scale = (arguments.max_pixels / (w * h)) ** .5
+            w, h = int(w * scale), int(h * scale)
+        w, h = max(2, w - w % 2), max(2, h - h % 2)
+        box = (col, row, cols, rows, w, h)
+        # Rexling decodes JPEG tiles from 0.2.0; other Kitty terminals reject them.
+        name, version = viewer() if arguments.codec == "auto" else ("", ())
+        rexling = name == "rexling" and version >= (0, 2)
+        tiles = Tiles(pane, col, row, cols, rows, w, h, arguments.tile, arguments.codec, lossy=rexling)
+        flow.enabled = rexling
+        tiles.shrink, tiles.quality = flow.LEVELS[flow.level]
+        source.start(w, h)
+        if log:
+            log.write(f"# size {w}x{h}\n")
+        pane.write(f"{ESC}[2J")
+
+    def point(x, y):
+        col, row, cols, rows, w, h = box
+        if pixels:
+            fx, fy = (x - col * pane.cw) / (cols * pane.cw), (y - row * pane.ch) / (rows * pane.ch)
+        else:
+            fx, fy = (x - .5 - col) / cols, (y - .5 - row) / rows
+        return min(w - 1, max(0, fx * w)), min(h - 1, max(0, fy * h))
+
+    layout()
+    try:
+        while True:
+            if pane.resized.is_set():
+                pane.resized.clear()
+                layout()
+            data = pane.read(0)
+            if b"\x1c" in data or not interactive and (b"\x03" in data or b"q" in data):
+                break
+            now = time.monotonic()
+            for kind, value in parser.feed(data) if data else ():
+                if kind == "ack":
+                    flow.answer(value, now, tiles)
+                    if log:
+                        log.write(f"# ack {value} {flow.serial} {flow.level} {flow.delay:.3f}\n")
+                elif not interactive:
+                    continue
+                elif kind == "key":
+                    source.key(value)
+                    if log:
+                        log.write(f"# key {value!r}\n")
+                else:
+                    code, x, y, down = value
+                    px, py = point(x, y)
+                    if code & 64:
+                        event = ("wheel", px, py, 5 if code & 1 else 4)
+                    elif code & 32:
+                        event = ("move", px, py, 0)
+                    else:
+                        event = ("press" if down else "release", px, py, (1, 2, 3)[code & 3] if code & 3 < 3 else 1)
+                    source.pointer(*event)
+                    if event[0] == "press":
+                        row = box[1] + int(event[2] / box[5] * box[3]) + 4
+                        caret[:] = [min(pane.rows, row), box[0] + 1]
+                        os.write(pane.fd, f"{ESC}[{caret[0]};{caret[1]}H".encode())
+                    if log:
+                        log.write(f"# {event[0]} {event[1]:.1f} {event[2]:.1f} {event[3]}\n")
+                        log.flush()
+            tiles.shrink, tiles.quality = flow.LEVELS[flow.level]
+            if not flow.ready(now):
+                select.select([pane.fd], [], [], 0.002)  # the next pass reads the answer
+                continue
+            try:
+                frame = source.frame(0.004)
+            except EOFError:
+                break
+            began = time.monotonic()
+            pane.write(f"{ESC}[?2026h")
+            changed = tiles.draw(frame) if frame is not None else 0
+            if changed and arguments.stamp:
+                # The frame number as text under the picture: the app's RexlingMedia log reports it when drawn.
+                pane.write(f"{ESC}[1;1H{getattr(source, 'index', stats['frames'])}")
+            if not changed and flow.serial == flow.acked:
+                changed = tiles.refine()
+            pane.write(f"{ESC}[{caret[0]};{caret[1]}H{ESC}[?2026l")
+            if not changed:
+                pane.buffer.clear()
+                continue
+            flow.mark(pane, began)
+            encoded = time.monotonic()
+            sent = pane.flush()
+            stats["frames"] += 1
+            stats["tiles"] += changed
+            stats["bytes"] += sent
+            stats["encode"] += encoded - began
+            if log:
+                index = getattr(source, "index", stats["frames"])
+                log.write(f"{time.time():.4f} {index} {changed} {sent} {encoded - began:.4f} {time.monotonic() - encoded:.4f} {flow.level}\n")
+                log.flush()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        source.stop()
+        # Swallow answers still on their way, so they don't land on the shell's prompt.
+        deadline = time.monotonic() + 0.4
+        while flow.enabled and flow.acked < flow.serial and time.monotonic() < deadline:
+            for kind, value in parser.feed(pane.read(0.05)):
+                if kind == "ack":
+                    flow.acked = max(flow.acked, value)
+        if tiles:
+            tiles.clear()
+        pane.write(f"{ESC}[?1016l{ESC}[?1006l{ESC}[?1002l{ESC}[?1000l{ESC}[?25h{ESC}[?1049l")
+        pane.flush()
+        pane.restore()
+        if log:
+            log.close()
+    elapsed = max(.001, time.monotonic() - stats["start"])
+    if arguments.stats:
+        print(f"{stats['frames']} frames in {elapsed:.1f}s ({stats['frames'] / elapsed:.1f}/s), "
+              f"{stats['bytes'] / elapsed / 1e6:.2f} MB/s, encode {1000 * stats['encode'] / max(1, stats['frames']):.1f} ms/frame")
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="rexcast", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--codec", default="auto", choices=["auto", "rgbz", "rgb", "png", "jpeg", "full-rgbz", "full-rgb", "full-png", "full-jpeg"],
+                        help="tile encoding; auto is exact pixels, plus JPEG during motion when the viewer decodes it; "
+                             "full-* sends the whole picture as one image")
+    parser.add_argument("--scale", type=float, default=0, help="size of desktop content; by default from the cell size")
+    parser.add_argument("--stamp", action="store_true", help="write each frame's number under the picture, for latency measurement")
+    parser.add_argument("--tile", default="12x6", help="tile size in cells, COLSxROWS")
+    parser.add_argument("--cell", help="cell size in pixels, WxH, when the terminal doesn't report it")
+    parser.add_argument("--fps", type=float, help="frame rate limit")
+    parser.add_argument("--max-pixels", type=int, default=3_000_000, help="largest picture sent, in pixels")
+    parser.add_argument("--seconds", type=float, default=0, help="stop after this long (patterns)")
+    parser.add_argument("--log", help="write one line per frame sent: time, frame, tiles, bytes, encode s, write s")
+    parser.add_argument("--stats", action="store_true", help="print a summary on exit")
+    parser.add_argument("mode", choices=["image", "video", "web", "app", "pattern"])
+    parser.add_argument("target", nargs=argparse.REMAINDER)
+    arguments = parser.parse_args()
+    target = [value for value in arguments.target if value != "--"]
+    if not target:
+        parser.error(f"{arguments.mode} needs a target")
+    arguments.tile = tuple(int(v) for v in arguments.tile.split("x"))
+    cell = tuple(int(v) for v in arguments.cell.split("x")) if arguments.cell else None
+    pane = Pane(cell)
+    scale = arguments.scale or min(4.0, max(1.0, round(pane.ch / 18 * 4) / 4))
+    if arguments.mode == "image":
+        source = Still(target[0])
+    elif arguments.mode == "video":
+        source = Video(target[0], arguments.fps)
+    elif arguments.mode == "web":
+        source = Desktop(target, arguments.fps or 30.0, browser=True, scale=scale)
+    elif arguments.mode == "app":
+        source = Desktop(target, arguments.fps or 30.0, scale=scale)
+    else:
+        source = Pattern(target[0], arguments.fps or 30.0, arguments.seconds)
+    run(source, pane, arguments)
+
+
+if __name__ == "__main__":
+    main()

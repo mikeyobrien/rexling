@@ -4,12 +4,14 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /** State is decoder-local: row deltas never cross a connection or an unknown base. */
-internal class TerminalUpdates {
+internal class TerminalUpdates(private val imageDecoder: (Long,Long,Int,Int,ByteBuffer)->TerminalImage = ::decodeTerminalImage) {
     var revision: Long=0;private set
     private var state=AppState()
-    fun decode(bytes: ByteArray): AppState {
-        require(bytes.size in 17..134217728) {"Invalid terminal packet size"}
-        val data=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    fun decode(bytes: ByteArray): AppState = decode(ByteBuffer.wrap(bytes))
+    /** Decodes from the buffer's position to its limit. Nothing keeps a reference to the buffer afterwards. */
+    fun decode(packet: ByteBuffer): AppState {
+        require(packet.remaining() in 17..134217728) {"Invalid terminal packet size"}
+        val data=packet.order(ByteOrder.LITTLE_ENDIAN)
         val version=data.int
         require(version==0x31545852 || version==0x32545852 || version==0x33545852 || version==0x34545852 || version==0x35545852 || version==0x36545852) {"Unsupported terminal packet"}
         val nextRevision=data.long;require(nextRevision>revision)
@@ -93,7 +95,8 @@ internal class TerminalUpdates {
                         require(w in 1..8192 && h in 1..8192 && n.toLong()==w.toLong()*h*4 && n<=data.remaining())
                         total+=n;require(total<=64*1024*1024)
                         val key=Pair(id,generation);require(newKeys.add(key))
-                        val bytes=ByteArray(n);data.get(bytes);images[key]=TerminalImage(id,generation,w,h,bytes)
+                        images[key]=imageDecoder(id,generation,w,h,data)
+                        data.position(data.position()+n)
                     }
                     val count=data.short.toInt() and 0xffff;require(count<=4096)
                     placements=List(count) {

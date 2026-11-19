@@ -22,6 +22,7 @@ The app connects to the user's live Rex server. Opening one of their sessions in
    mise exec go@1.27.1 -- ./rexling-android/scripts/gradle.sh :app:assembleDebug -Prexling.abis=arm64-v8a,x86_64
    ```
    Without x86_64 the app dies at launch with SIGILL in `librex_network.so`: ARM translation can't emulate Go's `MIDR_EL1` read.
+   If `adb install -r` then fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, Gradle signed with `~/.config/.android/debug.keystore` while the installed app used `~/.android/debug.keystore`. Build with `ANDROID_USER_HOME=$HOME/.android` rather than uninstalling, which would wipe the saved server.
 3. **Emulator:** `$S/emu.sh start`. It's ready when it prints `ready: emulator-5554`. It runs headless on the host GPU with animations off; its log is `rexling-android/.build/verify/emulator.log`.
 4. **Install:** `adb install -r rexling-android/app/build/outputs/apk/debug/app-debug.apk`.
 5. **First run only:** add the server. Fresh data has no server, so see `features/servers.md`. Use the URL in `$REXLING_SERVER_URL` (the owner's Rex server, for example `https://rex.<tailnet>.ts.net`; `rex server status` prints it). The emulator reaches the tailnet through this host.
@@ -75,6 +76,8 @@ To see the gestures by hand, run `adb shell setprop log.tag.RexlingScroll DEBUG`
 **Keyboard placement:** `$S/keyboard-caret.sh NAME COMMAND...` runs a program in a scratch session, opens the on-screen keyboard and saves screenshots from before and after. For example, `keyboard-caret.sh pi pi` checks pi with its default hidden hardware cursor. The program's input line must sit directly above the keyboard, not under it.
 
 This needs an emulator with no hardware keyboard. `rexling_api36` (Pixel 6 profile, `hw.keyboard=no`) is `emu.sh`'s default for that reason; on an AVD with a hardware keyboard the on-screen keyboard never takes space. Don't tap the terminal output to take control: a tap on a link opens the browser. Opening a session already takes control.
+
+**Streamed media:** `python3 evals/media/run.py [--only CASE,...]` streams test pictures, a browser and typed input into a scratch session with `scripts/rexcast` and scores what the app shows: resolution, frames per second, delay, tap and typing latency, pointer accuracy, and a 20 Mbit/s link. It writes `score.json`, recordings and screenshots to `rexling-android/.build/media-evals/<timestamp>-<name>/`. Cases, targets and the scoreboard are in `evals/media/README.md`. Frame-rate cases swing by ten points or more when the host is busy; compare runs taken close together.
 
 **Animations are off on the emulator** (`emu.sh` sets the animation scales to 0 for faster, steadier UI driving). That hides the cost of anything that animates continuously. For a performance or battery check, turn them on first (`adb shell settings put global animator_duration_scale 1`), then count frames over a few idle seconds: `adb shell dumpsys gfxinfo dev.shulhi.rex reset`, wait, then read `Total frames rendered`. An idle screen should draw about 10 frames in 5 s; 300 means something redraws every frame.
 

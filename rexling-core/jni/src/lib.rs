@@ -113,6 +113,9 @@ pub extern "system" fn Java_dev_shulhi_rex_NativeBridge_destroy(
         if let Ok(mut sessions) = sessions().lock() {
             sessions.remove(&(handle as u64));
         }
+        if let Some(Ok(mut transfers)) = TRANSFERS.get().map(Mutex::lock) {
+            transfers.remove(&(handle as u64));
+        }
     });
 }
 
@@ -138,6 +141,55 @@ pub extern "system" fn Java_dev_shulhi_rex_NativeBridge_readUpdate(
     });
     match result {Ok(Ok(bytes))=>env.byte_array_from_slice(&bytes).map(|a|a.into_raw()).unwrap_or(std::ptr::null_mut()),
         _=>{let _=env.throw_new("java/lang/IllegalStateException","Native update failed");std::ptr::null_mut()}}
+}
+
+/// Packets waiting to be copied out, and the buffers they are built in, by handle.
+/// `true` marks a packet the caller's buffer was too small for; the next call returns it.
+static TRANSFERS: OnceLock<Mutex<HashMap<u64, (Vec<u8>, bool)>>> = OnceLock::new();
+/// Copy the next update into a direct buffer the caller owns and reuses, so a video frame
+/// allocates nothing on the Java heap. Returns the packet's length, 0 when there is none, or
+/// the negated length when the buffer is too small.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shulhi_rex_NativeBridge_readUpdateInto(
+    mut env: JNIEnv, _class: JClass, handle: jlong, after: jlong, buffer: jni::objects::JByteBuffer,
+) -> jni::sys::jint {
+    let target=env.get_direct_buffer_address(&buffer).ok().zip(env.get_direct_buffer_capacity(&buffer).ok());
+    let result=std::panic::catch_unwind(|| -> anyhow::Result<i32> {
+        let (address,capacity)=target.ok_or_else(||anyhow::anyhow!("not a direct buffer"))?;
+        let shared=sessions().lock().map_err(|_|anyhow::anyhow!("registry unavailable"))?
+            .get(&(handle as u64)).map(|s|s.shared.clone()).ok_or_else(||anyhow::anyhow!("closed"))?;
+        let mut transfers=TRANSFERS.get_or_init(||Mutex::new(HashMap::new())).lock().map_err(|_|anyhow::anyhow!("transfer unavailable"))?;
+        let (packet,waiting)=transfers.entry(handle as u64).or_default();
+        if !*waiting {
+            let mut state=shared.lock().map_err(|_|anyhow::anyhow!("state unavailable"))?;
+            *packet=updates::encode_reusing(&mut state,after.max(0) as u64,std::mem::take(packet));
+        }
+        let length=i32::try_from(packet.len())?;
+        *waiting=packet.len()>capacity;
+        if *waiting {return Ok(-length);}
+        // The caller owns `capacity` bytes at `address` for the duration of this call.
+        unsafe {std::ptr::copy_nonoverlapping(packet.as_ptr(),address,packet.len());}
+        Ok(length)
+    });
+    match result {Ok(Ok(length))=>length,
+        _=>{let _=env.throw_new("java/lang/IllegalStateException","Native update failed");0}}
+}
+
+/// Whether every RGBA pixel in a stretch of a direct buffer is opaque. Opaque pictures can be
+/// handed to a bitmap as they are; scanning a video frame from Kotlin costs more than drawing it.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shulhi_rex_NativeBridge_opaquePixels(
+    env: JNIEnv, _class: JClass, buffer: jni::objects::JByteBuffer, offset: jni::sys::jint, length: jni::sys::jint,
+) -> jni::sys::jboolean {
+    let target=env.get_direct_buffer_address(&buffer).ok().zip(env.get_direct_buffer_capacity(&buffer).ok());
+    let opaque=target.is_some_and(|(address,capacity)| {
+        let (offset,length)=(offset.max(0) as usize,length.max(0) as usize);
+        if offset.checked_add(length).is_none_or(|end|end>capacity) {return false;}
+        // The caller owns the buffer for the duration of this call, and the range is inside it.
+        let pixels=unsafe {std::slice::from_raw_parts(address.add(offset),length)};
+        pixels.as_chunks::<4>().0.iter().all(|pixel|pixel[3]==255)
+    });
+    u8::from(opaque)
 }
 
 mod input_queue;
