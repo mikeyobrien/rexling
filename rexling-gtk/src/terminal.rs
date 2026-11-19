@@ -85,6 +85,8 @@ struct Inner {
     font: RefCell<String>,
     font_size: Cell<f64>,
     metrics: Cell<Metrics>,
+    /// The text resolution the metrics were measured at. The system's text size changes it.
+    measured_at: Cell<f64>,
     grid: Cell<(u16, u16)>,
     controlled: Cell<bool>,
     dimmed: Cell<bool>,
@@ -136,6 +138,7 @@ impl Terminal {
             font: RefCell::new(font.to_owned()),
             font_size: Cell::new(font_size),
             metrics: Cell::default(),
+            measured_at: Cell::new(0.0),
             grid: Cell::new((0, 0)),
             controlled: Cell::new(false),
             dimmed: Cell::new(false),
@@ -234,6 +237,20 @@ impl Terminal {
                 inner.report_size();
             }
         });
+
+        // Font settings other than size (the UI font's hinting, antialiasing) also move glyphs.
+        if let Some(settings) = gtk::Settings::default() {
+            for property in ["gtk-xft-dpi", "gtk-xft-hinting", "gtk-xft-hintstyle", "gtk-xft-antialias", "gtk-font-rendering"] {
+                let weak = Rc::downgrade(inner);
+                settings.connect_notify_local(Some(property), move |_, _| {
+                    if let Some(inner) = weak.upgrade() {
+                        inner.measure();
+                        inner.report_size();
+                        inner.area.queue_draw();
+                    }
+                });
+            }
+        }
 
         inner.im.set_client_widget(Some(area));
         let weak = Rc::downgrade(inner);
@@ -377,6 +394,7 @@ impl Inner {
         let ascent = (metrics.ascent() as f64 / pango::SCALE as f64).ceil();
         let descent = (metrics.descent() as f64 / pango::SCALE as f64).ceil();
         self.metrics.set(Metrics { width, height: (ascent + descent).max(1.0), baseline: ascent });
+        self.measured_at.set(pangocairo::functions::context_get_resolution(&context));
     }
     fn report_size(&self) {
         let metrics = self.metrics.get();
@@ -427,8 +445,19 @@ impl Inner {
             (None, Some(frame)) => (frame, &live_rows),
             _ => return,
         };
-        let metrics = self.metrics.get();
         let context = self.context();
+        // The system's text size or font rendering changed since the grid was measured: the letters
+        // already follow it, so the grid must too, and the remote terminal is told its new size.
+        if (pangocairo::functions::context_get_resolution(&context) - self.measured_at.get()).abs() > 0.01 {
+            self.measure();
+            let weak = self.this.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(inner) = weak.upgrade() {
+                    inner.report_size();
+                }
+            });
+        }
+        let metrics = self.metrics.get();
         let layout = pango::Layout::new(&context);
         let columns = (frame.columns as f64).min(((width - PADDING) / metrics.width).ceil()) as u16;
         let visible = rows.len().min(((height - PADDING) / metrics.height).ceil().max(1.0) as usize);
