@@ -140,7 +140,8 @@ fn score(text: &str, kind: &str, query: &str) -> Option<usize> {
 pub fn palette(ui: &Rc<Ui>) {
     let mut commands: Vec<Command> = ACTIONS
         .iter()
-        .filter(|(_, action, _)| *action != "palette")
+        // Only what can run right now.
+        .filter(|(_, action, _)| *action != "palette" && ui.window.lookup_action(action).is_none_or(|a| a.is_enabled()))
         .map(|(label, action, accelerator)| {
             let command: Command = (
                 (*label).to_owned(),
@@ -158,7 +159,7 @@ pub fn palette(ui: &Rc<Ui>) {
     let entry = gtk::SearchEntry::builder().search_delay(0).placeholder_text("Search commands, tabs, sessions and themes").margin_top(12).margin_start(12).margin_end(12).margin_bottom(6).build();
     let list = gtk::ListBox::builder().selection_mode(gtk::SelectionMode::Browse).css_classes(["navigation-sidebar", "rexling-palette"]).build();
     let scroller = gtk::ScrolledWindow::builder().child(&list).hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).build();
-    let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).width_request(560).margin_bottom(8).build();
+    let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).margin_bottom(8).build();
     content.append(&entry);
     content.append(&scroller);
     // A fixed size: the box must not jump about as the results change.
@@ -181,6 +182,9 @@ pub fn palette(ui: &Rc<Ui>) {
                 list.append(&gtk::ListBoxRow::builder().child(&row).name(index.to_string()).build());
             }
             list.select_row(list.row_at_index(0).as_ref());
+            if list.row_at_index(0).is_none() {
+                list.append(&gtk::ListBoxRow::builder().child(&gtk::Label::builder().label("No matches").css_classes(["dim-label"]).margin_top(24).build()).activatable(false).selectable(false).name("none").build());
+            }
         }
     };
     fill("");
@@ -301,7 +305,7 @@ fn swatch(palette: Palette) -> gtk::DrawingArea {
 }
 
 fn theme_gallery(ui: &Rc<Ui>, dark: bool) -> gtk::FlowBox {
-    let gallery = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).max_children_per_line(4).min_children_per_line(3).column_spacing(0).row_spacing(2).homogeneous(true).build();
+    let gallery = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).max_children_per_line(4).min_children_per_line(2).column_spacing(0).row_spacing(2).homogeneous(true).build();
     let current = {
         let config = ui.config.borrow();
         theme::find(if dark { &config.theme_dark } else { &config.theme_light }, dark).id.clone()
@@ -447,6 +451,9 @@ pub fn preferences(ui: &Rc<Ui>) {
                 let (weak, row, parent) = (Rc::downgrade(&ui), row.clone(), parent.clone());
                 ui.probe(&address.clone(), move |problem| {
                     row.set_sensitive(true);
+                    // Back in the field, ready to correct the address.
+                    row.grab_focus();
+                    row.set_position(-1);
                     match (problem, weak.upgrade()) {
                         (None, Some(ui)) => {
                             parent.close();

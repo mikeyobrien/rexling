@@ -499,6 +499,12 @@ impl Client {
         self.command(json!({"type":"place_pane","session":state.selected_session,"id":step.id,"anchor":step.anchor,
             "direction":if step.vertical {"vertical"} else {"horizontal"},"side":if step.before {"before"} else {"after"},"ratio":step.ratio}));
     }
+    pub fn focus_block(&self, block: &str) {
+        let state = self.state();
+        if state.connected() {
+            self.command(json!({"type":"focus","session":state.selected_session,"block":block}));
+        }
+    }
     pub fn refresh(&self) {
         self.command(json!({"type":"refresh"}));
     }

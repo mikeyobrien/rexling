@@ -754,6 +754,19 @@ impl Actor {
             .call("session.view", json!({"session_id":self.selected_session}))
             .await?;
         self.set_view(&view);
+        // The server keeps naming a pane's last owner after that client has gone. A pane whose
+        // owner is no longer connected is nobody's.
+        if self.other_owner {
+            let owner=view["windows"].as_array().into_iter().flatten().flat_map(|w|w["layers"].as_array().into_iter().flatten())
+                .flat_map(|l|l["blocks"].as_array().into_iter().flatten()).find(|b|b["block_id"].as_str()==Some(self.selected_block.as_str()))
+                .and_then(|b|b["owner"].as_str()).map(str::to_owned);
+            if let (Some(owner),Some(control))=(owner,self.control.as_mut())
+                && let Ok(clients)=control.call("client.list",json!({})).await {
+                let present=clients["clients"].as_array().into_iter().flatten()
+                    .any(|c|c["client_id"].as_str()==Some(owner.as_str()) && c["connection_state"].as_str().is_none_or(|state|state=="connected"));
+                if !present {self.other_owner=false;}
+            }
+        }
         self.publish();
         Ok(())
     }
@@ -1181,6 +1194,13 @@ impl Actor {
                 // Send once: never repeat a layout mutation after an uncertain reply.
                 self.control.as_mut().context("not connected")?.call(method,args).await?;
                 self.refresh_view().await?;
+            }
+            "focus" => {
+                // Tells the server which pane the user is in, so other clients and the command line act on the same one.
+                ensure!(self.phase=="connected" && !self.paused,"Connect before focusing a pane");
+                ensure!(value["session"].as_str()==Some(self.selected_session.as_str()),"The selected session changed");
+                let block=value["block"].as_str().filter(|id|!id.is_empty()).context("pane required")?;
+                self.control.as_mut().context("not connected")?.call("session.focus_block",json!({"session_id":self.selected_session,"block_id":block})).await?;
             }
             "place_pane" => {
                 // Puts a pane, tiled or floating, beside another one. A client rebuilding a layout sends several in a row.

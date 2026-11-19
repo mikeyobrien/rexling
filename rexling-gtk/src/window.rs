@@ -116,6 +116,8 @@ pub struct Ui {
     connect_page: adw::StatusPage,
     /// The tab's borders as they were when each floating pane was lifted out, to put it back exactly.
     floated_from: RefCell<HashMap<String, Vec<crate::client::Split>>>,
+    /// The pane the server was last told has the focus.
+    synced_focus: RefCell<String>,
     known_blocks: RefCell<HashSet<String>>,
 }
 
@@ -139,8 +141,9 @@ thread_local! {
 const CONNECT_HINT: &str = "https://host:7297 · ssh://user@host · unix:///path/to/server.sock";
 
 /// Actions that need a connected server, and those that also need a tab on screen.
-const SERVER_ACTIONS: &[&str] = &["new-session", "sessions", "forwards"];
+const SERVER_ACTIONS: &[&str] = &["new-session", "sessions"];
 const TAB_ACTIONS: &[&str] = &[
+    "forwards",
     "new-tab", "split-right", "split-below", "close-pane", "close-tab", "close-session", "rename-tab", "rename-session",
     "move-tab-up", "move-tab-down", "next-tab", "previous-tab", "next-pane", "previous-pane", "zoom-pane", "float-pane",
     "dock-pane", "attach-image",
@@ -294,6 +297,7 @@ pub fn build(app: &adw::Application) {
         tunnel: RefCell::default(),
         problem: RefCell::default(),
         forwards: RefCell::default(),
+        synced_focus: RefCell::default(),
         forwards_changed: RefCell::default(),
         panes: RefCell::default(),
         watchers: RefCell::default(),
@@ -398,6 +402,16 @@ pub fn build(app: &adw::Application) {
     tab_popover.set_halign(gtk::Align::Start);
     // Parented outside the list: a list box treats every child as a row.
     tab_popover.set_parent(&ui.toasts);
+    let weak = Rc::downgrade(&ui);
+    tab_popover.connect_closed(move |_| {
+        // After the chosen command has run, which may itself open a dialog.
+        let weak = weak.clone();
+        gtk::glib::idle_add_local_once(move || {
+            if let Some(ui) = weak.upgrade().filter(|ui| !ui.modal.get()) {
+                ui.focus_terminal();
+            }
+        });
+    });
     let secondary = gtk::GestureClick::builder().button(gdk::BUTTON_SECONDARY).build();
     let weak = Rc::downgrade(&ui);
     secondary.connect_pressed(move |_, _, x, y| {
@@ -491,10 +505,25 @@ pub fn build(app: &adw::Application) {
     let guard = gtk::EventControllerKey::new();
     guard.set_propagation_phase(gtk::PropagationPhase::Capture);
     let weak = Rc::downgrade(&ui);
-    guard.connect_key_pressed(move |_, key, _, state| {
+    guard.connect_key_pressed(move |controller, key, _, state| {
         let chord = state.contains(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK) && matches!(key, gdk::Key::D | gdk::Key::d);
         let available = weak.upgrade().is_some_and(|ui| !ui.modal.get() && ui.window.lookup_action("split-right").is_some_and(|action| action.is_enabled()));
-        if chord && !available { gtk::glib::Propagation::Stop } else { gtk::glib::Propagation::Proceed }
+        if chord && !available {
+            return gtk::glib::Propagation::Stop;
+        }
+        // Typing belongs to the terminal or to a text field, never to a button that happens to hold the keyboard.
+        let Some(ui) = weak.upgrade().filter(|ui| !ui.modal.get()) else { return gtk::glib::Propagation::Proceed };
+        let held = gtk::prelude::GtkWindowExt::focus(&ui.window);
+        let fine = held.as_ref().is_some_and(|w| w.is::<gtk::DrawingArea>() || w.is::<gtk::Text>() || w.is::<gtk::Editable>() || w.ancestor(gtk::Popover::static_type()).is_some());
+        let area = ui.panes.borrow().get(&*ui.focused.borrow()).filter(|_| ui.visible.borrow().contains(&*ui.focused.borrow())).map(|pane| pane.terminal.widget().clone());
+        let (false, Some(area)) = (fine, area) else { return gtk::glib::Propagation::Proceed };
+        area.grab_focus();
+        // Window shortcuts still run; anything else goes to the terminal.
+        if state.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK) {
+            return gtk::glib::Propagation::Proceed;
+        }
+        controller.forward(&area);
+        gtk::glib::Propagation::Stop
     });
     window.add_controller(guard);
 
@@ -504,7 +533,7 @@ pub fn build(app: &adw::Application) {
         ui.split.connect_notify_local(Some(property), move |_, _| {
             let weak = weak.clone();
             gtk::glib::idle_add_local_once(move || {
-                if let Some(ui) = weak.upgrade().filter(|ui| !ui.modal.get()) {
+                if let Some(ui) = weak.upgrade().filter(|ui| !ui.modal.get() && !ui.session_button.is_active()) {
                     ui.focus_terminal();
                 }
             });
@@ -690,7 +719,18 @@ impl Ui {
             ui.zoomed.set(!ui.zoomed.get());
             ui.arrange();
         });
-        add("sessions", |ui| ui.session_button.popup());
+        add("sessions", |ui| {
+            // The menu hangs off the sidebar, so a folded sidebar opens first.
+            if !ui.split.shows_sidebar() {
+                ui.split.set_show_sidebar(true);
+            }
+            let weak = ui.this.clone();
+            gtk::glib::idle_add_local_once(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.session_button.popup();
+                }
+            });
+        });
         add("toggle-sidebar", |ui| ui.split.set_show_sidebar(!ui.split.shows_sidebar()));
         add("palette", dialogs::palette);
         add("preferences", dialogs::preferences);
@@ -872,6 +912,9 @@ impl Ui {
     /// Finds out whether a server answers, without disturbing the connection in use. Calls back with what went wrong, if anything.
     pub fn probe(self: &Rc<Self>, address: &str, done: impl Fn(Option<String>) + 'static) {
         let done = Rc::new(done);
+        if address.strip_prefix("unix://").is_some_and(|path| !std::path::Path::new(path).exists()) {
+            return done(Some("There is no Rex server socket at that path".into()));
+        }
         if address.starts_with("ssh://") {
             let (tx, rx) = async_channel::bounded(1);
             let target = address.to_owned();
@@ -967,6 +1010,16 @@ impl Ui {
             }
             self.refresh_banner();
         }
+    }
+
+    /// Puts the jump-to-latest button in the corner of the pane it acts on.
+    fn place_latest(&self) {
+        let (focused, state) = (self.focused.borrow().clone(), self.state.borrow());
+        let rect = if self.zoomed.get() { None } else { state.tab_of(&focused).and_then(|tab| tab.placements().into_iter().find(|p| p.id == focused)).map(|p| p.rect) };
+        let [x, y, w, h] = rect.unwrap_or([0.0, 0.0, 1.0, 1.0]);
+        let (width, height) = (self.grid.width() as f64, self.grid.height() as f64);
+        self.latest.set_margin_end(16 + ((1.0 - x - w).max(0.0) * width) as i32);
+        self.latest.set_margin_bottom(16 + ((1.0 - y - h).max(0.0) * height) as i32);
     }
 
     pub fn focus_terminal(&self) {
@@ -1336,7 +1389,7 @@ impl Ui {
             self.config.borrow_mut().sessions.remove(&server);
             self.recovering.set(false);
             self.connect(&server);
-            self.toasts.add_toast(adw::Toast::new("The server restarted and the open session has ended"));
+            self.toasts.add_toast(adw::Toast::builder().title("The server restarted and the open session has ended").timeout(5).build());
             return;
         }
         // The engine waits longer and longer between its own attempts; asking again keeps recovery prompt.
@@ -1505,8 +1558,9 @@ impl Ui {
                 let directory = lead.and_then(|b| state.directories.get(&b.id)).map(|d| short_path(d)).unwrap_or_default();
                 let detail = match tab.blocks.len() {
                     // A shell is already titled by its folder; when the path adds nothing, say which shell it is.
-                    0 | 1 if directory == title || directory == format!("/{title}") || directory == format!("~/{title}") => lead.map(|b| state.program(b)).unwrap_or_default(),
+                    0 | 1 if directory == title || directory.rsplit('/').next() == Some(title.as_str()) => lead.map(|b| state.program(b)).unwrap_or_default(),
                     0 | 1 => directory,
+                    count if current && self.zoomed.get() => format!("Zoomed · 1 of {count} panes"),
                     count if directory.is_empty() => format!("{count} panes"),
                     count => format!("{count} panes · {directory}"),
                 };
@@ -1646,6 +1700,7 @@ impl Ui {
             }
             if *ui.focused.borrow() == id {
                 ui.latest.set_visible(latest.borrow().as_deref().is_some_and(scrolled_back));
+                ui.place_latest();
             }
         });
         // Dropping files on a terminal sends them to it.
@@ -1766,6 +1821,12 @@ impl Ui {
         let panes = self.panes.borrow();
         let pane = panes.get(&focused);
         self.latest.set_visible(pane.is_some_and(|p| p.frame.borrow().as_deref().is_some_and(scrolled_back)));
+        self.place_latest();
+        // The server hears which pane the user is in, so other clients and the command line act on the same one.
+        if self.control.get() && !focused.is_empty() && *self.synced_focus.borrow() != focused {
+            self.synced_focus.replace(focused.clone());
+            self.chrome.focus_block(&focused);
+        }
         if let Some(pane) = pane.filter(|p| !p.terminal.has_focus() && gtk::prelude::GtkWindowExt::focus(&self.window).is_none_or(|w| w.is::<gtk::DrawingArea>() || w.is::<gtk::ListBoxRow>())) {
             pane.terminal.focus();
         }
@@ -1777,7 +1838,7 @@ impl Ui {
         self.title.set_title(&heading);
         let directory = state.directories.get(&focused).map(|d| home_relative(d)).unwrap_or_default();
         let zoomed = self.zoomed.get() && tab.is_some_and(|tab| tab.blocks.len() > 1);
-        self.title.set_subtitle(&match (zoomed, directory == heading || directory == format!("/{heading}") || directory == format!("~/{heading}")) {
+        self.title.set_subtitle(&match (zoomed, directory == heading) {
             (true, _) => format!("Zoomed · 1 of {} panes", tab.map_or(1, |tab| tab.blocks.len())),
             (false, true) => String::new(),
             (false, false) => directory,
