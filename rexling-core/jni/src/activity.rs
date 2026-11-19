@@ -76,7 +76,7 @@ pub fn attention_count(items: &Value,seen: &Value)->usize {
 }
 async fn open(endpoint: Endpoint)->Result<(Control,Value)> {
     let mut control=Control::connect(endpoint,None,Trace::default()).await?;
-    control.call("client.set_label",json!({"label":"rex-android-activity"})).await?;
+    control.call("client.set_label",json!({"label":if cfg!(target_os="android") {"rex-android-activity"} else {"rexling-activity"}})).await?;
     // Passive server attachment permits read-only methods without joining sessions.
     let sessions=control.call("session.attach_all",json!({"event_scope":"session"})).await?["sessions"].clone();
     Ok((control,sessions))

@@ -145,6 +145,8 @@ pub struct Ui {
     jump: RefCell<String>,
     /// This window is waiting for a session of its own: the sessions there were when it asked, once it has asked.
     fresh: RefCell<Option<Option<HashSet<String>>>>,
+    /// The session this window made for itself and has not yet been used: it goes when the window does.
+    made: RefCell<String>,
     waiting_list: gtk::ListBox,
     waiting_heading: gtk::Label,
     waiting_box: gtk::Box,
@@ -295,9 +297,11 @@ const CONNECT_HINT: &str = "https://host:7297 · ssh://user@host · unix:///path
 
 /// Actions that need a connected server, and those that also need a tab on screen.
 const SERVER_ACTIONS: &[&str] = &["new-session", "sessions"];
+/// Actions that need a session, with or without a tab in it.
+const SESSION_ACTIONS: &[&str] = &["new-tab", "close-session", "rename-session"];
 const TAB_ACTIONS: &[&str] = &[
     "forwards",
-    "new-tab", "split-right", "split-below", "close-pane", "close-tab", "close-session", "rename-tab", "rename-session",
+    "split-right", "split-below", "close-pane", "close-tab", "rename-tab",
     "move-tab-up", "move-tab-down", "next-tab", "previous-tab", "next-pane", "previous-pane", "zoom-pane", "float-pane",
     "dock-pane", "attach-image",
 ];
@@ -437,6 +441,12 @@ pub fn build(app: &adw::Application) {
         .child(&gtk::Button::builder().label("New Session").action_name("win.new-session").halign(gtk::Align::Center).css_classes(["pill", "suggested-action"]).build())
         .build();
     stack.add_named(&empty, Some("empty"));
+    let bare = adw::StatusPage::builder()
+        .icon_name("dev.shulhi.Rexling")
+        .title("No Tabs")
+        .child(&gtk::Button::builder().label("New Tab").action_name("win.new-tab").halign(gtk::Align::Center).css_classes(["pill", "suggested-action"]).build())
+        .build();
+    stack.add_named(&bare, Some("bare"));
 
     let content = adw::ToolbarView::builder().content(&stack).build();
     content.add_top_bar(&header);
@@ -485,6 +495,7 @@ pub fn build(app: &adw::Application) {
         closed: Cell::new(false),
         jump: RefCell::default(),
         fresh: RefCell::default(),
+        made: RefCell::default(),
         waiting_list,
         waiting_heading,
         waiting_box,
@@ -884,6 +895,11 @@ pub fn build(app: &adw::Application) {
         }
         for (_, watcher) in ui.watchers.borrow_mut().drain() {
             watcher._client.disconnect();
+        }
+        // A session made only to give this window something to show, and never typed in, is not left behind.
+        let made = ui.made.take();
+        if !made.is_empty() {
+            ui.chrome.close_session(&made);
         }
         ui.chrome.disconnect();
         gtk::glib::Propagation::Proceed
@@ -1650,7 +1666,9 @@ impl Ui {
         if waiting {
             return;
         }
-        self.fresh.replace(None);
+        if self.fresh.replace(None).is_some() {
+            self.made.replace(state.selected_session.clone());
+        }
         let state = self.steady(state);
         self.state.replace(state.clone());
         self.came_online();
@@ -1666,7 +1684,7 @@ impl Ui {
         }
         // Control changes, reconnects and closed or created panes are already visible, so only other notices are toasted.
         let notice = state.notice.clone();
-        let visible_already = ["control", "closed", "created", "Reconnect", "renamed"].iter().any(|word| notice.contains(word));
+        let visible_already = ["control", "closed", "created", "Reconnect", "renamed", "exited"].iter().any(|word| notice.contains(word));
         if self.notice.replace(notice.clone()) != notice && !notice.is_empty() && !visible_already {
             self.toasts.add_toast(adw::Toast::new(&notice));
         }
@@ -1696,7 +1714,19 @@ impl Ui {
             self.tab.replace(tab.map(|tab| tab.id.clone()).unwrap_or_default());
         }
 
-        self.stack.set_visible_child_name(if state.sessions.is_empty() { "empty" } else { "terminal" });
+        let page = if state.sessions.is_empty() {
+            "empty"
+        } else if state.windows.is_empty() && !state.creating && state.sessions.iter().any(|s| s.session_id == state.selected_session) {
+            // Its last pane has closed: the session is still there, waiting for a tab.
+            "bare"
+        } else {
+            "terminal"
+        };
+        self.stack.set_visible_child_name(page);
+        if page == "bare" {
+            self.title.set_title(state.session_label());
+            self.title.set_subtitle("");
+        }
         self.show_sessions();
         self.show_tabs();
         self.arrange();
@@ -1833,6 +1863,8 @@ impl Ui {
         SERVER_ACTIONS.iter().for_each(|name| enable(name, online));
         self.session_button.set_sensitive(online);
         TAB_ACTIONS.iter().for_each(|name| enable(name, on_tab));
+        let in_session = online && state.sessions.iter().any(|s| s.session_id == state.selected_session);
+        SESSION_ACTIONS.iter().for_each(|name| enable(name, in_session));
         if on_tab {
             let tab = self.tab.borrow().clone();
             let at = state.windows.iter().position(|t| t.id == tab);
@@ -2097,7 +2129,7 @@ impl Ui {
                 content.append(&minimap(&row.panes, scale));
             }
             content.append(&text);
-            if row.status_class == "working" {
+            if row.status_class == "working" && row.panes.is_empty() {
                 content.append(&adw::Spinner::builder().valign(gtk::Align::Center).build());
             }
             // Its place in the list tells apart tabs that are otherwise alike.
@@ -2118,12 +2150,8 @@ impl Ui {
                 } else if pane.focused && row.current {
                     dot.add_css_class("focused");
                 }
-                if pane.status == "working" {
-                    // A working pane turns, so it cannot be mistaken for an idle one.
-                    line.append(&adw::Spinner::builder().width_request(10).height_request(10).valign(gtk::Align::Center).css_classes(["rexling-pane-spin"]).build());
-                } else {
-                    line.append(&dot);
-                }
+                // A working pane's dot pulses, so it cannot be mistaken for an idle one.
+                line.append(&dot);
                 line.append(&gtk::Label::builder().label(pane.title.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).css_classes(if pane.focused && row.current { vec!["caption"] } else { vec!["caption", "dim-label"] }).build());
                 if !pane.waiting.is_empty() {
                     line.append(&gtk::Label::builder().label(pane.waiting.as_str()).xalign(1.0).hexpand(true).css_classes(["rexling-status", if pane.status == "failed" { "failed" } else if pane.status == "done" { "done" } else { "attention" }]).build());
@@ -2558,7 +2586,7 @@ impl Ui {
         // A split tab is named after its first pane in the header, as it is in the sidebar.
         let lead = tab.and_then(|tab| if tab.blocks.len() > 1 { tab.blocks.first() } else { tab.blocks.iter().find(|b| b.id == focused) });
         let pane_title = lead.map(|b| state.title(b));
-        let heading = tab.and_then(|tab| tab.name()).map(str::to_owned).or(pane_title).unwrap_or_else(|| "Rexling".into());
+        let heading = tab.and_then(|tab| tab.name()).map(str::to_owned).or(pane_title).or_else(|| Some(state.session_label().to_owned()).filter(|label| !label.is_empty())).unwrap_or_else(|| "Rexling".into());
         self.title.set_title(&heading);
         let directory = lead.and_then(|b| state.directories.get(&b.id)).map(|d| short_path(d)).unwrap_or_default();
         let zoomed = self.zoomed.get() && tab.is_some_and(|tab| tab.blocks.len() > 1);
@@ -2602,11 +2630,13 @@ impl Ui {
             // Nothing typed while the server is away is sent later by surprise.
             Event::Input(_) | Event::Paste(_) if self.offline.get() => {}
             Event::Input(text) => {
+                self.made.replace(String::new());
                 self.answered(block);
                 self.interact();
                 client.input(&text);
             }
             Event::Paste(text) => {
+                self.made.replace(String::new());
                 self.interact();
                 client.paste(&text);
             }

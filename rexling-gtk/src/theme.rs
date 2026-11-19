@@ -86,7 +86,7 @@ pub fn legible(text: Rgb, behind: Rgb) -> Rgb {
     }
     // The fainter it was, the fainter it stays, so the order of a theme's shades survives:
     // on a pale theme bright white is still lighter than white, and white lighter than a mid grey.
-    let wanted = 1.9 + (was - 1.0) * 0.55;
+    let wanted = if was < 1.6 { 1.8 + (was - 1.0) * 1.5 } else { 2.7 + (was - 1.6) * 0.3 / 1.4 };
     let towards = if luminance(behind) > 0.4 { [0, 0, 0] } else { [255, 255, 255] };
     (1..=40).map(|step| mix(text, towards, step as f64 / 40.0)).find(|c| contrast(*c, behind) >= wanted).unwrap_or(towards)
 }
@@ -152,7 +152,8 @@ panegrid {{ background: {line}; }}
 .rexling-float {{ border-radius: 10px; border: 2px solid alpha({accent}, 0.7); background: {bg}; }}
 .rexling-float-bar {{ padding: 0 4px 0 12px; background: {sidebar}; border-bottom: 1px solid {line}; }}
 .rexling-tabs row {{ border-radius: 10px; margin: 1px 6px; padding: 6px 8px; transition: background 120ms ease; }}
-.rexling-tabs row:selected {{ background: alpha({fg}, 0.09); }}
+.rexling-tabs row:selected {{ background: alpha({fg}, 0.12); }}
+.rexling-tabs row:hover:not(:selected) {{ background: alpha({fg}, 0.04); }}
 .rexling-tabs row.rexling-target {{ box-shadow: inset 0 0 0 1.5px alpha({fg}, 0.4); }}
 .rexling-tab-title {{ font-weight: 600; }}
 .rexling-status {{ font-size: 0.82em; font-weight: 600; }}
@@ -168,7 +169,7 @@ panegrid {{ background: {line}; }}
 .rexling-dot.done {{ background: {green}; }}
 button.rexling-wants {{ background-image: radial-gradient(circle at 78% 24%, {warm} 0, {warm} 3px, transparent 3.5px); }}
 button.rexling-wants.failed {{ background-image: radial-gradient(circle at 78% 24%, {red} 0, {red} 3px, transparent 3.5px); }}
-.rexling-pane-spin {{ margin: -2px -5px; }}
+@keyframes rexling-working {{ from {{ opacity: 1; }} to {{ opacity: 0.25; }} }}
 .rexling-pane-line.focused {{ background: alpha({fg}, 0.07); }}
 .rexling-status.working {{ color: alpha({fg}, 0.55); }}
 .rexling-dot {{ min-width: 8px; min-height: 8px; border-radius: 4px; background: {warm}; }}
@@ -177,7 +178,7 @@ button.rexling-wants.failed {{ background-image: radial-gradient(circle at 78% 2
 .rexling-pane-dot.focused {{ background: @accent_bg_color; }}
 .rexling-pane-dot.attention {{ background: {warm}; }}
 .rexling-pane-dot.failed {{ background: {red}; }}
-.rexling-pane-dot.working {{ background: alpha({fg}, 0.6); }}
+.rexling-pane-dot.working {{ background: alpha({fg}, 0.8); animation: rexling-working 0.9s ease-in-out infinite alternate; }}
 .rexling-waiting {{ padding-top: 4px; padding-bottom: 10px; }}
 .rexling-session {{ font-weight: 700; font-size: 1.05em; }}
 .rexling-swatch {{ border-radius: 12px; border: 2px solid transparent; padding: 3px; transition: border-color 120ms ease; }}
@@ -215,14 +216,14 @@ mod tests {
     #[test]
     fn faint_text_is_made_legible_but_hidden_text_stays_hidden() {
         let cream = [0xf4, 0xee, 0xdf];
-        assert!(contrast(legible([0xff, 0xff, 0xff], cream), cream) >= 1.9);
+        assert!(contrast(legible([0xff, 0xff, 0xff], cream), cream) >= 1.8);
         let paper = [0xff, 0xff, 0xff];
         let shades = [[0xf4, 0xf5, 0xfa], [0xe3, 0xe5, 0xee], [0xbc, 0xbc, 0xbc], [0x80, 0x80, 0x80]].map(|shade| contrast(legible(shade, paper), paper));
         assert!(shades.windows(2).all(|pair| pair[1] > pair[0] + 0.04), "shades keep their order and stay apart: {shades:?}");
         assert_eq!(legible(cream, cream), cream);
         assert_eq!(legible([0x20, 0x20, 0x20], cream), [0x20, 0x20, 0x20]);
         let night = [0x10, 0x12, 0x18];
-        assert!(contrast(legible([0x16, 0x18, 0x20], night), night) >= 1.9);
+        assert!(contrast(legible([0x16, 0x18, 0x20], night), night) >= 1.8);
     }
 
     #[test]

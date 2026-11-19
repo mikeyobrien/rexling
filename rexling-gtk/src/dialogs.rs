@@ -196,11 +196,17 @@ pub fn palette(ui: &Rc<Ui>) {
     });
     below.add_controller(outside);
 
+    let shown: Rc<RefCell<Option<String>>> = Rc::default();
     let fill = {
-        let (list, commands) = (list.clone(), commands.clone());
+        let (list, commands, shown) = (list.clone(), commands.clone(), shown.clone());
         move |query: &str| {
-            list.remove_all();
             let query = query.trim().to_lowercase();
+            // The list already shows this: the row the arrow keys chose stays chosen.
+            if shown.borrow().as_deref() == Some(query.as_str()) {
+                return;
+            }
+            shown.replace(Some(query.clone()));
+            list.remove_all();
             // Only themes, tabs, sessions and servers have a kind; a command's hint is its keys.
             let kind = |hint: &str| if hint.ends_with("theme") || matches!(hint, "Tab" | "Session" | "Server") { hint.to_owned() } else { String::new() };
             let mut matches: Vec<(usize, usize)> = commands.iter().enumerate().filter_map(|(index, (label, hint, _))| score(label, &kind(hint), &query).map(|s| (s, index))).collect();
@@ -243,7 +249,7 @@ pub fn palette(ui: &Rc<Ui>) {
     entry.connect_activate({
         let (list, run, fill) = (list.clone(), run.clone(), fill.clone());
         move |entry| {
-            // The list follows typing after a short pause; Enter must act on what is typed now.
+            // Enter acts on what is typed now, and on the row the arrow keys chose.
             fill(&entry.text());
             if let Some(row) = list.selected_row() {
                 run(&row);
