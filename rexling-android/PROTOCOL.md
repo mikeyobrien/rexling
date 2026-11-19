@@ -257,8 +257,8 @@ native and Kotlin tests.
 
 SVG paths are from Simple Icons 15.0.0 (CC0), converted to Android vector assets.
 Pinned source URLs/checksums and the license ship in APK assets under `licenses/`.
-The Android label and control client name are Rexlet/rexlet. The package remains
-`dev.shulhi.rex`, preserving the existing installation, preferences and JNI ABI.
+The Android label and control client name are Rexlet/rexlet. The code namespace remains
+`dev.shulhi.rex`, preserving the JNI ABI; this fork installs as `dev.mobrienv.rexling`.
 
 
 ## Local scrollback and edge rendering

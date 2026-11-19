@@ -13,11 +13,11 @@ ui() { "$HERE/ui.py" "$@"; }
 label=$("$HERE/scratch-session.sh" new)
 # Stop the app before killing the session it's viewing: killing a viewed session leaves
 # Rexling stuck at "reconnecting · input paused" with an empty session list.
-trap 'adb shell am force-stop dev.shulhi.rex || true; "$HERE/scratch-session.sh" kill "$label" >/dev/null 2>&1 || true' EXIT
+trap 'adb shell am force-stop dev.mobrienv.rexling || true; "$HERE/scratch-session.sh" kill "$label" >/dev/null 2>&1 || true' EXIT
 nonce="rexling-smoke-$(date +%s)"
 
-adb shell am force-stop dev.shulhi.rex   # a fresh start never inherits a wedged connection
-adb shell monkey -p dev.shulhi.rex -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+adb shell am force-stop dev.mobrienv.rexling   # a fresh start never inherits a wedged connection
+adb shell monkey -p dev.mobrienv.rexling -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
 ui has "Session strip" --timeout 20 >/dev/null
 sleep 3                                   # let the session list load before opening it
 ui tap "Session strip"

@@ -1,4 +1,6 @@
 <resources>
     <string name="app_name">Rexling</string>
+    <!-- The launcher name, so this fork is told apart from upstream's Rexling when both are installed. -->
+    <string name="launcher_name">Rexling M</string>
     <string name="app_subtitle">Unofficial Android client for Rex</string>
 </resources>

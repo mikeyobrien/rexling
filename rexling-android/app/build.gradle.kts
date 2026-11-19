@@ -31,7 +31,8 @@ android {
     ndkVersion = "30.0.16248370"
     compileSdk { version = release(37) }
     defaultConfig {
-        applicationId = "dev.shulhi.rex"
+        // This fork's own identity, so it installs beside upstream's dev.shulhi.rex. The namespace above stays upstream's.
+        applicationId = "dev.mobrienv.rexling"
         minSdk = 28
         targetSdk = 37
         versionCode = 157
@@ -47,21 +48,32 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     packaging { jniLibs { useLegacyPackaging = false } }
+    // The fork's release key, named in ~/.gradle/gradle.properties or ORG_GRADLE_PROJECT_* in CI.
+    // Without it a release is signed with the local debug key, which cannot update a published build.
+    val releaseStore=providers.gradleProperty("rexling.release.storeFile").orNull
+    signingConfigs {
+        if(releaseStore!=null) create("release") {
+            storeFile=file(releaseStore)
+            storePassword=providers.gradleProperty("rexling.release.storePassword").get()
+            keyAlias=providers.gradleProperty("rexling.release.keyAlias").get()
+            keyPassword=providers.gradleProperty("rexling.release.keyPassword").get()
+        }
+    }
+    val releaseSigning=signingConfigs.getByName(if(releaseStore!=null) "release" else "debug")
     buildTypes {
         getByName("debug") {
             // A disposable package for on-device rendering tests; never touches the installed app's settings.
             if(providers.gradleProperty("renderBench").orNull=="true") applicationIdSuffix=".renderbench"
         }
         release {
-            // Preserve the installed prototype identity for local release upgrades.
-            signingConfig=signingConfigs.getByName("debug")
+            signingConfig=releaseSigning
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         create("optimized") {
             initWith(getByName("release"))
-            signingConfig=signingConfigs.getByName("debug")
+            signingConfig=releaseSigning
             matchingFallbacks += "release"
         }
         create("profile") {
