@@ -4,10 +4,14 @@
   ui.py list                     print every labelled node: label, bounds
   ui.py has LABEL [--timeout S]  exit 0 once a node's label contains LABEL
   ui.py tap LABEL [--timeout S]  tap the center of the first node whose label contains LABEL
+  ui.py hold LABEL               press and hold it (a row's menu)
+  ui.py swipe LABEL left|right   swipe its row sideways (reveals Close)
+  ui.py drag LABEL DY            hold it, then carry it DY pixels (negative is up) and drop
   ui.py type TEXT                type into the focused field (spaces allowed)
   ui.py key KEYCODE              e.g. ENTER, BACK, DEL
   ui.py shot PATH                save a PNG screenshot
 
+Add --exact to match the whole label: "Close" alone also matches "Close sheet".
 Uses ANDROID_SERIAL (default emulator-5554).
 """
 import os
@@ -38,11 +42,11 @@ def nodes():
             yield label, (x1, y1, x2, y2)
 
 
-def find(label, timeout):
+def find(label, timeout, exact=False):
     end = time.time() + timeout
     while True:
         for text, box in nodes():
-            if label in text:
+            if label == text if exact else label in text:
                 return text, box
         if time.time() >= end:
             return None
@@ -58,16 +62,31 @@ def main():
         i = args.index("--timeout")
         timeout = float(args[i + 1])
         del args[i:i + 2]
+    exact = "--exact" in args
+    if exact:
+        args.remove("--exact")
     if cmd == "list":
         for text, box in nodes():
             print(f"{text!r}\t{box}")
-    elif cmd in ("has", "tap"):
-        hit = find(args[0], timeout)
+    elif cmd in ("has", "tap", "hold", "swipe", "drag"):
+        hit = find(args[0], timeout, exact)
         if not hit:
             sys.exit(f"not found: {args[0]!r}")
         text, (x1, y1, x2, y2) = hit
+        x, y = (x1 + x2) // 2, (y1 + y2) // 2
         if cmd == "tap":
-            adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
+            adb("shell", "input", "tap", str(x), str(y))
+        elif cmd == "hold":
+            adb("shell", "input", "swipe", str(x), str(y), str(x), str(y), "800")
+        elif cmd == "swipe":
+            # Row labels sit at the left, so a left swipe starts further in and ends on the label.
+            start, end = (x + 400, x) if args[1] == "left" else (x, x + 400)
+            adb("shell", "input", "swipe", str(start), str(y), str(end), str(y), "250")
+        elif cmd == "drag":
+            # `input draganddrop` starts moving at the long-press timeout and loses the race; hold longer.
+            dy = int(args[1])
+            moves = "; ".join(f"input motionevent MOVE {x} {y + dy * i // 6}" for i in range(1, 7))
+            adb("shell", f"input motionevent DOWN {x} {y}; sleep 0.9; {moves}; sleep 0.3; input motionevent UP {x} {y + dy}")
         print(f"{cmd} {text!r}")
     elif cmd == "type":
         adb("shell", "input", "text", " ".join(args).replace(" ", "%s"))

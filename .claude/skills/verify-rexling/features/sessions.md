@@ -4,8 +4,9 @@ The user picks which Rex session to view, finds one, or creates one.
 
 ## Sub-features
 
-- The `Sessions` sheet lists sessions under each server. Each row shows the session name, then `this device · 2 tabs · 4 panes` or `detached · …`, plus `current` and `Session actions for <name> on <server>`.
-- `Find session…` filters the list. `New session` creates one.
+- The switcher card's `Sessions` level lists sessions (`Sessions list`), grouped under each server once there are several. Each row shows the session name, then `2 tabs · 4 panes`, and `Needs you` or a working dot.
+- Tapping a session opens it; tapping the one you are in shows its tabs. Holding a row offers `Rename` and `Close`; closing always asks in the row (`ends 2 tabs`).
+- `Find` appears once there are more than six sessions. `New session` creates one.
 - `Terminal menu` → `New session` and `Refresh sessions`.
 - Opening a session takes control and resizes the shared PTY to the phone.
 

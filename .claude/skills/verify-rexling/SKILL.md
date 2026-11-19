@@ -34,9 +34,9 @@ The app connects to the user's live Rex server. Opening one of their sessions in
 
 ## Drive
 
-`$S/ui.py` acts on accessibility labels (`text` or `content-desc`) from `uiautomator`, never coordinates. Its commands: `list`, `has LABEL`, `tap LABEL`, `type TEXT`, `key ENTER`, `shot PATH`. `tap` and `has` wait up to `--timeout` seconds and match substrings.
+`$S/ui.py` acts on accessibility labels (`text` or `content-desc`) from `uiautomator`, never coordinates. Its commands: `list`, `has LABEL`, `tap LABEL`, `hold LABEL`, `swipe LABEL left|right`, `drag LABEL DY`, `type TEXT`, `key ENTER`, `shot PATH`. Commands that take a label wait up to `--timeout` seconds and match substrings; add `--exact` when a short label such as `Close` would also match `Close sheet`.
 
-- Stable handles: `Session strip`, `Terminal menu`, `Terminal output`, `Tabs and panes`, `Activity`, `Close sheet`, `Terminal keys`, `Escape`, `Control`, `Alt`, `Shift`. Session rows are labelled with the session name.
+- Stable handles: `Session strip`, `Terminal menu`, `Terminal output`, `Session program icon` (opens the switcher), `Close switcher`, `Activity`, `Close sheet`, `Terminal keys`, `Escape`, `Control`, `Alt`, `Shift`. Session rows are labelled with the session name.
 - Close sheets with `ui.py tap "Close sheet"`, never `key BACK`. Once the keyboard is hidden, BACK leaves the app.
 - Opening a session takes control automatically. Tapping `Terminal output` takes control if it was released.
 - The app reopens where it was (server, session, control). A run shouldn't assume a fresh UI. Navigate explicitly through `Session strip`.
