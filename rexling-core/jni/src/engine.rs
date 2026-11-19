@@ -1182,6 +1182,19 @@ impl Actor {
                 self.control.as_mut().context("not connected")?.call(method,args).await?;
                 self.refresh_view().await?;
             }
+            "place_pane" => {
+                // Puts a pane, tiled or floating, beside another one. A client rebuilding a layout sends several in a row.
+                ensure!(self.visible && !self.paused && self.phase=="connected" && !self.creating,"Connect before moving panes");
+                ensure!(value["session"].as_str()==Some(self.selected_session.as_str()),"The selected session changed");
+                let (id,anchor)=(value["id"].as_str().context("pane required")?,value["anchor"].as_str().context("pane required")?);
+                ensure!(id!=anchor,"A pane cannot be placed beside itself");
+                let direction=value["direction"].as_str().filter(|d|matches!(*d,"horizontal"|"vertical")).context("split direction required")?;
+                let side=if value["side"]=="before" {"before"} else {"after"};
+                let ratio=value["ratio"].as_f64().filter(|r|r.is_finite()).map_or(0.5,|r|r.clamp(0.05,0.95));
+                self.control.as_mut().context("not connected")?.call("session.move_block",json!({"session_id":self.selected_session,
+                    "block_id":id,"anchor_block_id":anchor,"direction":direction,"side":side,"ratio":ratio})).await?;
+                self.refresh_view().await?;
+            }
             "move_layer" => {
                 ensure!(self.visible && !self.paused && self.phase=="connected" && !self.creating,"Connect before moving panes");
                 ensure!(value["session"].as_str()==Some(self.selected_session.as_str()),"The selected session changed");

@@ -56,6 +56,41 @@ pub struct Split {
     #[serde(rename = "afterAll")]
     pub after_all: Vec<String>,
 }
+/// One step in rebuilding a layout: put `id` beside `anchor`.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Placing {
+    pub id: String,
+    pub anchor: String,
+    pub vertical: bool,
+    pub before: bool,
+    pub ratio: f64,
+}
+
+/// The steps that put `pane` back exactly where `splits`, the tab's borders before it was lifted
+/// out, had it. The server can only place a pane beside another single pane, so when the pane's
+/// neighbour was a group, the group is rebuilt around its first pane, outermost border first.
+pub fn restore(pane: &str, splits: &[Split]) -> Vec<Placing> {
+    let alone = |side: &[String]| side.len() == 1 && side[0] == pane;
+    let Some(own) = splits.iter().find(|s| alone(&s.before_all) || alone(&s.after_all)) else { return Vec::new() };
+    let before = alone(&own.before_all);
+    let others = if before { &own.after_all } else { &own.before_all };
+    let Some(first) = others.first() else { return Vec::new() };
+    let mut steps = vec![Placing { id: pane.to_owned(), anchor: first.clone(), vertical: own.direction == "vertical", before, ratio: own.ratio }];
+    rebuild(others, splits, &mut steps, 0);
+    steps
+}
+fn rebuild(group: &[String], splits: &[Split], steps: &mut Vec<Placing>, depth: usize) {
+    if group.len() < 2 || depth > 64 {
+        return;
+    }
+    // The border that divides exactly this group.
+    let Some(root) = splits.iter().find(|s| s.before_all.len() + s.after_all.len() == group.len() && s.before_all.iter().chain(&s.after_all).all(|id| group.contains(id))) else { return };
+    let (Some(kept), Some(moved)) = (root.before_all.first(), root.after_all.first()) else { return };
+    steps.push(Placing { id: moved.clone(), anchor: kept.clone(), vertical: root.direction == "vertical", before: false, ratio: root.ratio });
+    rebuild(&root.before_all, splits, steps, depth + 1);
+    rebuild(&root.after_all, splits, steps, depth + 1);
+}
+
 #[derive(Deserialize, Default, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct Tab {
@@ -458,13 +493,14 @@ impl Client {
         }
     }
     /// Puts a floating pane back into the layout, beside `anchor`.
-    /// `below` stacks it under `anchor`, otherwise beside it; `before` puts it on the leading side.
-    pub fn dock_pane(&self, block: &str, anchor: &str, below: bool, before: bool, ratio: f64) {
+    /// Puts a pane, floating or tiled, beside another.
+    pub fn place_pane(&self, step: &Placing) {
         let state = self.state();
-        if let Some(tab) = state.tab_of(block) {
-            self.command(json!({"type":"dock_pane","session":state.selected_session,"window":tab.id,"id":block,"anchor":anchor,
-                "direction":if below {"below"} else {"right"},"side":if before {"before"} else {"after"},"ratio":ratio}));
-        }
+        self.command(json!({"type":"place_pane","session":state.selected_session,"id":step.id,"anchor":step.anchor,
+            "direction":if step.vertical {"vertical"} else {"horizontal"},"side":if step.before {"before"} else {"after"},"ratio":step.ratio}));
+    }
+    pub fn refresh(&self) {
+        self.command(json!({"type":"refresh"}));
     }
     pub fn move_layer(&self, layer: &str, bounds: [f64; 4]) {
         let state = self.state();
@@ -610,5 +646,44 @@ impl Client {
             return None;
         }
         Some(write.text.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn split(direction: &str, ratio: f64, before: &[&str], after: &[&str]) -> Split {
+        let ids = |side: &[&str]| side.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>();
+        Split { direction: direction.into(), ratio, before_all: ids(before), after_all: ids(after), ..Split::default() }
+    }
+    fn step(id: &str, anchor: &str, vertical: bool, before: bool, ratio: f64) -> Placing {
+        Placing { id: id.into(), anchor: anchor.into(), vertical, before, ratio }
+    }
+
+    #[test]
+    fn a_pane_beside_a_single_pane_goes_straight_back() {
+        let splits = [split("horizontal", 0.3, &["a"], &["b"])];
+        assert_eq!(restore("b", &splits), [step("b", "a", false, false, 0.3)]);
+        assert_eq!(restore("a", &splits), [step("a", "b", false, true, 0.3)]);
+    }
+
+    #[test]
+    fn a_pane_above_a_group_rebuilds_the_group_under_it() {
+        // left | (top over (mid | right))
+        let splits = [
+            split("horizontal", 0.25, &["left"], &["top", "mid", "right"]),
+            split("vertical", 0.4, &["top"], &["mid", "right"]),
+            split("horizontal", 0.5, &["mid"], &["right"]),
+        ];
+        assert_eq!(restore("top", &splits), [step("top", "mid", true, true, 0.4), step("right", "mid", false, false, 0.5)]);
+        // Lifting out "left" leaves the whole right-hand group to rebuild, outermost border first.
+        assert_eq!(restore("left", &splits), [step("left", "top", false, true, 0.25), step("mid", "top", true, false, 0.4), step("right", "mid", false, false, 0.5)]);
+    }
+
+    #[test]
+    fn a_pane_that_was_never_split_has_nowhere_to_go_back_to() {
+        assert!(restore("a", &[]).is_empty());
+        assert!(restore("zzz", &[split("horizontal", 0.5, &["a"], &["b"])]).is_empty());
     }
 }

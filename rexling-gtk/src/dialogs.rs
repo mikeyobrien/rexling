@@ -302,7 +302,10 @@ fn swatch(palette: Palette) -> gtk::DrawingArea {
 
 fn theme_gallery(ui: &Rc<Ui>, dark: bool) -> gtk::FlowBox {
     let gallery = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).max_children_per_line(4).min_children_per_line(3).column_spacing(0).row_spacing(2).homogeneous(true).build();
-    let current = ui.theme().id.clone();
+    let current = {
+        let config = ui.config.borrow();
+        theme::find(if dark { &config.theme_dark } else { &config.theme_light }, dark).id.clone()
+    };
     let cards: Rc<RefCell<Vec<(String, gtk::Box)>>> = Rc::default();
     for theme in theme::all().iter().filter(|t| t.palette.dark == dark) {
         let frame = gtk::Box::builder().css_classes(["rexling-swatch"]).halign(gtk::Align::Center).build();
@@ -350,40 +353,48 @@ pub fn preferences(ui: &Rc<Ui>) {
     });
     look.add(&mode);
 
-    // A terminal needs every character the same width.
-    let monospace = gtk::CustomFilter::new(|item| {
-        item.downcast_ref::<pango::FontFace>().map(|face| face.family()).or_else(|| item.downcast_ref::<pango::FontFamily>().cloned()).is_some_and(|family| family.is_monospace())
-    });
-    let font = gtk::FontDialogButton::builder().dialog(&gtk::FontDialog::builder().modal(true).filter(&monospace).build()).valign(gtk::Align::Center).use_font(false).use_size(false).build();
-    let described = {
-        let config = ui.config.borrow();
-        // The setting is a fallback list; the picker shows its first family.
-        let mut description = pango::FontDescription::from_string(config.font.split(',').next().unwrap_or("monospace").trim());
-        description.set_size((config.font_size * pango::SCALE as f64) as i32);
-        description
-    };
-    font.set_font_desc(&described);
-    let weak = Rc::downgrade(ui);
-    font.connect_font_desc_notify(move |button| {
-        let (Some(ui), Some(description)) = (weak.upgrade(), button.font_desc()) else { return };
-        let Some(family) = description.family() else { return };
-        {
-            let mut config = ui.config.borrow_mut();
-            // Keep a monospace fallback behind whatever was picked.
-            config.font = format!("{family}, monospace");
-            if description.size() > 0 {
-                config.font_size = (description.size() as f64 / pango::SCALE as f64).clamp(6.0, 32.0);
-            }
-            config.save();
+    // A terminal needs every character the same width, so only those families are offered.
+    let mut families: Vec<String> = ui.window.pango_context().list_families().iter().filter(|family| family.is_monospace()).map(|family| family.name().to_string()).collect();
+    families.sort_by_key(|name| name.to_lowercase());
+    families.dedup();
+    let current = ui.config.borrow().font.split(',').next().unwrap_or("").trim().to_owned();
+    if !current.is_empty() && !families.contains(&current) {
+        families.insert(0, current.clone());
+    }
+    let names: Vec<&str> = families.iter().map(String::as_str).collect();
+    let font = adw::ComboRow::builder().title("Font").model(&gtk::StringList::new(&names)).enable_search(true).build();
+    font.set_expression(Some(gtk::PropertyExpression::new(gtk::StringObject::static_type(), gtk::Expression::NONE, "string")));
+    font.set_selected(families.iter().position(|name| *name == current).unwrap_or(0) as u32);
+    let (weak, list) = (Rc::downgrade(ui), families.clone());
+    font.connect_selected_notify(move |row| {
+        let (Some(ui), Some(family)) = (weak.upgrade(), list.get(row.selected() as usize)) else { return };
+        // Keep a monospace fallback behind whatever was picked.
+        let chosen = format!("{family}, monospace");
+        if ui.config.borrow().font != chosen {
+            ui.config.borrow_mut().font = chosen;
+            ui.config.borrow().save();
+            ui.apply_font();
         }
-        ui.apply_font();
     });
-    let font_row = adw::ActionRow::builder().title("Font").activatable_widget(&font).build();
-    font_row.add_suffix(&font);
-    look.add(&font_row);
+    look.add(&font);
+    let size = adw::SpinRow::with_range(6.0, 32.0, 1.0);
+    size.set_title("Text Size");
+    size.set_value(ui.config.borrow().font_size);
+    let weak = Rc::downgrade(ui);
+    size.connect_value_notify(move |row| {
+        if let Some(ui) = weak.upgrade().filter(|ui| ui.config.borrow().font_size != row.value()) {
+            ui.config.borrow_mut().font_size = row.value();
+            ui.config.borrow().save();
+            ui.apply_font();
+        }
+    });
+    look.add(&size);
     appearance.add(&look);
 
-    for (title, dark) in [("Dark Themes", true), ("Light Themes", false)] {
+    // The style in use comes first; the other style's pick is marked too, since Follow System switches to it.
+    let dark_now = adw::StyleManager::default().is_dark();
+    let order = if dark_now { [("Dark Themes", true), ("Light Themes", false)] } else { [("Light Themes", false), ("Dark Themes", true)] };
+    for (title, dark) in order {
         let group = adw::PreferencesGroup::builder().title(title).build();
         group.add(&theme_gallery(ui, dark));
         appearance.add(&group);
@@ -430,8 +441,23 @@ pub fn preferences(ui: &Rc<Ui>) {
         // The same check as the first-run page; a mistake here must not cost the working connection.
         match crate::tunnel::address(&row.text()) {
             Ok(address) => {
-                parent.close();
-                ui.connect(&address);
+                // Try it first: the connection in use is only given up for a server that answers.
+                row.set_sensitive(false);
+                row.set_title("Checking…");
+                let (weak, row, parent) = (Rc::downgrade(&ui), row.clone(), parent.clone());
+                ui.probe(&address.clone(), move |problem| {
+                    row.set_sensitive(true);
+                    match (problem, weak.upgrade()) {
+                        (None, Some(ui)) => {
+                            parent.close();
+                            ui.connect(&address);
+                        }
+                        (problem, _) => {
+                            row.add_css_class("error");
+                            row.set_title(&problem.unwrap_or_else(|| "Can't reach the server".into()));
+                        }
+                    }
+                });
             }
             Err(problem) => {
                 row.add_css_class("error");
@@ -531,7 +557,7 @@ pub fn about(ui: &Rc<Ui>) {
 
 /// Asks before ending a session: every program in it stops.
 pub fn confirm_close_session(ui: &Rc<Ui>, label: &str, close: impl Fn(&Rc<Ui>) + 'static) {
-    let dialog = adw::AlertDialog::builder().heading(format!("Close “{label}”?")).body("Every program in this session will be stopped.").close_response("cancel").default_response("cancel").build();
+    let dialog = adw::AlertDialog::builder().heading(format!("Close “{label}”?")).body("Every program in this session will be stopped.").close_response("cancel").default_response("close").build();
     dialog.add_responses(&[("cancel", "Cancel"), ("close", "Close")]);
     dialog.set_response_appearance("close", adw::ResponseAppearance::Destructive);
     let weak = Rc::downgrade(ui);
@@ -564,21 +590,36 @@ pub fn rename(ui: &Rc<Ui>, heading: &str, current: &str, apply: impl Fn(&Rc<Ui>,
 
 /// Lists the remote ports reachable on this computer and adds new ones.
 pub fn forwards(ui: &Rc<Ui>) {
+    const ASK: &str = "Port on the server";
     let page = adw::PreferencesPage::new();
-    let add = adw::PreferencesGroup::new();
-    let port = adw::EntryRow::builder().title("Port on the server, or host:port").input_purpose(gtk::InputPurpose::Digits).show_apply_button(true).build();
+    let add = adw::PreferencesGroup::builder().description("Reach a port on the server from this computer").build();
+    let port = adw::EntryRow::builder().title(ASK).input_purpose(gtk::InputPurpose::Digits).show_apply_button(true).build();
     let weak = Rc::downgrade(ui);
     port.connect_apply(move |row| {
         let Some(ui) = weak.upgrade() else { return };
         let text = row.text();
         let (host, number) = text.trim().rsplit_once(':').unwrap_or(("127.0.0.1", text.trim()));
-        match number.parse::<u16>() {
+        let problem = match number.parse::<u16>() {
             Ok(number) if number > 0 && !host.is_empty() => {
-                ui.forward(host, number);
-                row.set_text("");
-                row.remove_css_class("error");
+                if ui.forwards.borrow().iter().any(|f| f.target == format!("{host}:{number}")) {
+                    Some("That port is already forwarded")
+                } else {
+                    ui.forward(host, number);
+                    row.set_text("");
+                    None
+                }
             }
-            _ => row.add_css_class("error"),
+            _ => Some("Enter a port from 1 to 65535"),
+        };
+        if let Some(problem) = problem {
+            row.add_css_class("error");
+            row.set_title(problem);
+        }
+    });
+    port.connect_changed(|row| {
+        if row.has_css_class("error") {
+            row.remove_css_class("error");
+            row.set_title(ASK);
         }
     });
     add.add(&port);
@@ -595,15 +636,18 @@ pub fn forwards(ui: &Rc<Ui>) {
                 active.remove(&row);
             }
             for forward in ui.forwards.borrow().iter() {
+                // "Port 3000 on the server", then where it can be reached here.
+                let (host, number) = forward.target.rsplit_once(':').unwrap_or(("", forward.target.as_str()));
+                let title = if host == "127.0.0.1" { format!("Port {number} on the server") } else { format!("{} from the server", forward.target) };
                 let status = match forward.phase.as_str() {
-                    "active" => forward.address.clone(),
+                    "active" => format!("{} on this computer", forward.address.replace("127.0.0.1", "localhost")),
                     "failed" if forward.error.is_empty() || forward.error.contains("is unavailable") => "No local port is free".to_owned(),
-                    "failed" => forward.error.clone(),
+                    "failed" => crate::tunnel::explain(&forward.error),
                     _ => "Connecting…".to_owned(),
                 };
-                let row = adw::ActionRow::builder().title(forward.target.as_str()).subtitle(status).build();
+                let row = adw::ActionRow::builder().title(title).subtitle(status).build();
                 if forward.phase == "active" {
-                    let open = gtk::Button::builder().icon_name("web-browser-symbolic").tooltip_text("Open in Browser").valign(gtk::Align::Center).css_classes(["flat"]).build();
+                    let open = gtk::Button::builder().label("Open").valign(gtk::Align::Center).css_classes(["flat"]).build();
                     let (window, address) = (ui.window.clone(), forward.address.clone());
                     open.connect_clicked(move |_| gtk::UriLauncher::new(&format!("http://{address}")).launch(Some(&window), gtk::gio::Cancellable::NONE, |_| {}));
                     row.add_suffix(&open);

@@ -114,9 +114,8 @@ pub struct Ui {
     reached: Cell<bool>,
     recovering: Cell<bool>,
     connect_page: adw::StatusPage,
-    /// Where each floating pane sat before it was lifted: its neighbour, the split's direction,
-    /// which side it was on, and its share.
-    floated_from: RefCell<HashMap<String, (String, bool, bool, f64)>>,
+    /// The tab's borders as they were when each floating pane was lifted out, to put it back exactly.
+    floated_from: RefCell<HashMap<String, Vec<crate::client::Split>>>,
     known_blocks: RefCell<HashSet<String>>,
 }
 
@@ -499,6 +498,33 @@ pub fn build(app: &adw::Application) {
     });
     window.add_controller(guard);
 
+    // The sidebar appearing or folding away must not carry the keyboard off with it.
+    for property in ["collapsed", "show-sidebar"] {
+        let weak = Rc::downgrade(&ui);
+        ui.split.connect_notify_local(Some(property), move |_, _| {
+            let weak = weak.clone();
+            gtk::glib::idle_add_local_once(move || {
+                if let Some(ui) = weak.upgrade().filter(|ui| !ui.modal.get()) {
+                    ui.focus_terminal();
+                }
+            });
+        });
+    }
+    // The server does not announce when whoever held a pane lets go of it, so a watching window asks now and then.
+    let weak = Rc::downgrade(&ui);
+    gtk::glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
+        let Some(ui) = weak.upgrade() else { return gtk::glib::ControlFlow::Break };
+        if ui.watching() {
+            let panes = ui.panes.borrow();
+            for id in ui.visible.borrow().iter() {
+                if let Some(pane) = panes.get(id) {
+                    pane.client.refresh();
+                }
+            }
+        }
+        gtk::glib::ControlFlow::Continue
+    });
+
     // Closing the session menu hands the keyboard back to the terminal.
     let weak = Rc::downgrade(&ui);
     session_popover.connect_closed(move |_| {
@@ -576,6 +602,20 @@ impl Ui {
         add("split-below", |ui| ui.split_pane(true));
         add("close-pane", |ui| {
             let focused = ui.focused.borrow().clone();
+            // The keyboard goes to the nearest pane, so closing twice closes neighbours, not something across the tab.
+            let state = ui.state.borrow().clone();
+            let placed = state.tab_of(&focused).map(|tab| tab.placements()).unwrap_or_default();
+            let centre = |r: [f64; 4]| (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+            if let Some(mine) = placed.iter().find(|p| p.id == focused).map(|p| centre(p.rect)) {
+                let distance = |p: &crate::client::Placement| {
+                    let (x, y) = centre(p.rect);
+                    (x - mine.0).powi(2) + (y - mine.1).powi(2)
+                };
+                if let Some(nearest) = placed.iter().filter(|p| p.id != focused).min_by(|a, b| distance(a).total_cmp(&distance(b))) {
+                    ui.focused.replace(nearest.id.clone());
+                    ui.focus_pending.set(true);
+                }
+            }
             ui.chrome.close_pane(&focused);
         });
         add("close-tab", |ui| {
@@ -615,25 +655,14 @@ impl Ui {
             let focused = ui.focused.borrow().clone();
             let state = ui.state.borrow().clone();
             // Remember the pane's place: its nearest split, which side it was on, and its share.
+            let placed = state.tab_of(&focused).map(|tab| tab.placements()).unwrap_or_default();
+            // The same key puts a floating pane back.
+            if placed.iter().any(|p| p.id == focused && p.floating) {
+                ui.dock_pane(&focused);
+                return;
+            }
             if let Some(tab) = state.tab_of(&focused) {
-                // The pane's own split is the innermost one that has it alone on one side.
-                let own = tab.splits.iter().rev().find(|s| s.before_all == [focused.clone()] || s.after_all == [focused.clone()]);
-                let placed = tab.placements();
-                let rect = |id: &str| placed.iter().find(|p| p.id == id).map(|p| p.rect);
-                if let (Some(split), Some(mine)) = (own, rect(&focused)) {
-                    let before = split.before_all == [focused.clone()];
-                    let below = split.direction == "vertical";
-                    // Of the panes on the other side, the neighbour is the one sharing the most of the dividing edge.
-                    let shared = |other: [f64; 4]| {
-                        let (a, b) = if below { ((mine[0], mine[0] + mine[2]), (other[0], other[0] + other[2])) } else { ((mine[1], mine[1] + mine[3]), (other[1], other[1] + other[3])) };
-                        (a.1.min(b.1) - a.0.max(b.0)).max(0.0)
-                    };
-                    let others = if before { &split.after_all } else { &split.before_all };
-                    let neighbour = others.iter().filter_map(|id| rect(id).map(|r| (id, shared(r)))).max_by(|a, b| a.1.total_cmp(&b.1));
-                    if let Some((anchor, _)) = neighbour {
-                        ui.floated_from.borrow_mut().insert(focused.clone(), (anchor.clone(), below, before, split.ratio));
-                    }
-                }
+                ui.floated_from.borrow_mut().insert(focused.clone(), tab.splits.clone());
             }
             ui.interact();
             ui.zoomed.set(false);
@@ -790,6 +819,11 @@ impl Ui {
         self.reached.set(false);
         self.floated_from.borrow_mut().clear();
         self.known_blocks.borrow_mut().clear();
+        // Forwards belong to the connection that made them.
+        for forward in self.forwards.borrow_mut().drain(..) {
+            rex_engine::forwards::destroy(forward.handle);
+        }
+        self.forwards_updated();
         self.created.replace(String::new());
         self.state.replace(Rc::default());
         self.tab.replace(String::new());
@@ -834,6 +868,43 @@ impl Ui {
                 }
             }
         });
+    }
+    /// Finds out whether a server answers, without disturbing the connection in use. Calls back with what went wrong, if anything.
+    pub fn probe(self: &Rc<Self>, address: &str, done: impl Fn(Option<String>) + 'static) {
+        let done = Rc::new(done);
+        if address.starts_with("ssh://") {
+            let (tx, rx) = async_channel::bounded(1);
+            let target = address.to_owned();
+            std::thread::spawn(move || {
+                let _ = tx.send_blocking(tunnel::open(&target).map(|_| ()).map_err(|error| error.to_string()));
+            });
+            gtk::glib::spawn_future_local(async move {
+                done(rx.recv().await.ok().and_then(Result::err));
+            });
+            return;
+        }
+        let Ok(client) = Client::new(&self.control) else { return done(Some("Could not start a connection".into())) };
+        client.set_passive();
+        // The connection lives in this slot until the answer is in.
+        let slot: Rc<RefCell<Option<Rc<Client>>>> = Rc::new(RefCell::new(Some(client.clone())));
+        let finish = {
+            let (slot, done) = (slot.clone(), done.clone());
+            Rc::new(move |problem: Option<String>| {
+                if slot.borrow_mut().take().is_some() {
+                    done(problem);
+                }
+            })
+        };
+        let answered = finish.clone();
+        client.watch(move |update| {
+            if update.state.connected() {
+                answered(None);
+            } else if !update.state.error.is_empty() {
+                answered(Some(tunnel::explain(&update.state.error)));
+            }
+        });
+        client.connect(address);
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_secs(8), move || finish(Some("Can't reach the server".into())));
     }
     fn attach(self: &Rc<Self>, endpoint: &str) {
         self.endpoint.replace(endpoint.to_owned());
@@ -945,13 +1016,21 @@ impl Ui {
         let state = self.state.borrow().clone();
         let Some(tab) = state.tab_of(block) else { return };
         let tiled: Vec<_> = tab.placements().into_iter().filter(|p| !p.floating && p.id != block).collect();
-        // Back where it came from when that neighbour is still there; otherwise beside the largest pane.
-        let origin = self.floated_from.borrow_mut().remove(block).filter(|(anchor, ..)| tiled.iter().any(|p| p.id == *anchor));
-        let fallback = tiled.iter().max_by(|a, b| (a.rect[2] * a.rect[3]).total_cmp(&(b.rect[2] * b.rect[3]))).map(|p| (p.id.clone(), false, false, 0.5));
-        if let Some((anchor, below, before, ratio)) = origin.or(fallback) {
-            self.interact();
-            self.focused.replace(block.to_owned());
-            self.chrome.dock_pane(block, &anchor, below, before, ratio);
+        // Exactly where it came from, if the panes it sat among are all still there and no others have joined them.
+        let remembered = self.floated_from.borrow_mut().remove(block).unwrap_or_default();
+        let before: HashSet<&String> = remembered.iter().flat_map(|s| s.before_all.iter().chain(&s.after_all)).filter(|id| *id != block).collect();
+        let unchanged = !before.is_empty() && before.len() == tiled.len() && tiled.iter().all(|p| before.contains(&p.id));
+        let mut steps = if unchanged { crate::client::restore(block, &remembered) } else { Vec::new() };
+        if steps.is_empty() {
+            // Otherwise beside the largest pane.
+            let Some(largest) = tiled.iter().max_by(|a, b| (a.rect[2] * a.rect[3]).total_cmp(&(b.rect[2] * b.rect[3]))) else { return };
+            steps.push(crate::client::Placing { id: block.to_owned(), anchor: largest.id.clone(), vertical: false, before: false, ratio: 0.5 });
+        }
+        self.interact();
+        self.focused.replace(block.to_owned());
+        self.focus_pending.set(true);
+        for step in &steps {
+            self.chrome.place_pane(step);
         }
     }
     pub fn open_tab(self: &Rc<Self>, id: &str) {
@@ -1257,11 +1336,11 @@ impl Ui {
             self.config.borrow_mut().sessions.remove(&server);
             self.recovering.set(false);
             self.connect(&server);
-            self.toasts.add_toast(adw::Toast::new("The server restarted and the session that was open has ended"));
+            self.toasts.add_toast(adw::Toast::new("The server restarted and the open session has ended"));
             return;
         }
-        // The engine retries on its own while it says it is reconnecting; nudge it only when it has given up.
-        let waiting = |phase: &str| matches!(phase, "connecting" | "reconnecting");
+        // The engine waits longer and longer between its own attempts; asking again keeps recovery prompt.
+        let waiting = |phase: &str| phase == "connecting";
         if !waiting(&link.phase) {
             self.chrome.retry();
         }
@@ -1284,6 +1363,7 @@ impl Ui {
             }
         };
         SERVER_ACTIONS.iter().for_each(|name| enable(name, online));
+        self.session_button.set_sensitive(online);
         TAB_ACTIONS.iter().for_each(|name| enable(name, on_tab));
         if on_tab {
             let tab = self.tab.borrow().clone();
@@ -1298,7 +1378,8 @@ impl Ui {
             enable("next-pane", panes.len() > 1);
             enable("previous-pane", panes.len() > 1);
             enable("zoom-pane", panes.len() > 1);
-            enable("float-pane", !floating && panes.iter().filter(|p| !p.floating).count() > 1);
+            // The same command floats a tiled pane and puts a floating one back.
+            enable("float-pane", floating || panes.iter().filter(|p| !p.floating).count() > 1);
             enable("dock-pane", floating);
         }
     }
@@ -1324,9 +1405,9 @@ impl Ui {
             // The connect page says what is happening.
             (String::new(), None)
         } else if !link.connected() {
-            ("Reconnecting… Typing is paused.".to_owned(), Some("Retry"))
+            ("Reconnecting. Typing is paused".to_owned(), Some("Retry"))
         } else if self.watching() {
-            ("In use on another device".to_owned(), Some("Take Control"))
+            ("In use elsewhere".to_owned(), Some("Take Control"))
         } else {
             (String::new(), None)
         };
@@ -1442,7 +1523,7 @@ impl Ui {
         }
         self.tab_list.remove_all();
         let scale = self.window.scale_factor().max(1);
-        for row in &next {
+        for (index, row) in next.iter().enumerate() {
             let text = gtk::Box::builder().orientation(gtk::Orientation::Vertical).hexpand(true).valign(gtk::Align::Center).build();
             text.append(&gtk::Label::builder().label(row.title.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).css_classes(["rexling-tab-title"]).build());
             if !row.status.is_empty() {
@@ -1459,6 +1540,10 @@ impl Ui {
             content.append(&text);
             if row.status_class == "working" {
                 content.append(&adw::Spinner::builder().valign(gtk::Align::Center).build());
+            }
+            // Its place in the list tells apart tabs that are otherwise alike.
+            if next.len() > 1 {
+                content.append(&gtk::Label::builder().label((index + 1).to_string()).css_classes(["dim-label", "caption", "numeric"]).valign(gtk::Align::Center).build());
             }
             let list_row = gtk::ListBoxRow::builder().child(&content).name(row.id.as_str()).tooltip_text(row.detail.as_str()).build();
             // Tabs can be dragged onto one another to reorder them.
@@ -1656,7 +1741,8 @@ impl Ui {
         let single = shown.len() < 2;
         for (id, pane) in self.panes.borrow().iter() {
             pane.terminal.set_dimmed(!single && shown.contains(id) && *id != focused);
-            pane.terminal.set_marked(!single && *id == focused);
+            let state = pane.client.state();
+            pane.terminal.set_marked(!single && *id == focused && (state.controlled || !state.other_owner));
         }
         let first = self.visible.borrow().is_empty() && !shown.is_empty();
         let changed = self.visible.replace(shown) != *self.visible.borrow();
@@ -1691,7 +1777,7 @@ impl Ui {
         self.title.set_title(&heading);
         let directory = state.directories.get(&focused).map(|d| home_relative(d)).unwrap_or_default();
         let zoomed = self.zoomed.get() && tab.is_some_and(|tab| tab.blocks.len() > 1);
-        self.title.set_subtitle(&match (zoomed, directory == heading) {
+        self.title.set_subtitle(&match (zoomed, directory == heading || directory == format!("/{heading}") || directory == format!("~/{heading}")) {
             (true, _) => format!("Zoomed · 1 of {} panes", tab.map_or(1, |tab| tab.blocks.len())),
             (false, true) => String::new(),
             (false, false) => directory,
@@ -1746,11 +1832,23 @@ impl Ui {
             Event::Wheel { lines, column, row, cell_width, cell_height } => client.wheel(lines, column, row, cell_width, cell_height),
             Event::Click { column, row, cell_width, cell_height } => client.click(column, row, cell_width, cell_height),
             Event::Claim => self.interact(),
-            Event::Focused => {
-                if !self.arranging.get() && *self.focused.borrow() != block && self.visible.borrow().iter().any(|id| id == block) {
+            // The pointer chose this pane.
+            Event::Pressed => {
+                if *self.focused.borrow() != block && self.visible.borrow().iter().any(|id| id == block) {
                     self.focused.replace(block.to_owned());
                     self.show_tabs();
                     self.arrange();
+                }
+            }
+            // Focus that wandered here while panes were being moved about goes back where the user left it.
+            Event::Focused => {
+                if *self.focused.borrow() != block && !self.arranging.get() {
+                    let weak = self.this.clone();
+                    gtk::glib::idle_add_local_once(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.focus_terminal();
+                        }
+                    });
                 }
             }
             Event::Zoom(step) => {

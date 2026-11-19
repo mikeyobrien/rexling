@@ -25,6 +25,8 @@ pub enum Event {
     OpenLink(String),
     /// Keyboard focus arrived here.
     Focused,
+    /// The pointer was pressed here.
+    Pressed,
     /// An image was pasted; it is saved here, ready to send.
     Upload(std::path::PathBuf),
 }
@@ -339,6 +341,7 @@ impl Terminal {
         let weak = Rc::downgrade(inner);
         click.connect_pressed(move |_, presses, x, y| {
             if let Some(inner) = weak.upgrade() {
+                inner.emit(Event::Pressed);
                 inner.area.grab_focus();
                 inner.clear_selection();
                 if presses == 2 {
@@ -480,7 +483,7 @@ impl Inner {
         let layout = pango::Layout::new(&context);
         let needed = (PADDING * 2.0 + frame.columns as f64 * metrics.width, PADDING * 2.0 + frame.rows as f64 * metrics.height);
         // Shrink a pane this client does not size so it shows whole, but never past readable: beyond that it is cut off.
-        let fit = if self.controlled.get() { 1.0 } else { (width / needed.0).min(height / needed.1).clamp(0.6, 1.0) };
+        let fit = if self.controlled.get() { 1.0 } else { (width / needed.0).min(height / needed.1).clamp(0.75, 1.0) };
         self.view_scale.set(fit);
         let _ = cr.save();
         cr.scale(fit, fit);
