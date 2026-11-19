@@ -31,6 +31,7 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("Previous Pane", "previous-pane", "<Ctrl><Alt>Left"),
     ("Next Tab", "next-tab", "<Ctrl>Page_Down"),
     ("Previous Tab", "previous-tab", "<Ctrl>Page_Up"),
+    ("Go to Waiting Pane", "next-waiting", "<Ctrl><Shift>u"),
     ("Switch Session", "sessions", "<Ctrl><Shift>s"),
     ("Toggle Sidebar", "toggle-sidebar", "<Ctrl><Shift>b"),
     ("Command Palette", "palette", "<Ctrl><Shift>p"),
@@ -42,6 +43,14 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
 /// Shows a dialog over the window. Window shortcuts wait until it closes, then the terminal has the keyboard again.
 fn present(ui: &Rc<Ui>, dialog: &impl IsA<adw::Dialog>) {
     ui.modal.set(true);
+    // Ctrl+Shift+D is Split Right, which waits while a dialog is open. It must not fall through to GTK's debugging key.
+    let guard = gtk::EventControllerKey::new();
+    guard.set_propagation_phase(gtk::PropagationPhase::Capture);
+    guard.connect_key_pressed(|_, key, _, state| {
+        let chord = state.contains(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK) && matches!(key, gdk::Key::D | gdk::Key::d | gdk::Key::I | gdk::Key::i);
+        if chord { glib::Propagation::Stop } else { glib::Propagation::Proceed }
+    });
+    dialog.as_ref().add_controller(guard);
     let weak = Rc::downgrade(ui);
     dialog.connect_closed(move |_| {
         if let Some(ui) = weak.upgrade() {
@@ -520,7 +529,7 @@ pub fn shortcuts(ui: &Rc<Ui>) {
     let groups: [(&str, &[&str]); 3] = [
         ("Tabs", &["new-tab", "next-tab", "previous-tab", "move-tab-up", "move-tab-down", "rename-tab"]),
         ("Panes", &["split-right", "split-below", "next-pane", "previous-pane", "zoom-pane", "float-pane", "close-pane"]),
-        ("Window", &["palette", "sessions", "new-window", "toggle-sidebar", "preferences", "shortcuts"]),
+        ("Window", &["palette", "next-waiting", "sessions", "new-window", "toggle-sidebar", "preferences", "shortcuts"]),
     ];
     for (title, actions) in groups {
         let group = adw::PreferencesGroup::builder().title(title).build();
@@ -528,6 +537,15 @@ pub fn shortcuts(ui: &Rc<Ui>) {
             if let Some((label, _, accelerator)) = ACTIONS.iter().find(|(_, action, accelerator)| action == wanted && !accelerator.is_empty()) {
                 row(&group, label, accelerator);
             }
+        }
+        if title == "Tabs" {
+            let numbered = adw::ActionRow::builder().title("Open a Tab by Its Number").build();
+            let caps = gtk::Box::builder().spacing(4).valign(gtk::Align::Center).build();
+            for key in ["Alt", "1–9"] {
+                caps.append(&gtk::Label::builder().label(key).css_classes(["rexling-cap"]).build());
+            }
+            numbered.add_suffix(&caps);
+            group.add(&numbered);
         }
         page.add(&group);
     }
@@ -677,7 +695,7 @@ pub fn forwards(ui: &Rc<Ui>) {
 
     let view = adw::ToolbarView::builder().content(&page).build();
     view.add_top_bar(&adw::HeaderBar::new());
-    let dialog = adw::Dialog::builder().title("Port Forwards").child(&view).content_width(460).content_height(420).build();
+    let dialog = adw::Dialog::builder().title("Port Forwards").child(&view).content_width(460).build();
     let weak = Rc::downgrade(ui);
     dialog.connect_closed(move |_| {
         if let Some(ui) = weak.upgrade() {

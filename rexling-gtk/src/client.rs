@@ -505,6 +505,10 @@ impl Client {
             self.command(json!({"type":"focus","session":state.selected_session,"block":block}));
         }
     }
+    /// Closes the connection for good.
+    pub fn disconnect(&self) {
+        self.command(json!({"type":"disconnect"}));
+    }
     pub fn refresh(&self) {
         self.command(json!({"type":"refresh"}));
     }

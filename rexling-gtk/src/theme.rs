@@ -145,10 +145,18 @@ panegrid {{ background: {line}; }}
 .rexling-status.working {{ color: alpha({fg}, 0.55); }}
 .rexling-dot {{ min-width: 8px; min-height: 8px; border-radius: 4px; background: {warm}; }}
 .rexling-dot.failed {{ background: {red}; }}
+.rexling-tabs row.rexling-pane-row {{ padding: 2px 8px; min-height: 22px; }}
+.rexling-pane-dot {{ min-width: 6px; min-height: 6px; border-radius: 3px; background: alpha({fg}, 0.25); }}
+.rexling-pane-dot.focused {{ background: @accent_bg_color; }}
+.rexling-pane-dot.attention {{ background: {warm}; }}
+.rexling-pane-dot.failed {{ background: {red}; }}
+.rexling-pane-dot.working {{ background: alpha({fg}, 0.6); }}
+.rexling-waiting {{ padding-top: 4px; padding-bottom: 4px; }}
 .rexling-session {{ font-weight: 700; font-size: 1.05em; }}
 .rexling-swatch {{ border-radius: 12px; border: 2px solid transparent; padding: 3px; transition: border-color 120ms ease; }}
 .rexling-swatch.current {{ border-color: {accent}; }}
 .rexling-palette row {{ border-radius: 8px; margin: 0 6px; padding: 8px 10px; }}
+.rexling-palette row:hover:not(:selected) {{ background: alpha({fg}, 0.035); }}
 .rexling-menu-item {{ padding: 6px 10px; font-weight: normal; }}
 .rexling-cap {{ border: 1px solid alpha({fg}, 0.25); border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px; font-size: 0.85em; background: alpha({fg}, 0.06); }}
 .rexling-key {{ font-family: monospace; font-size: 0.85em; color: alpha({fg}, 0.6); }}

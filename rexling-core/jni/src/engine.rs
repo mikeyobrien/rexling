@@ -1099,7 +1099,7 @@ impl Actor {
                 // Attach a separate control client; renaming another session must
                 // not move the viewed session, own a pane, or resize its PTY.
                 let mut editor=Control::connect(self.endpoint.clone().context("no server")?,None,Trace::default()).await?;
-                editor.call("client.set_label",json!({"label":"rex-android-rename"})).await?;
+                editor.call("client.set_label",json!({"label":"rexling-rename"})).await?;
                 let result=async {
                     editor.attach(id).await?;
                     editor.call("session.set_label",json!({"session_id":id,"label":label})).await?;
@@ -1117,7 +1117,7 @@ impl Actor {
                 // Rex requires attachment to destroy. A short-lived client avoids
                 // moving the viewed session or borrowing another block's claim.
                 let mut closer=Control::connect(self.endpoint.clone().context("no server")?,None,Trace::default()).await?;
-                closer.call("client.set_label",json!({"label":"rex-android-close"})).await?;
+                closer.call("client.set_label",json!({"label":"rexling-close"})).await?;
                 let result=async {
                     closer.attach(&id).await?;
                     closer.call("session.destroy",json!({"session_id":id})).await?;
@@ -1683,7 +1683,7 @@ fn preview_task(endpoint: Endpoint, session: String, ids: Vec<String>) -> Previe
         tokio::time::timeout(Duration::from_secs(5), async {
             let mut control = Control::connect(endpoint.clone(), None, Trace::default()).await?;
             control
-                .call("client.set_label", json!({"label":"rex-android-preview"}))
+                .call("client.set_label", json!({"label":"rexling-preview"}))
                 .await?;
             control.attach(&session).await?;
             let mut frames = Vec::new();
@@ -1797,7 +1797,7 @@ fn program_task(endpoint: Endpoint, session: String, ids: Vec<String>) -> Progra
         tokio::time::timeout(Duration::from_secs(8), async {
             let mut control = Control::connect(endpoint, None, Trace::default()).await?;
             control
-                .call("client.set_label", json!({"label":"rex-android-programs"}))
+                .call("client.set_label", json!({"label":"rexling-programs"}))
                 .await?;
             control.attach(&session).await?;
             let mut programs = serde_json::Map::new();
@@ -1831,7 +1831,7 @@ fn summary_task(endpoint: Endpoint, sessions: Value, own: String) -> SummaryTask
         tokio::time::timeout(Duration::from_secs(8), async {
             let mut control = Control::connect(endpoint, None, Trace::default()).await?;
             control
-                .call("client.set_label", json!({"label":"rex-android-summary"}))
+                .call("client.set_label", json!({"label":"rexling-summary"}))
                 .await?;
             let clients = control
                 .call("client.list", json!({"kinds":["app"]}))
@@ -1847,11 +1847,11 @@ fn summary_task(endpoint: Endpoint, sessions: Value, own: String) -> SummaryTask
                 let mut lost = false;
                 for client in clients.as_array().into_iter().flatten() {
                     if client["info"]["label"].as_str().is_some_and(|s| {
-                        s.starts_with("rex-android-rename") || s.starts_with("rex-android-close")
-                            || s.starts_with("rex-android-preview")
-                            || s.starts_with("rex-android-summary")
-                            || s.starts_with("rex-android-programs")
-                            || s.starts_with("rex-android-activity")
+                        s.starts_with("rexling-rename") || s.starts_with("rexling-close")
+                            || s.starts_with("rexling-preview")
+                            || s.starts_with("rexling-summary")
+                            || s.starts_with("rexling-programs")
+                            || s.starts_with("rexling-activity")
                     }) {
                         continue;
                     }
@@ -2272,7 +2272,7 @@ mod tests {
             ))
             .unwrap();
         let script = r#"stty -echo; i=0; while [ "$i" -lt 80 ]; do printf 'SCROLL_%03d\n' "$i"; i=$((i+1)); done; printf 'ACTOR_READY\n'; while IFS= read -r line; do printf 'ACTOR_REPLY:%s\n' "$line"; done"#;
-        let created=runtime.block_on(writer.call("session.create",json!({"label":format!("rex-android-host-test-{}",std::process::id()),"initial_windows":[{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"shell":"none","command":["/bin/sh","-c",script]}}}}]}))).unwrap();
+        let created=runtime.block_on(writer.call("session.create",json!({"label":format!("rexling-host-test-{}",std::process::id()),"initial_windows":[{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"shell":"none","command":["/bin/sh","-c",script]}}}}]}))).unwrap();
         let id = created["session_id"].as_str().unwrap();
         let block = created["initial_windows"][0]["block_ids"][0]
             .as_str()
@@ -2377,7 +2377,7 @@ mod tests {
         } else {"set laststatus=2 statusline=BG=%{&background}"};
         nvim_command.extend(["-n","-i","NONE","-c",indicator].map(str::to_owned));
         let created = runtime.block_on(writer.call("session.create", json!({
-            "label":format!("rex-android-nvim-test-{}",std::process::id()),
+            "label":format!("rexling-nvim-test-{}",std::process::id()),
             "initial_windows":[{"layout":{"block":{"flavor":"com.superlogical.terminal.shell",
                 "options":{"shell":"none","command":nvim_command}}}}]
         }))).unwrap();
@@ -2492,7 +2492,7 @@ mod tests {
             .unwrap();
         let script = r#"stty -echo; printf '\033]7501;state=idle:app=claude-code:title=Rmlyc3QgdGFzaw==\007ICON_READY\n'; while IFS= read -r line; do case "$line" in codex) printf '\033]7501;state=working:app=codex:title=SW52ZXN0aWdhdGUgUmV4IHByb3RvY29s\007';; frame1) printf '\033]2;⠋ Investigate Rex protocol\007';; frame2) printf '\033]2;⠙ Investigate Rex protocol\007';; frame3) printf '\033]2;⠹ Investigate Rex protocol\007';; clear) printf '\033]7501;state=clear\007';; esac; done"#;
         let created=runtime.block_on(writer.call("session.create",json!({
-            "label":format!("rex-android-program-test-{}",std::process::id()),
+            "label":format!("rexling-program-test-{}",std::process::id()),
             "initial_windows":[{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"shell":"none","command":["/bin/sh","-c",script]}}}},
                 {"layout":{"block":{"flavor":"com.superlogical.terminal.shell"}}}]
         }))).unwrap();
@@ -2672,7 +2672,7 @@ mod tests {
             ))
             .unwrap();
         let created = runtime.block_on(writer.call("session.create", json!({
-            "label":format!("rex-android-create-test-{}", std::process::id()),
+            "label":format!("rexling-create-test-{}", std::process::id()),
             "initial_windows":[{"window_label":"Original", "layout":{"block":{"flavor":"com.superlogical.terminal.shell"}}}]
         }))).unwrap();
         let id = created["session_id"].as_str().unwrap();
@@ -2743,7 +2743,7 @@ mod tests {
             assert_eq!(metadata["controlled"], pane["controlled"]);
             assert_eq!(metadata["directories"].as_object().unwrap().len(), 3);
 
-            app.command(json!({"type":"new_session","label":format!("rex-android-new-session-test-{}",std::process::id())})).unwrap();
+            app.command(json!({"type":"new_session","label":format!("rexling-new-session-test-{}",std::process::id())})).unwrap();
             let fresh = wait(&app, |v| {
                 v["selectedSession"] != id
                     && !v["selectedSession"].as_str().unwrap_or("").is_empty()
@@ -2758,7 +2758,7 @@ mod tests {
         let listed = runtime
             .block_on(writer.call("session.list", json!({})))
             .unwrap();
-        let label = format!("rex-android-new-session-test-{}", std::process::id());
+        let label = format!("rexling-new-session-test-{}", std::process::id());
         for session in listed["sessions"].as_array().into_iter().flatten() {
             if session["label"] == label {
                 let fresh = session["session_id"].as_str().unwrap();
@@ -2961,7 +2961,7 @@ while True:
         let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let mut writer=runtime.block_on(Control::connect(Endpoint::new(&server,Duration::from_secs(10)).unwrap(),None,Trace::default())).unwrap();
         let script=r#"stty -echo; printf '\033]8;;https://example.com/snapshot\007Docs\033]8;;\007 OSC8_READY\n'; while IFS= read -r line; do if [ "$line" = clear ]; then printf '\033[HDocs\nLINKS_CLEARED\n'; else printf '\033[H\033]8;;https://example.com/live\007Docs\033]8;;\007\n'; fi; done"#;
-        let created=runtime.block_on(writer.call("session.create",json!({"label":format!("rex-android-osc8-test-{}",std::process::id()),"initial_windows":[{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"shell":"none","command":["/bin/sh","-c",script]}}}}]}))).unwrap();
+        let created=runtime.block_on(writer.call("session.create",json!({"label":format!("rexling-osc8-test-{}",std::process::id()),"initial_windows":[{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"shell":"none","command":["/bin/sh","-c",script]}}}}]}))).unwrap();
         let id=created["session_id"].as_str().unwrap();
         let block=created["initial_windows"][0]["block_ids"][0].as_str().unwrap();
         runtime.block_on(writer.attach(id)).unwrap();
@@ -2990,7 +2990,7 @@ while True:
         let mut ids=Vec::new();let mut blocks=Vec::new();
         for (index,state) in ["working","done"].iter().enumerate() {
             let script=format!("stty -echo; printf '\\033]7501;state={state}:app=codex:title=Rml4dHVyZSB0YXNr\\007'; printf '\\033]7501;state=blocked:id=worker:kind=permission:msg=UmV2aWV3IHRoaXM=\\007'; printf '\\033]0;Initial terminal title\\007'; printf 'ACTIVITY_READY\\n'; while IFS= read -r line; do if [ \"$line\" = alert ]; then printf '\\033]7501;state=blocked:msg=TmV3IGFwcHJvdmFs\\007'; fi; printf '\\033]0;Updated terminal title\\007'; done");
-            let created=runtime.block_on(writer.call("session.create",json!({"label":format!("rex-android-activity-test-{}-{index}",std::process::id()),"initial_windows":[{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"shell":"none","command":["/bin/sh","-c",script]}}}}]}))).unwrap();
+            let created=runtime.block_on(writer.call("session.create",json!({"label":format!("rexling-activity-test-{}-{index}",std::process::id()),"initial_windows":[{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"shell":"none","command":["/bin/sh","-c",script]}}}}]}))).unwrap();
             ids.push(created["session_id"].as_str().unwrap().to_owned());blocks.push(created["initial_windows"][0]["block_ids"][0].as_str().unwrap().to_owned());
         }
         let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

@@ -18,9 +18,11 @@ Rexling Android app already uses.
 - **Nothing to set up on the same machine.** If a Rex server is running under your account,
   Rexling finds its socket and connects. Other servers are reached by HTTPS address, or by
   `ssh://user@host` through your own `ssh`, with your keys, agent and config.
-- **Sessions and tabs in a sidebar.** Each tab shows the program it is running, where, and
-  whether that program is working, waiting on you, finished or failed. Drag tabs to
-  reorder them.
+- **A sidebar that tells you where to look.** Each tab shows the program it is running, its
+  Git branch, and whether that program is working, waiting on you, finished or failed, with
+  what it asked. A split tab is drawn as a miniature of its panes, and the open tab lists
+  them. Panes waiting in other sessions and on other servers collect at the bottom;
+  `Ctrl+Shift+U` goes to the most pressing one. Drag tabs to reorder them.
 - **Every server in one switcher.** The session switcher lists the sessions of all your
   saved servers, with a dot on any that wants you, and opens whichever you pick.
 - **Command palette.** `Ctrl+Shift+P` finds any command, tab, session or theme.
@@ -88,7 +90,9 @@ session switcher. Sessions on `ssh://` servers appear once that server is opened
 | `Ctrl+Alt+Left` / `Ctrl+Alt+Right` | Previous / next pane |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Previous / next tab |
 | `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Move the tab up / down |
+| `Alt+1` … `Alt+9` | Open a tab by its number |
 | `F2` | Rename the tab |
+| `Ctrl+Shift+U` | Go to a pane that is waiting on you |
 | `Ctrl+Shift+S` | Switch session |
 | `Ctrl+Shift+B` | Show or hide the sidebar |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste |
