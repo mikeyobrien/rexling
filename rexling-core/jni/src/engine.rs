@@ -794,14 +794,10 @@ impl Actor {
         if event["type"] == "session_destroyed"
             && event["payload"]["session_id"].as_str() == Some(self.selected_session.as_str())
         {
-            self.selected_session.clear();
-            self.selected_block.clear();
-            self.data = None;
-            self.data_resume = None;
-            self.replica = None;
-            self.screen = None;
-            self.windows = json!([]);
-            self.controlled = false;
+            // Same recovery as a session found gone on reconnect: drop every trace of it
+            // and tell the app, so nothing saved keeps pointing at a dead session.
+            self.stale_session = self.selected_session.clone();
+            self.clear_stale_selection();
             self.notice = "That session has closed".into();
         }
         if matches!(
@@ -854,7 +850,18 @@ impl Actor {
                 inner["type"].as_str(),
                 Some("session_view_changed" | "block_owner_changed" | "block_closed")
             ) {
-                self.refresh_view().await?;
+                // Closing the last pane ends the session; its view can vanish before
+                // session_destroyed arrives. Failing here would drop a healthy connection.
+                match self.refresh_view().await {
+                    Err(error) if missing_terminal(&error) => {
+                        self.stale_session = self.selected_session.clone();
+                        self.clear_stale_selection();
+                        self.refresh_session_catalog().await?;
+                        self.activity_full = true;
+                        self.notice = "That session has closed".into();
+                    }
+                    result => result?,
+                }
             }
         }
         self.publish();
