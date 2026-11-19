@@ -131,6 +131,7 @@ pub struct Ui {
     /// A pane to open as soon as its session is on screen.
     jump: RefCell<String>,
     waiting_list: gtk::ListBox,
+    waiting_heading: gtk::Label,
     waiting_box: gtk::Box,
     shown_waiting: RefCell<Vec<Waiting>>,
     known_blocks: RefCell<HashSet<String>>,
@@ -143,8 +144,9 @@ struct PaneRow {
     title: String,
     /// Its folder, when it is a shell.
     place: String,
-    /// "Needs approval" and the like.
+    /// "Needs approval" and the like, and what the program said.
     waiting: String,
+    message: String,
     /// Its program's icon.
     tile: String,
     rect: [f64; 4],
@@ -163,7 +165,8 @@ struct Waiting {
     label: String,
     place: String,
     message: String,
-    failed: bool,
+    /// "attention", "failed" or "done".
+    kind: &'static str,
 }
 
 /// The branch checked out in a folder on this computer, if it is in a Git repository.
@@ -350,7 +353,9 @@ pub fn build(app: &adw::Application) {
     let waiting_list = gtk::ListBox::builder().selection_mode(gtk::SelectionMode::None).css_classes(["navigation-sidebar", "rexling-tabs", "rexling-waiting"]).build();
     let waiting_box = gtk::Box::builder().orientation(gtk::Orientation::Vertical).visible(false).build();
     waiting_box.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    waiting_box.append(&gtk::ScrolledWindow::builder().child(&waiting_list).hscrollbar_policy(gtk::PolicyType::Never).propagate_natural_height(true).max_content_height(240).build());
+    let waiting_heading = gtk::Label::builder().xalign(0.0).margin_start(14).margin_top(8).css_classes(["caption-heading", "dim-label"]).build();
+    waiting_box.append(&waiting_heading);
+    waiting_box.append(&gtk::ScrolledWindow::builder().child(&waiting_list).hscrollbar_policy(gtk::PolicyType::Never).propagate_natural_height(true).max_content_height(190).build());
     sidebar.add_bottom_bar(&waiting_box);
 
     // Content: the focused pane's title above the tab's panes.
@@ -438,6 +443,7 @@ pub fn build(app: &adw::Application) {
         closed: Cell::new(false),
         jump: RefCell::default(),
         waiting_list,
+        waiting_heading,
         waiting_box,
         shown_waiting: RefCell::default(),
         forwards_changed: RefCell::default(),
@@ -679,13 +685,18 @@ pub fn build(app: &adw::Application) {
         if chord && !available {
             return gtk::glib::Propagation::Stop;
         }
+        // Escape closes a sidebar that has slid over the terminal; it is not for the program underneath.
+        if key == gdk::Key::Escape && let Some(ui) = weak.upgrade().filter(|ui| !ui.modal.get() && ui.split.is_collapsed() && ui.split.shows_sidebar() && !ui.session_button.is_active()) {
+            ui.split.set_show_sidebar(false);
+            return gtk::glib::Propagation::Stop;
+        }
         // Alt and a digit opens the tab with that number; with no such tab the key is the program's.
         if let Some(ui) = weak.upgrade().filter(|ui| !ui.modal.get())
             && state.contains(gdk::ModifierType::ALT_MASK) && !state.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK)
             && let Some(digit) = key.to_unicode().and_then(|c| c.to_digit(10)).filter(|d| (1..=9).contains(d))
         {
             let id = ui.state.borrow().windows.get(digit as usize - 1).map(|tab| tab.id.clone());
-            if let Some(id) = id.filter(|_| ui.state.borrow().windows.len() > 1) {
+            if let Some(id) = id {
                 ui.interact();
                 ui.open_tab(&id);
                 return gtk::glib::Propagation::Stop;
@@ -1694,6 +1705,7 @@ impl Ui {
     }
 
     fn refresh_banner(&self) {
+        self.show_waiting();
         let link = self.link.borrow().clone();
         // One status line: a problem, a connection in progress, or that this window is only watching.
         let problem = self.problem.borrow().clone();
@@ -1811,6 +1823,7 @@ impl Ui {
                     0 | 1 if directory == title || directory.rsplit('/').next() == Some(title.as_str()) => lead.map(|b| state.program(b)).unwrap_or_default(),
                     0 | 1 => directory,
                     count if directory.is_empty() => format!("{count} panes"),
+                    _ if directory == title => lead.map(|b| state.program(b)).unwrap_or_default(),
                     _ => directory,
                 };
                 let blocks: Vec<&str> = tab.blocks.iter().map(|b| b.id.as_str()).collect();
@@ -1818,7 +1831,10 @@ impl Ui {
                 // How many panes want the user, and what the first one said.
                 let waiters: Vec<Activity> = self.activity.borrow().iter().filter(|a| a.needs_attention() && blocks.contains(&a.block.as_str())).cloned().collect();
                 let (status, status_class) = if waiters.len() > 1 {
-                    (format!("{} need you", waiters.len()), if waiters.iter().any(|a| a.state == "error") { "failed" } else { "attention" })
+                    let count = |state: &str| waiters.iter().filter(|a| a.state == state).count();
+                    let (blocked, failed, done) = (count("blocked"), count("error"), count("done"));
+                    let parts: Vec<String> = [(blocked, "need you"), (failed, "failed"), (done, "finished")].iter().filter(|(n, _)| *n > 0).map(|(n, word)| format!("{n} {word}")).collect();
+                    (parts.join(" · "), if blocked > 0 { "attention" } else if failed > 0 { "failed" } else { "done" })
                 } else {
                     (status, status_class)
                 };
@@ -1837,6 +1853,7 @@ impl Ui {
                             title: report.map(|a| a.title.clone()).filter(|t| !t.is_empty()).unwrap_or(program),
                             place: if shell { state.title(b) } else { String::new() },
                             waiting: report.map(|a| a.label().to_owned()).unwrap_or_default(),
+                            message: report.map(|a| a.message.clone()).unwrap_or_default(),
                             tile: programs::tile(state.programs.get(&b.id).map_or(&[][..], |p| p.as_slice()), tiles::exists),
                             // Zoomed, the miniature is the one pane on screen.
                             rect: match (zoomed, b.id == focused) {
@@ -1934,6 +1951,11 @@ impl Ui {
                 });
                 line.add_controller(click);
                 card.append(&line);
+                // With several panes waiting, each one's question sits under its own line.
+                if !pane.message.is_empty() && row.message.is_empty() {
+                    line.set_tooltip_text(Some(&pane.message));
+                    card.append(&gtk::Label::builder().label(pane.message.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).css_classes(["caption", "dim-label", "rexling-pane-said"]).build());
+                }
             }
             let list_row = gtk::ListBoxRow::builder().child(&card).name(row.id.as_str()).tooltip_text(row.detail.as_str()).build();
             // Tabs can be dragged onto one another to reorder them.
@@ -1952,7 +1974,8 @@ impl Ui {
         // The open tab stays in view when the list is longer than the sidebar.
         if let Some(row) = selected.filter(|_| self.scrolled_to.replace(current_tab.clone()) != current_tab) {
             let list = self.tab_list.clone();
-            gtk::glib::idle_add_local_once(move || {
+            // After the rebuilt rows have been given their places.
+            gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(90), move || {
                 let (Some(bounds), Some(view)) = (row.compute_bounds(&list), list.ancestor(gtk::ScrolledWindow::static_type()).and_downcast::<gtk::ScrolledWindow>()) else { return };
                 let adjustment = view.vadjustment();
                 let (top, bottom) = (bounds.y() as f64, (bounds.y() + bounds.height()) as f64);
@@ -1971,7 +1994,7 @@ impl Ui {
     fn waiting(&self) -> Vec<Waiting> {
         let current = self.config.borrow().server.clone();
         // What a server said before it stopped answering is not news.
-        let mut sources: Vec<(String, Rc<Vec<Activity>>)> = if self.offline.get() { Vec::new() } else { vec![(current.clone(), self.activity.borrow().clone())] };
+        let mut sources: Vec<(String, Rc<Vec<Activity>>)> = if self.offline.get() || !self.link.borrow().connected() { Vec::new() } else { vec![(current.clone(), self.activity.borrow().clone())] };
         sources.extend(self.watchers.borrow().iter().filter(|(_, watcher)| watcher.state.connected()).map(|(server, watcher)| (server.clone(), watcher.activity.clone())));
         let visible = self.visible.borrow();
         let selected = self.state.borrow().selected_session.clone();
@@ -1984,7 +2007,7 @@ impl Ui {
                 }
                 let rank = match report.state.as_str() { "blocked" => 0, "error" => 1, _ => 2 };
                 let place = if report.title.is_empty() { report.session_label.clone() } else { format!("{} · {}", report.session_label, report.title) };
-                found.push((rank, Waiting { server: server.clone(), session: report.session.clone(), block: report.block.clone(), label: report.label().to_owned(), place, message: report.message.clone(), failed: report.state == "error" }));
+                found.push((rank, Waiting { server: server.clone(), session: report.session.clone(), block: report.block.clone(), label: report.label().to_owned(), place, message: report.message.clone(), kind: match report.state.as_str() { "error" => "failed", "done" => "done", _ => "attention" } }));
             }
         }
         found.sort_by_key(|(rank, _)| *rank);
@@ -2006,20 +2029,21 @@ impl Ui {
         self.waiting_list.remove_all();
         for (index, waiting) in next.iter().enumerate() {
             let text = gtk::Box::builder().orientation(gtk::Orientation::Vertical).hexpand(true).build();
-            text.append(&gtk::Label::builder().label(waiting.label.as_str()).xalign(0.0).css_classes(["rexling-status", if waiting.failed { "failed" } else { "attention" }]).build());
+            text.append(&gtk::Label::builder().label(waiting.label.as_str()).xalign(0.0).css_classes(["rexling-status", waiting.kind]).build());
             text.append(&gtk::Label::builder().label(waiting.place.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).css_classes(["caption"]).build());
             if !waiting.message.is_empty() {
                 text.append(&gtk::Label::builder().label(waiting.message.as_str()).xalign(0.0).ellipsize(pango::EllipsizeMode::End).css_classes(["caption", "dim-label"]).build());
             }
             let line = gtk::Box::builder().spacing(10).build();
             let dot = gtk::Box::builder().css_classes(["rexling-dot"]).valign(gtk::Align::Start).margin_top(6).build();
-            if waiting.failed {
-                dot.add_css_class("failed");
+            if waiting.kind != "attention" {
+                dot.add_css_class(waiting.kind);
             }
             line.append(&dot);
             line.append(&text);
             self.waiting_list.append(&gtk::ListBoxRow::builder().child(&line).name(index.to_string()).build());
         }
+        self.waiting_heading.set_label(&format!("In other sessions · {}", next.len()));
         self.waiting_box.set_visible(!next.is_empty());
         self.shown_waiting.replace(next);
     }

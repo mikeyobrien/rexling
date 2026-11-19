@@ -161,6 +161,7 @@ panegrid {{ background: {line}; }}
 .rexling-mini.failed {{ background: alpha({red}, 0.85); }}
 .rexling-mini.done {{ background: alpha({green}, 0.7); }}
 .rexling-pane-line {{ border-radius: 6px; padding: 2px 6px; margin-left: 34px; }}
+.rexling-pane-said {{ margin-left: 54px; margin-bottom: 2px; }}
 .rexling-pane-line:hover {{ background: alpha({fg}, 0.06); }}
 .rexling-pane-dot.done {{ background: {green}; }}
 .rexling-dot.done {{ background: {green}; }}
