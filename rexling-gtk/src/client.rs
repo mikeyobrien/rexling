@@ -506,6 +506,10 @@ impl Client {
             self.command(json!({"type":"focus","session":state.selected_session,"block":block}));
         }
     }
+    /// For a connection that shows one pane: it leaves program details to the window's own connection.
+    pub fn set_lean(&self) {
+        self.command(json!({"type":"lean"}));
+    }
     /// Closes the connection for good.
     pub fn disconnect(&self) {
         self.command(json!({"type":"disconnect"}));

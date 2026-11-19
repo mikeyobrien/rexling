@@ -592,7 +592,19 @@ impl Inner {
                 }
                 if cell.attributes & (palette::UNDERLINE | palette::STRIKETHROUGH) != 0 || cell.hyperlink.is_some() {
                     cr.set_line_width(1.0);
-                    if cell.attributes & palette::UNDERLINE != 0 || cell.hyperlink.is_some() {
+                    if cell.attributes & palette::CURLY != 0 {
+                        // A wave of two crests to a cell, starting on the cell's edge so runs join up.
+                        let (line, half) = ((top + metrics.baseline + 2.0).floor() + 0.5, metrics.width / 4.0);
+                        cr.move_to(x, line);
+                        let mut at = x;
+                        let mut up = true;
+                        while at < x + allocated - 0.01 {
+                            let rise = if up { -1.6 } else { 1.6 };
+                            cr.curve_to(at + half * 0.4, line + rise, at + half * 0.6, line + rise, at + half, line);
+                            at += half;
+                            up = !up;
+                        }
+                    } else if cell.attributes & palette::UNDERLINE != 0 || cell.hyperlink.is_some() {
                         let line = (top + metrics.baseline + 1.0).floor() + 0.5;
                         cr.move_to(x, line);
                         cr.line_to(x + allocated, line);

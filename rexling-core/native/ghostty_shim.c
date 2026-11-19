@@ -473,6 +473,10 @@ int rp_frame(RpTerminal *t, RpFrame *frame, CellFn callback, void *userdata) {
       uint32_t flags=row_flags | ((style.flags & GHOSTTY_STYLE_FLAG_BOLD) != 0) | (((style.flags & GHOSTTY_STYLE_FLAG_ITALIC) != 0)<<1) | (((style.flags & GHOSTTY_STYLE_FLAG_FAINT) != 0)<<2) |
           (((style.flags & GHOSTTY_STYLE_FLAG_INVERSE) != 0)<<3) | (((style.flags & GHOSTTY_STYLE_FLAG_INVISIBLE) != 0)<<4) | (((style.flags & GHOSTTY_STYLE_FLAG_STRIKETHROUGH) != 0)<<5) |
           ((GHOSTTY_STYLE_UNDERLINE(style)!=0)<<6) | (fg_default<<7) | (bg_default<<8);
+#ifndef __ANDROID__
+      // The top bit says the underline is a curly one. Desktop clients draw it as a wave.
+      if (GHOSTTY_STYLE_UNDERLINE(style)==GHOSTTY_SGR_UNDERLINE_CURLY) flags |= (1u<<31);
+#endif
       if (style.fg_color.tag == GHOSTTY_STYLE_COLOR_PALETTE)
         flags |= (1u<<9) | ((uint32_t)style.fg_color.value.palette<<11);
       GhosttyCellContentTag content_tag=GHOSTTY_CELL_CONTENT_CODEPOINT;

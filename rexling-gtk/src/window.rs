@@ -130,6 +130,7 @@ pub struct Ui {
     scrolled_to: RefCell<String>,
     sidebar_toggle: gtk::Button,
     told_restart: Cell<bool>,
+    restart_toast: RefCell<Option<adw::Toast>>,
     /// The tab a new tab was asked for from, so it can be placed after it.
     tab_after: RefCell<String>,
     /// The window has gone; nothing may reconnect on its behalf.
@@ -175,6 +176,12 @@ struct Waiting {
     kind: &'static str,
 }
 
+/// The one name a pane's program goes by: what its icon shows, or the command for a plain shell.
+fn identity(state: &State, block: &crate::client::Block) -> String {
+    let tile = programs::tile(state.programs.get(&block.id).map_or(&[][..], |p| p.as_slice()), tiles::exists);
+    if tile == "shell" { state.program(block) } else { programs::name(&tile) }
+}
+
 /// The branch checked out in a folder on this computer, if it is in a Git repository.
 fn branch(directory: &str) -> Option<String> {
     let mut folder = std::path::Path::new(directory);
@@ -212,31 +219,23 @@ fn branch_mark() -> gtk::DrawingArea {
     area
 }
 
-/// A tab's panes in miniature: each program's icon where its pane is, ringed when it has the
-/// keyboard and tinted when it wants the user.
+/// A tab's panes in miniature: each program's icon where its pane is, and nothing else.
 fn minimap(panes: &[PaneRow], scale: i32) -> gtk::Fixed {
     const WIDTH: f64 = 50.0;
     const HEIGHT: f64 = 40.0;
     let map = gtk::Fixed::builder().width_request(WIDTH as i32).height_request(HEIGHT as i32).valign(gtk::Align::Center).build();
     for pane in panes.iter().filter(|pane| pane.rect[2] > 0.0 && pane.rect[3] > 0.0) {
-        let (x, y) = ((pane.rect[0] * WIDTH).round(), (pane.rect[1] * HEIGHT).round());
-        let (w, h) = (((pane.rect[0] + pane.rect[2]) * WIDTH).round() - x - 1.0, ((pane.rect[1] + pane.rect[3]) * HEIGHT).round() - y - 1.0);
-        let cell = gtk::Box::builder().width_request(w.max(3.0) as i32).height_request(h.max(3.0) as i32).css_classes(["rexling-mini"]).build();
-        if !pane.status.is_empty() {
-            cell.add_css_class(pane.status);
+        let (x, y, w, h) = (pane.rect[0] * WIDTH, pane.rect[1] * HEIGHT, pane.rect[2] * WIDTH, pane.rect[3] * HEIGHT);
+        // The icon keeps its shape, as large as its pane's share allows, centred in it.
+        let high = (h - 2.0).min((w - 2.0) * 48.0 / 61.0).floor();
+        if high < 6.0 {
+            continue;
         }
-        if pane.focused {
-            cell.add_css_class("focused");
+        let wide = (high * 61.0 / 48.0).round();
+        if let Some(texture) = tiles::texture(&pane.tile, high as i32 * scale) {
+            let icon = gtk::Picture::builder().paintable(&texture).can_shrink(true).width_request(wide as i32).height_request(high as i32).build();
+            map.put(&icon, (x + (w - wide) / 2.0).round(), (y + (h - high) / 2.0).round());
         }
-        // The icon keeps its shape, as large as the cell allows.
-        let size = (h - 4.0).min((w - 4.0) * 48.0 / 61.0).floor();
-        if size >= 7.0 && let Some(texture) = tiles::texture(&pane.tile, size as i32 * scale) {
-            // Centred by hand: an expanding child would stretch the whole miniature.
-            let wide = (size * 61.0 / 48.0).round();
-            let icon = gtk::Picture::builder().paintable(&texture).can_shrink(true).width_request(wide as i32).height_request(size as i32).valign(gtk::Align::Center).margin_start(((w - wide) / 2.0).max(0.0).floor() as i32).build();
-            cell.append(&icon);
-        }
-        map.put(&cell, x, y);
     }
     map
 }
@@ -448,6 +447,7 @@ pub fn build(app: &adw::Application) {
         scrolled_to: RefCell::default(),
         sidebar_toggle,
         told_restart: Cell::new(false),
+        restart_toast: RefCell::default(),
         tab_after: RefCell::default(),
         closed: Cell::new(false),
         jump: RefCell::default(),
@@ -901,6 +901,13 @@ impl Ui {
         add("new-session", |ui| {
             dialogs::ask(ui, "New Session", "", "Create", |ui, name| {
                 ui.interact();
+                ui.dismiss_restart();
+                // Two sessions with one name cannot be told apart, so the name opens the one there is.
+                let existing = ui.state.borrow().sessions.iter().find(|s| !name.is_empty() && s.label.eq_ignore_ascii_case(name)).map(|s| s.session_id.clone());
+                if let Some(id) = existing {
+                    ui.open_session(&id);
+                    return;
+                }
                 ui.focus_pending.set(true);
                 ui.chrome.new_session(name);
             });
@@ -1299,8 +1306,15 @@ impl Ui {
 
     // --- Navigation ---------------------------------------------------------------------------
 
+    /// The user has moved on from a restart; so does its message.
+    fn dismiss_restart(&self) {
+        if let Some(toast) = self.restart_toast.take() {
+            toast.dismiss();
+        }
+    }
     pub fn open_session(self: &Rc<Self>, id: &str) {
         self.interact();
+        self.dismiss_restart();
         self.focus_pending.set(true);
         self.tab.replace(String::new());
         self.chrome.select_session(id);
@@ -1678,7 +1692,9 @@ impl Ui {
             self.recovering.set(false);
             self.connect(&server);
             if !self.told_restart.replace(true) {
-                self.toasts.add_toast(adw::Toast::builder().title("The server restarted and the open session has ended").timeout(5).build());
+                let toast = adw::Toast::builder().title("The server restarted and the open session has ended").timeout(5).build();
+                self.toasts.add_toast(toast.clone());
+                self.restart_toast.replace(Some(toast));
             }
             return;
         }
@@ -1852,10 +1868,10 @@ impl Ui {
                 let detail = match tab.blocks.len() {
                     count if count > 1 && current && self.zoomed.get() => format!("Zoomed · 1 of {count} panes"),
                     // A shell is already titled by its folder; when the path adds nothing, say which shell it is.
-                    0 | 1 if directory == title || directory.rsplit('/').next() == Some(title.as_str()) => lead.map(|b| state.program(b)).unwrap_or_default(),
+                    0 | 1 if directory == title || directory.rsplit('/').next() == Some(title.as_str()) => lead.map(|b| identity(&state, b)).unwrap_or_default(),
                     0 | 1 => directory,
                     count if directory.is_empty() => format!("{count} panes"),
-                    _ if directory == title => lead.map(|b| state.program(b)).unwrap_or_default(),
+                    _ if directory == title => lead.map(|b| identity(&state, b)).unwrap_or_default(),
                     _ => directory,
                 };
                 let blocks: Vec<&str> = tab.blocks.iter().map(|b| b.id.as_str()).collect();
@@ -1874,7 +1890,7 @@ impl Ui {
                         let report = waiters.iter().find(|a| a.block == b.id);
                         let tile = programs::tile(state.programs.get(&b.id).map_or(&[][..], |p| p.as_slice()), tiles::exists);
                         // The line is named after the same program its icon shows.
-                        let program = if tile == "shell" { state.program(b) } else { tile.clone() };
+                        let program = identity(&state, b);
                         let shell = state.title(b) != state.program(b) && state.directories.contains_key(&b.id);
                         PaneRow {
                             id: b.id.clone(),
@@ -2040,7 +2056,7 @@ impl Ui {
                     continue;
                 }
                 let rank = match report.state.as_str() { "blocked" => 0, "error" => 1, _ => 2 };
-                let place = if report.title.is_empty() { report.session_label.clone() } else { format!("{} · {}", report.session_label, report.title) };
+                let place = if report.title.is_empty() { report.session_label.clone() } else { format!("{} · {}", report.session_label, programs::name(&report.title)) };
                 found.push((rank, Waiting { server: server.clone(), session: report.session.clone(), block: report.block.clone(), label: report.label().to_owned(), place, message: report.message.clone(), kind: match report.state.as_str() { "error" => "failed", "done" => "done", _ => "attention" } }));
             }
         }
@@ -2185,6 +2201,7 @@ impl Ui {
             return Some(pane.shell.clone().upcast());
         }
         let client = Client::new(&self.control).map_err(|error| eprintln!("rexling: {error}")).ok()?;
+        client.set_lean();
         let (font, size) = {
             let config = self.config.borrow();
             (config.font.clone(), config.font_size)

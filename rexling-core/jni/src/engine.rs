@@ -299,6 +299,8 @@ struct Actor {
     title_events: BTreeMap<String, Value>,
     process_events: BTreeMap<String, Value>,
     program_refresh: tokio::time::Instant,
+    /// A connection that only shows one pane does not ask what every pane is running.
+    lean: bool,
     preview_updates: BTreeMap<String, Arc<Frame>>,
     session_details: Value,
 }
@@ -350,6 +352,7 @@ impl Actor {
             title_events: BTreeMap::new(),
             process_events: BTreeMap::new(),
             program_refresh: tokio::time::Instant::now(),
+            lean: false,
             preview_updates: BTreeMap::new(),
             session_details: json!({}),
         }
@@ -530,7 +533,7 @@ impl Actor {
                         };
                         if self.activity_open || self.monitoring {self.publish();}
                     }
-                    if self.phase=="connected" && self.program_task.is_none() && !self.selected_session.is_empty()
+                    if self.phase=="connected" && !self.lean && self.program_task.is_none() && !self.selected_session.is_empty()
                         && self.program_refresh<=tokio::time::Instant::now()
                     {
                         let ids=self.windows.as_array().into_iter().flatten().flat_map(|w|
@@ -1195,6 +1198,7 @@ impl Actor {
                 self.control.as_mut().context("not connected")?.call(method,args).await?;
                 self.refresh_view().await?;
             }
+            "lean" => self.lean=true,
             "focus" => {
                 // Tells the server which pane the user is in, so other clients and the command line act on the same one.
                 ensure!(self.phase=="connected" && !self.paused,"Connect before focusing a pane");

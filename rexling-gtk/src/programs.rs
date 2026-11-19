@@ -48,6 +48,18 @@ fn known(name: &str, path: &str) -> Option<&'static str> {
     })
 }
 
+/// What to call a program in front of people, from its tile or the name it reported.
+pub fn name(program: &str) -> String {
+    match program.to_lowercase().as_str() {
+        "claude" | "claude_code" | "claude-code" => "Claude".into(),
+        "codex" => "Codex".into(),
+        "gemini" => "Gemini".into(),
+        "copilot" => "Copilot".into(),
+        "neovim" => "Neovim".into(),
+        _ => program.replace('_', " "),
+    }
+}
+
 /// The tile for a pane, given the programs running in it (outermost first), and whether a tile with that name exists.
 pub fn tile(candidates: &[String], exists: impl Fn(&str) -> bool) -> String {
     let mut runtime = None;
