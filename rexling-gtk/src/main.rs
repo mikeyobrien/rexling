@@ -26,8 +26,5 @@ fn main() -> gtk::glib::ExitCode {
     for (_, action, keys) in dialogs::ACTIONS.iter().filter(|(_, _, keys)| !keys.is_empty()) {
         app.set_accels_for_action(&format!("win.{action}"), &[keys]);
     }
-    for number in 1..=9 {
-        app.set_accels_for_action(&format!("win.open-tab({number})"), &[&format!("<Alt>{number}")]);
-    }
     app.run()
 }

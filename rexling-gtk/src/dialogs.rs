@@ -571,8 +571,8 @@ pub fn about(ui: &Rc<Ui>) {
         .application_name("Rexling")
         .application_icon("dev.shulhi.Rexling")
         .version(env!("CARGO_PKG_VERSION"))
-        .developer_name("Rexling contributors")
-        .comments("An unofficial native client for Superlogical Rex.")
+        .developer_name("A native Linux client for Rex")
+        .comments("Rexling is an unofficial client for Superlogical Rex, made by its contributors.")
         .website("https://github.com/shulhi/rexling")
         .issue_url("https://github.com/shulhi/rexling/issues")
         .license_type(gtk::License::Apache20)
@@ -695,7 +695,7 @@ pub fn forwards(ui: &Rc<Ui>) {
 
     let view = adw::ToolbarView::builder().content(&page).build();
     view.add_top_bar(&adw::HeaderBar::new());
-    let dialog = adw::Dialog::builder().title("Port Forwards").child(&view).content_width(460).build();
+    let dialog = adw::Dialog::builder().title("Port Forwards").child(&view).content_width(460).content_height(340).build();
     let weak = Rc::downgrade(ui);
     dialog.connect_closed(move |_| {
         if let Some(ui) = weak.upgrade() {

@@ -90,7 +90,7 @@ session switcher. Sessions on `ssh://` servers appear once that server is opened
 | `Ctrl+Alt+Left` / `Ctrl+Alt+Right` | Previous / next pane |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Previous / next tab |
 | `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Move the tab up / down |
-| `Alt+1` … `Alt+9` | Open a tab by its number |
+| `Alt+1` … `Alt+9` | Open a tab by its number (passed to the program when there is no such tab) |
 | `F2` | Rename the tab |
 | `Ctrl+Shift+U` | Go to a pane that is waiting on you |
 | `Ctrl+Shift+S` | Switch session |

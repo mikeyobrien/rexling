@@ -57,7 +57,7 @@ pub fn find(id: &str, dark: bool) -> &'static Theme {
     themes.iter().find(|t| t.id == id && t.palette.dark == dark).unwrap_or(&themes[if dark { 0 } else { 1 }])
 }
 
-fn mix(a: Rgb, b: Rgb, amount: f64) -> Rgb {
+pub fn mix(a: Rgb, b: Rgb, amount: f64) -> Rgb {
     let channel = |i: usize| (a[i] as f64 + (b[i] as f64 - a[i] as f64) * amount).round() as u8;
     [channel(0), channel(1), channel(2)]
 }
@@ -71,9 +71,20 @@ fn luminance(c: Rgb) -> f64 {
     };
     0.2126 * linear(c[0]) + 0.7152 * linear(c[1]) + 0.0722 * linear(c[2])
 }
-fn contrast(a: Rgb, b: Rgb) -> f64 {
+pub fn contrast(a: Rgb, b: Rgb) -> f64 {
     let (a, b) = (luminance(a), luminance(b));
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// Text that would all but vanish into what is behind it, such as white on a cream theme, is
+/// moved far enough towards black or white to be read. Text set to exactly the colour behind it
+/// was hidden on purpose and stays hidden.
+pub fn legible(text: Rgb, behind: Rgb) -> Rgb {
+    if text == behind || contrast(text, behind) >= 1.6 {
+        return text;
+    }
+    let towards = if luminance(behind) > 0.4 { [0, 0, 0] } else { [255, 255, 255] };
+    (1..=10).map(|step| mix(text, towards, step as f64 / 10.0)).find(|c| contrast(*c, behind) >= 2.6).unwrap_or(towards)
 }
 
 /// An accent that stays visible on the background: some themes use a cursor colour close to it.
@@ -142,10 +153,15 @@ panegrid {{ background: {line}; }}
 .rexling-status {{ font-size: 0.82em; font-weight: 600; }}
 .rexling-status.attention {{ color: {warm}; }}
 .rexling-status.failed {{ color: {red}; }}
+.rexling-status.done {{ color: {green}; }}
+.rexling-pane-line {{ border-radius: 6px; padding: 2px 6px; margin-left: 34px; }}
+.rexling-pane-line:hover {{ background: alpha({fg}, 0.06); }}
+.rexling-pane-dot.done {{ background: {green}; }}
+.rexling-dot.done {{ background: {green}; }}
+button.rexling-wants {{ background-image: radial-gradient(circle at 78% 24%, {warm} 0, {warm} 3px, transparent 3.5px); }}
 .rexling-status.working {{ color: alpha({fg}, 0.55); }}
 .rexling-dot {{ min-width: 8px; min-height: 8px; border-radius: 4px; background: {warm}; }}
 .rexling-dot.failed {{ background: {red}; }}
-.rexling-tabs row.rexling-pane-row {{ padding: 2px 8px; min-height: 22px; }}
 .rexling-pane-dot {{ min-width: 6px; min-height: 6px; border-radius: 3px; background: alpha({fg}, 0.25); }}
 .rexling-pane-dot.focused {{ background: @accent_bg_color; }}
 .rexling-pane-dot.attention {{ background: {warm}; }}
@@ -171,12 +187,23 @@ panegrid {{ background: {line}; }}
         on_accent = hex(on_accent),
         warm = hex(palette.ansi[3]),
         red = hex(palette.ansi[1]),
+        green = hex(palette.ansi[2]),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn faint_text_is_made_legible_but_hidden_text_stays_hidden() {
+        let cream = [0xf4, 0xee, 0xdf];
+        assert!(contrast(legible([0xff, 0xff, 0xff], cream), cream) >= 2.6);
+        assert_eq!(legible(cream, cream), cream);
+        assert_eq!(legible([0x20, 0x20, 0x20], cream), [0x20, 0x20, 0x20]);
+        let night = [0x10, 0x12, 0x18];
+        assert!(contrast(legible([0x16, 0x18, 0x20], night), night) >= 2.6);
+    }
 
     #[test]
     fn bundled_themes_load_and_resolve() {

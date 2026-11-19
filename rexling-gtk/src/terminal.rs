@@ -562,7 +562,8 @@ impl Inner {
                 }
                 let x = PADDING + cell.x as f64 * metrics.width;
                 let allocated = span as f64 * metrics.width;
-                let color = if cell.attributes & palette::INVERSE != 0 { palette.background(cell) } else { palette.foreground(cell) };
+                let (color, behind) = if cell.attributes & palette::INVERSE != 0 { (palette.background(cell), palette.foreground(cell)) } else { (palette.foreground(cell), palette.background(cell)) };
+                let color = crate::theme::legible(color, behind);
                 let alpha = if cell.attributes & palette::FAINT != 0 { 0.6 } else { 1.0 };
                 set_color(cr, color, alpha);
                 if text.bytes().any(|b| b != b' ') {

@@ -134,7 +134,7 @@ pub struct Activity {
 }
 impl Activity {
     pub fn needs_attention(&self) -> bool {
-        matches!(self.state.as_str(), "blocked" | "failed" | "finished")
+        matches!(self.state.as_str(), "blocked" | "error" | "done")
     }
     pub fn label(&self) -> &'static str {
         match (self.state.as_str(), self.kind.as_str()) {
@@ -142,8 +142,8 @@ impl Activity {
             ("blocked", "question") => "Has a question",
             ("blocked", "auth") => "Needs sign-in",
             ("blocked", _) => "Needs you",
-            ("failed", _) => "Failed",
-            ("finished", _) => "Finished",
+            ("error", _) => "Failed",
+            ("done", _) => "Finished",
             ("working", _) => "Working",
             _ => "",
         }
