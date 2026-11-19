@@ -300,7 +300,11 @@ pub fn build(app: &adw::Application) {
     ui.session_list.connect_row_activated(move |_, row| {
         if let Some(ui) = weak.upgrade() {
             ui.session_button.popdown();
-            ui.open_session(&row.widget_name());
+            let name = row.widget_name();
+            match name.strip_prefix("server:") {
+                Some(server) => ui.connect(server),
+                None => ui.open_session(&name),
+            }
         }
     });
     let weak = Rc::downgrade(&ui);
@@ -860,13 +864,20 @@ impl Ui {
         let elsewhere = state.sessions.iter().any(|s| s.session_id != state.selected_session && !attention(&s.session_id).is_empty());
         self.session_dot.set_visible(elsewhere);
 
-        let next: Vec<_> = state.sessions.iter().map(|s| (s.session_id.clone(), s.label.clone(), s.session_id == state.selected_session, attention(&s.session_id))).collect();
+        let mut next: Vec<_> = state.sessions.iter().map(|s| (s.session_id.clone(), s.label.clone(), s.session_id == state.selected_session, attention(&s.session_id))).collect();
+        // Other saved servers follow the sessions, one click away.
+        let config = self.config.borrow();
+        next.extend(config.servers.iter().filter(|server| **server != config.server).map(|server| (format!("server:{server}"), tunnel::label(server), false, String::new())));
+        drop(config);
         if *self.shown_sessions.borrow() == next {
             return;
         }
         self.session_list.remove_all();
         for (id, label, current, attention) in &next {
             let row = gtk::Box::builder().spacing(10).margin_top(4).margin_bottom(4).build();
+            if id.starts_with("server:") {
+                row.append(&gtk::Image::from_icon_name("network-server-symbolic"));
+            }
             row.append(&gtk::Label::builder().label(label.as_str()).xalign(0.0).hexpand(true).ellipsize(pango::EllipsizeMode::End).build());
             if !attention.is_empty() {
                 row.append(&gtk::Box::builder().css_classes(["rexling-dot", attention.as_str()]).valign(gtk::Align::Center).build());
