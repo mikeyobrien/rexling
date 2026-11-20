@@ -962,10 +962,20 @@ impl Ui {
                     ui.focus_pending.set(true);
                 }
             }
+            // Its own connection says goodbye first, so the server does not record it as lost.
+            if let Some(pane) = ui.panes.borrow().get(&focused) {
+                pane.client.disconnect();
+            }
             ui.chrome.close_pane(&focused);
         });
         add("close-tab", |ui| {
             let tab = ui.target_tab();
+            let blocks: Vec<String> = ui.state.borrow().windows.iter().find(|t| t.id == tab).map(|t| t.blocks.iter().map(|b| b.id.clone()).collect()).unwrap_or_default();
+            for block in &blocks {
+                if let Some(pane) = ui.panes.borrow().get(block) {
+                    pane.client.disconnect();
+                }
+            }
             ui.chrome.close_tab(&tab);
         });
         add("close-session", |ui| {
@@ -983,7 +993,10 @@ impl Ui {
                 let existing = ui.state.borrow().sessions.iter().find(|s| !name.is_empty() && s.label.eq_ignore_ascii_case(name)).map(|s| s.session_id.clone());
                 if let Some(id) = existing {
                     ui.open_session(&id);
-                    ui.toasts.add_toast(adw::Toast::new(&format!("Opened the session already called “{name}”")));
+                    // It goes when the user moves on to another session, like the restart notice.
+                    let toast = adw::Toast::new(&format!("Opened the session already called “{name}”"));
+                    ui.toasts.add_toast(toast.clone());
+                    ui.restart_toast.replace(Some(toast));
                     return;
                 }
                 ui.focus_pending.set(true);

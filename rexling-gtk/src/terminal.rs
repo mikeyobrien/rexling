@@ -54,7 +54,6 @@ impl Selection {
     fn text(&self) -> String {
         let (first, last) = self.ordered();
         let mut text = String::new();
-        let edge = self.frame.columns as i32 - 1;
         for row in first.1..=last.1 {
             let Some(range) = self.rows.get(row as usize) else { continue };
             let start = if row == first.1 { first.0 } else { 0 };
@@ -66,26 +65,22 @@ impl Selection {
                 if cell.width == 0 || x + cell.width as i32 <= start || x > end {
                     continue;
                 }
+                // A cell nothing was written to is not a space, unless something written follows it on the row.
+                if cell.text.is_empty() {
+                    continue;
+                }
                 for _ in column..x {
                     line.push(' ');
                 }
-                line.push_str(if cell.text.is_empty() { " " } else { &cell.text });
+                line.push_str(&cell.text);
                 column = x + cell.width as i32;
             }
             // The terminal knows which rows ran on into the next: the edge of the window is not a line break,
             // and a line that happens to end at the edge still is one.
             let ran_on = row < last.1 && self.frame.cells[range.clone()].iter().any(|cell| cell.attributes & palette::WRAPPED != 0);
-            if ran_on {
-                // Every column counts in a row that ran on, trailing spaces included.
-                for _ in column..=end {
-                    line.push(' ');
-                }
-                text.push_str(&line);
-            } else {
-                text.push_str(if end >= edge { line.trim_end() } else { &line });
-                if row < last.1 {
-                    text.push('\n');
-                }
+            text.push_str(&line);
+            if !ran_on && row < last.1 {
+                text.push('\n');
             }
         }
         text
@@ -361,6 +356,7 @@ impl Terminal {
                 inner.clear_selection();
                 if presses == 2 {
                     inner.select_word(x, y);
+                    inner.offer_selection();
                 }
             }
         });
@@ -381,12 +377,22 @@ impl Terminal {
             let (Some(inner), Some((x, y))) = (weak.upgrade(), gesture.start_point()) else { return };
             inner.drag(x, y, x + dx, y + dy);
         });
+        // What is selected is what a middle click pastes, here or in any other program.
+        let weak = Rc::downgrade(inner);
+        drag.connect_drag_end(move |_, _, _| {
+            if let Some(inner) = weak.upgrade() {
+                inner.offer_selection();
+            }
+        });
         area.add_controller(drag);
 
         let middle = gtk::GestureClick::builder().button(gdk::BUTTON_MIDDLE).build();
         let weak = Rc::downgrade(inner);
         middle.connect_pressed(move |_, _, _, _| {
             if let Some(inner) = weak.upgrade() {
+                // The pane that takes the paste takes the keyboard, so the next key goes where the text went.
+                inner.emit(Event::Pressed);
+                inner.area.grab_focus();
                 inner.paste_from(&inner.area.primary_clipboard());
             }
         });
@@ -950,6 +956,12 @@ impl Inner {
             }
         }
         self.area.queue_draw();
+    }
+    /// Puts the selection where a middle click reads it from.
+    fn offer_selection(&self) {
+        if let Some(text) = self.selection.borrow().as_ref().map(Selection::text).filter(|t| !t.is_empty()) {
+            self.area.primary_clipboard().set_text(&text);
+        }
     }
     fn copy(&self) -> bool {
         let Some(text) = self.selection.borrow().as_ref().map(Selection::text).filter(|t| !t.is_empty()) else { return false };
