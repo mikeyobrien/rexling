@@ -57,6 +57,8 @@ pub const STRIKETHROUGH: u32 = 32;
 pub const UNDERLINE: u32 = 64;
 /// The underline is a curly one, as editors use for spelling and errors.
 pub const CURLY: u32 = 1 << 31;
+/// The row ran past the right edge and carries on in the next one; there is no line break between them.
+pub const WRAPPED: u32 = 1 << 27;
 const DEFAULT_FOREGROUND: u32 = 128;
 const DEFAULT_BACKGROUND: u32 = 256;
 const PALETTE_FOREGROUND: u32 = 512;

@@ -983,6 +983,7 @@ impl Ui {
                 let existing = ui.state.borrow().sessions.iter().find(|s| !name.is_empty() && s.label.eq_ignore_ascii_case(name)).map(|s| s.session_id.clone());
                 if let Some(id) = existing {
                     ui.open_session(&id);
+                    ui.toasts.add_toast(adw::Toast::new(&format!("Opened the session already called “{name}”")));
                     return;
                 }
                 ui.focus_pending.set(true);
@@ -2490,8 +2491,23 @@ impl Ui {
         let (weak, id) = (Rc::downgrade(self), block.to_owned());
         drop.connect_drop(move |_, value, _, _| {
             let (Some(ui), Ok(files)) = (weak.upgrade(), value.get::<gdk::FileList>()) else { return false };
-            for path in files.files().iter().filter_map(|file| file.path()) {
-                ui.upload(&id, &path);
+            let paths: Vec<std::path::PathBuf> = files.files().iter().filter_map(|file| file.path()).collect();
+            // All of them or none: half a list on a command line is worse than no list.
+            if let Some(missing) = paths.iter().find(|path| !path.is_file()) {
+                let name = missing.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                ui.toasts.add_toast(adw::Toast::new(&format!("Nothing was sent: “{name}” can't be read")));
+                return false;
+            }
+            // The pane that takes the files takes the keyboard too, so the next key goes where they went.
+            if *ui.focused.borrow() != id && ui.visible.borrow().contains(&id) {
+                ui.focused.replace(id.clone());
+                ui.show_tabs();
+                ui.arrange();
+            }
+            ui.window.present();
+            ui.focus_terminal();
+            for path in &paths {
+                ui.upload(&id, path);
             }
             true
         });

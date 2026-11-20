@@ -72,9 +72,14 @@ impl Selection {
                 line.push_str(if cell.text.is_empty() { " " } else { &cell.text });
                 column = x + cell.width as i32;
             }
-            // A row written right up to the edge ran on into the next one: the edge of the window is not a line break.
-            let ran_on = row < last.1 && self.frame.cells[range.clone()].iter().any(|cell| cell.width > 0 && cell.x as i32 + cell.width as i32 > edge && !cell.text.trim().is_empty());
+            // The terminal knows which rows ran on into the next: the edge of the window is not a line break,
+            // and a line that happens to end at the edge still is one.
+            let ran_on = row < last.1 && self.frame.cells[range.clone()].iter().any(|cell| cell.attributes & palette::WRAPPED != 0);
             if ran_on {
+                // Every column counts in a row that ran on, trailing spaces included.
+                for _ in column..=end {
+                    line.push(' ');
+                }
                 text.push_str(&line);
             } else {
                 text.push_str(if end >= edge { line.trim_end() } else { &line });
