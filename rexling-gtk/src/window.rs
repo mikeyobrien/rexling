@@ -111,6 +111,8 @@ pub struct Ui {
     arranging: Cell<bool>,
     /// A dialog is open over the window; window shortcuts wait until it closes.
     pub modal: Cell<bool>,
+    /// The shortcut pressed while a dialog was open, to run when it has closed.
+    pub deferred: RefCell<Option<(String, std::time::Instant)>>,
     offline: Cell<bool>,
     /// Whether this server has been reached since it was chosen.
     reached: Cell<bool>,
@@ -557,6 +559,7 @@ pub fn build(app: &adw::Application) {
         focus_pending: Cell::new(false),
         arranging: Cell::new(false),
         modal: Cell::new(false),
+        deferred: RefCell::default(),
         offline: Cell::new(false),
         reached: Cell::new(false),
         recovering: Cell::new(false),
@@ -931,9 +934,13 @@ impl Ui {
         let add = |name: &str, run: fn(&Rc<Ui>)| {
             let action = gio::SimpleAction::new(name, None);
             let weak = Rc::downgrade(self);
+            let kept = name.to_owned();
             action.connect_activate(move |_, _| {
-                // Window shortcuts do nothing while a dialog is open over the window.
-                if let Some(ui) = weak.upgrade().filter(|ui| !ui.modal.get()) {
+                // Window shortcuts wait while a dialog is open over the window; the last one pressed runs when it closes.
+                let Some(ui) = weak.upgrade() else { return };
+                if ui.modal.get() {
+                    ui.deferred.replace(Some((kept.clone(), std::time::Instant::now())));
+                } else {
                     run(&ui);
                 }
             });
@@ -973,13 +980,36 @@ impl Ui {
         });
         add("close-tab", |ui| {
             let tab = ui.target_tab();
-            let blocks: Vec<String> = ui.state.borrow().windows.iter().find(|t| t.id == tab).map(|t| t.blocks.iter().map(|b| b.id.clone()).collect()).unwrap_or_default();
-            for block in &blocks {
-                if let Some(pane) = ui.panes.borrow().get(block) {
-                    pane.client.disconnect();
+            let state = ui.state.borrow().clone();
+            let Some(closing) = state.windows.iter().find(|t| t.id == tab) else { return };
+            let blocks: Vec<String> = closing.blocks.iter().map(|b| b.id.clone()).collect();
+            let close = move |ui: &Rc<Ui>| {
+                for block in &blocks {
+                    if let Some(pane) = ui.panes.borrow().get(block) {
+                        pane.client.disconnect();
+                    }
+                }
+                ui.chrome.close_tab(&tab);
+            };
+            // Shells are closed without a word. Anything else is named first: an editor may hold unsaved work.
+            let mut running: Vec<String> = Vec::new();
+            for name in closing.blocks.iter().map(|b| identity(&state, b)).filter(|name| !programs::shell(name)) {
+                if !running.contains(&name) {
+                    running.push(name);
                 }
             }
-            ui.chrome.close_tab(&tab);
+            if running.is_empty() {
+                close(ui);
+                return;
+            }
+            let title = ui.shown_tabs.borrow().iter().find(|row| row.id == closing.id).map(|row| row.title.clone()).unwrap_or_else(|| closing.label.clone());
+            let body = match running.as_slice() {
+                [one] => format!("{one} will be stopped."),
+                [first, second] => format!("{first} and {second} will be stopped."),
+                [first, second, ..] => format!("{first}, {second} and {} more will be stopped.", running.len() - 2),
+                [] => String::new(),
+            };
+            dialogs::confirm_close(ui, &title, &body, close);
         });
         add("close-session", |ui| {
             let state = ui.state.borrow().clone();
@@ -2771,7 +2801,15 @@ impl Ui {
                 self.apply_font();
             }
             Event::Upload(path) => self.upload(block, &path),
-            Event::PasteFailed => self.toasts.add_toast(adw::Toast::new("Nothing was pasted or typed: what was copied can no longer be read")),
+            Event::PasteFailed => {
+                // One notice, replaced rather than queued, and gone before long.
+                if let Some(old) = self.refusal.take() {
+                    old.dismiss();
+                }
+                let toast = adw::Toast::builder().title("Nothing was pasted or typed: what was copied can no longer be read").timeout(4).build();
+                self.toasts.add_toast(toast.clone());
+                self.refusal.replace(Some(toast));
+            }
             Event::OpenLink(link) => gtk::UriLauncher::new(&link).launch(Some(&self.window), gio::Cancellable::NONE, |_| {}),
         }
     }

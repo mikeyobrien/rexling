@@ -40,22 +40,49 @@ pub const ACTIONS: &[(&str, &str, &str)] = &[
     ("About Rexling", "about", ""),
 ];
 
+/// The window action a key combination stands for, if any.
+pub fn action_for(key: gdk::Key, state: gdk::ModifierType) -> Option<&'static str> {
+    let held = state & (gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK | gdk::ModifierType::ALT_MASK);
+    ACTIONS.iter().find(|(_, _, accelerator)| gtk::accelerator_parse(*accelerator).is_some_and(|(wanted, modifiers)| modifiers == held && wanted.to_lower() == key.to_lower())).map(|(_, action, _)| *action)
+}
+
 /// Shows a dialog over the window. Window shortcuts wait until it closes, then the terminal has the keyboard again.
 fn present(ui: &Rc<Ui>, dialog: &impl IsA<adw::Dialog>) {
     ui.modal.set(true);
     // Ctrl+Shift+D is Split Right, which waits while a dialog is open. It must not fall through to GTK's debugging key.
     let guard = gtk::EventControllerKey::new();
     guard.set_propagation_phase(gtk::PropagationPhase::Capture);
-    guard.connect_key_pressed(|_, key, _, state| {
+    // A small question is answered with Enter or Escape and is then on its way out, though it still has
+    // the keyboard for a moment. A shortcut pressed in that moment is kept and run once it has gone.
+    let answered: Rc<std::cell::Cell<Option<std::time::Instant>>> = Rc::default();
+    let (weak, quick) = (Rc::downgrade(ui), dialog.as_ref().is::<adw::AlertDialog>());
+    guard.connect_key_pressed(move |_, key, _, state| {
         let chord = state.contains(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK) && matches!(key, gdk::Key::D | gdk::Key::d | gdk::Key::I | gdk::Key::i);
+        if quick && answered.get().is_some_and(|at| at.elapsed() < std::time::Duration::from_millis(700)) {
+            if let (Some(action), Some(ui)) = (action_for(key, state), weak.upgrade()) {
+                ui.deferred.replace(Some((action.to_owned(), std::time::Instant::now())));
+            }
+            return glib::Propagation::Stop;
+        }
+        if quick && matches!(key, gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::Escape) {
+            answered.set(Some(std::time::Instant::now()));
+        }
         if chord { glib::Propagation::Stop } else { glib::Propagation::Proceed }
     });
     dialog.as_ref().add_controller(guard);
     let weak = Rc::downgrade(ui);
-    dialog.connect_closed(move |_| {
-        if let Some(ui) = weak.upgrade() {
+    dialog.connect_closed(move |closed| {
+        // Another dialog may have opened while this one was closing; the window is free only when none is left.
+        if let Some(ui) = weak.upgrade().filter(|ui| ui.window.visible_dialog().is_none_or(|shown| shown == *closed.upcast_ref::<adw::Dialog>())) {
             ui.modal.set(false);
-            ui.focus_terminal();
+            // A shortcut pressed while the dialog was closing runs now, instead of being lost.
+            // Only one pressed in the moment the dialog was going: a key pressed earlier, while it was open, meant nothing.
+            match ui.deferred.take().filter(|(_, at)| at.elapsed() < std::time::Duration::from_millis(900)).map(|(action, _)| action) {
+                Some(action) => {
+                    let _ = WidgetExt::activate_action(&ui.window, &format!("win.{action}"), None);
+                }
+                None => ui.focus_terminal(),
+            }
         }
     });
     dialog.present(Some(&ui.window));
@@ -688,12 +715,18 @@ pub fn about(ui: &Rc<Ui>) {
 
 /// Asks before ending a session: every program in it stops.
 pub fn confirm_close_session(ui: &Rc<Ui>, label: &str, close: impl Fn(&Rc<Ui>) + 'static) {
-    let dialog = adw::AlertDialog::builder().heading(format!("Close “{label}”?")).body("Every program in this session will be stopped.").close_response("cancel").default_response("close").build();
+    confirm_close(ui, label, "Every program in this session will be stopped.", close);
+}
+
+/// Asks before closing something that would stop programs, saying which.
+pub fn confirm_close(ui: &Rc<Ui>, label: &str, body: &str, close: impl Fn(&Rc<Ui>) + 'static) {
+    let dialog = adw::AlertDialog::builder().heading(format!("Close “{label}”?")).body(body).close_response("cancel").default_response("close").build();
     dialog.add_responses(&[("cancel", "Cancel"), ("close", "Close")]);
     dialog.set_response_appearance("close", adw::ResponseAppearance::Destructive);
     let weak = Rc::downgrade(ui);
     dialog.connect_response(None, move |_, response| {
-        if let (Some(ui), "close") = (weak.upgrade(), response) {
+        let Some(ui) = weak.upgrade() else { return };
+        if response == "close" {
             close(&ui);
         }
     });
@@ -718,10 +751,11 @@ pub fn ask(ui: &Rc<Ui>, heading: &str, current: &str, verb: &str, apply: impl Fn
     let (weak, field) = (Rc::downgrade(ui), entry.clone());
     dialog.connect_response(None, move |_, response| {
         let Some(ui) = weak.upgrade() else { return };
+        // Until the dialog has gone, what is typed must not fall into the terminal.
+        // A shortcut pressed in that moment is kept and run once the dialog has closed.
         if response == "rename" {
             apply(&ui, field.text().trim());
         }
-        ui.focus_terminal();
     });
     present(ui, &dialog);
     entry.grab_focus();
@@ -792,6 +826,10 @@ pub fn forwards(ui: &Rc<Ui>) {
                     let (window, address) = (ui.window.clone(), forward.address.clone());
                     open.connect_clicked(move |_| gtk::UriLauncher::new(&format!("http://{address}")).launch(Some(&window), gtk::gio::Cancellable::NONE, |_| {}));
                     row.add_suffix(&open);
+                    let copy = gtk::Button::builder().icon_name("edit-copy-symbolic").tooltip_text("Copy Address").valign(gtk::Align::Center).css_classes(["flat"]).build();
+                    let (window, address) = (ui.window.clone(), forward.address.replace("127.0.0.1", "localhost"));
+                    copy.connect_clicked(move |_| window.clipboard().set_text(&address));
+                    row.add_suffix(&copy);
                 }
                 let stop = gtk::Button::builder().icon_name("user-trash-symbolic").tooltip_text("Stop").valign(gtk::Align::Center).css_classes(["flat"]).build();
                 let (weak, handle) = (Rc::downgrade(&ui), forward.handle);

@@ -1076,10 +1076,13 @@ impl Inner {
         self.pasting.set(true);
         let serial = self.paste_serial.get() + 1;
         self.paste_serial.set(serial);
-        // Nothing waits on a paste for ever: one that does not arrive is one that failed.
-        let late = self.this.clone();
+        // Nothing waits on a paste for ever: one that does not arrive is one that failed, and the
+        // request is withdrawn so it cannot stand in the way of the next one.
+        let request = gtk::gio::Cancellable::new();
+        let (late, withdrawn) = (self.this.clone(), request.clone());
         glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
             if let Some(inner) = late.upgrade().filter(|inner| inner.pasting.get() && inner.paste_serial.get() == serial) {
+                withdrawn.cancel();
                 inner.paste_failed();
             }
         });
@@ -1092,7 +1095,7 @@ impl Inner {
         let text = formats.contains_type(glib::Type::STRING) || media.iter().any(|m| m.starts_with("text/plain") || matches!(m.as_str(), "UTF8_STRING" | "STRING" | "TEXT" | "text/uri-list"));
         let weak = self.this.clone();
         if image && !text {
-            clipboard.read_texture_async(gtk::gio::Cancellable::NONE, move |result| {
+            clipboard.read_texture_async(Some(&request), move |result| {
                 // An answer that comes after the paste was given up on is not typed in by surprise.
                 let Some(inner) = weak.upgrade().filter(|inner| inner.pasting.get() && inner.paste_serial.get() == serial) else { return };
                 let directory = glib::user_cache_dir().join("rexling");
@@ -1107,7 +1110,7 @@ impl Inner {
             });
             return;
         }
-        clipboard.read_text_async(gtk::gio::Cancellable::NONE, move |result| {
+        clipboard.read_text_async(Some(&request), move |result| {
             let Some(inner) = weak.upgrade().filter(|inner| inner.pasting.get() && inner.paste_serial.get() == serial) else { return };
             match result {
                 Ok(Some(text)) => {
