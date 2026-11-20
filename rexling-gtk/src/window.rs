@@ -2771,6 +2771,7 @@ impl Ui {
                 self.apply_font();
             }
             Event::Upload(path) => self.upload(block, &path),
+            Event::PasteFailed => self.toasts.add_toast(adw::Toast::new("Nothing was pasted or typed: what was copied can no longer be read")),
             Event::OpenLink(link) => gtk::UriLauncher::new(&link).launch(Some(&self.window), gio::Cancellable::NONE, |_| {}),
         }
     }

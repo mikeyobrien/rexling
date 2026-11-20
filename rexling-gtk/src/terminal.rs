@@ -29,6 +29,14 @@ pub enum Event {
     Pressed,
     /// An image was pasted; it is saved here, ready to send.
     Upload(std::path::PathBuf),
+    /// What was to be pasted could not be read; nothing typed after it was sent either.
+    PasteFailed,
+}
+
+/// What waits behind a paste that is still being fetched.
+enum Held {
+    Key(Event),
+    Paste(gdk::Clipboard),
 }
 
 const PADDING: f64 = 8.0;
@@ -111,7 +119,10 @@ struct Inner {
     view_shift: Cell<f64>,
     /// A paste is being fetched; what is typed meanwhile waits behind it.
     pasting: Cell<bool>,
-    held: RefCell<Vec<Event>>,
+    held: RefCell<std::collections::VecDeque<Held>>,
+    paste_serial: Cell<u64>,
+    /// The pointer is dragging out a selection.
+    dragging: Cell<bool>,
     cursor_lit: Cell<bool>,
     blink: RefCell<Option<glib::SourceId>>,
     selection: RefCell<Option<Selection>>,
@@ -170,6 +181,8 @@ impl Terminal {
             view_shift: Cell::new(0.0),
             pasting: Cell::new(false),
             held: RefCell::default(),
+            paste_serial: Cell::new(0),
+            dragging: Cell::new(false),
             cursor_lit: Cell::new(true),
             blink: RefCell::default(),
             selection: RefCell::default(),
@@ -204,6 +217,30 @@ impl Terminal {
         }
         inner.rows.replace(frame.as_deref().map(row_ranges).unwrap_or_default());
         inner.frame.replace(frame);
+        // A finished selection does not hold the screen still. While its lines are as they were it stays,
+        // over the live screen; once they change it is let go. What it offered for pasting is kept either way.
+        let mut stale = false;
+        if !inner.dragging.get()
+            && let Some(selection) = inner.selection.borrow_mut().as_mut()
+        {
+            match inner.frame.borrow().as_ref() {
+                Some(live) if live.columns == selection.frame.columns && live.rows == selection.frame.rows => {
+                    let rows = row_ranges(live);
+                    let (first, last) = selection.ordered();
+                    let written = |frame: &Frame, range: Option<&Range<usize>>| range.map(|range| frame.cells[range.clone()].iter().map(|cell| (cell.x, cell.text.clone())).collect::<Vec<_>>());
+                    if (first.1..=last.1).all(|row| written(live, rows.get(row as usize)) == written(&selection.frame, selection.rows.get(row as usize))) {
+                        selection.frame = live.clone();
+                        selection.rows = rows;
+                    } else {
+                        stale = true;
+                    }
+                }
+                _ => stale = true,
+            }
+        }
+        if stale {
+            inner.clear_selection();
+        }
         inner.restart_blink();
         inner.area.queue_draw();
     }
@@ -389,6 +426,7 @@ impl Terminal {
         let weak = Rc::downgrade(inner);
         drag.connect_drag_end(move |_, _, _| {
             if let Some(inner) = weak.upgrade() {
+                inner.dragging.set(false);
                 inner.offer_selection();
             }
         });
@@ -412,18 +450,32 @@ impl Inner {
     fn emit(&self, event: Event) {
         // Keys pressed while a paste is on its way arrive after it, in the order they were meant.
         if self.pasting.get() && matches!(event, Event::Input(_)) {
-            self.held.borrow_mut().push(event);
+            self.held.borrow_mut().push_back(Held::Key(event));
             return;
         }
         (self.on_event.borrow())(event);
     }
-    /// The paste has arrived, or will not: what was typed behind it goes now.
+    /// The paste has arrived: what was asked for behind it goes now, in order, up to the next paste.
     fn pasted(&self) {
         self.pasting.set(false);
-        let held: Vec<Event> = self.held.borrow_mut().drain(..).collect();
-        for event in held {
-            (self.on_event.borrow())(event);
+        loop {
+            let next = self.held.borrow_mut().pop_front();
+            match next {
+                Some(Held::Key(event)) => (self.on_event.borrow())(event),
+                Some(Held::Paste(clipboard)) => {
+                    self.paste_from(&clipboard);
+                    return;
+                }
+                None => return,
+            }
         }
+    }
+    /// The paste could not be had. What was typed behind it was typed on the understanding that it
+    /// would be there, so none of it is sent: better an unfinished line than half a command run.
+    fn paste_failed(&self) {
+        self.pasting.set(false);
+        self.held.borrow_mut().clear();
+        (self.on_event.borrow())(Event::PasteFailed);
     }
 
     fn description(&self, attributes: u32) -> pango::FontDescription {
@@ -944,6 +996,7 @@ impl Inner {
         true
     }
     fn drag(&self, x0: f64, y0: f64, x: f64, y: f64) {
+        self.dragging.set(true);
         let metrics = self.metrics.get();
         if self.selection.borrow().is_none() {
             if (x - x0).abs() < metrics.width / 2.0 && (y - y0).abs() < metrics.height / 2.0 {
@@ -1013,8 +1066,23 @@ impl Inner {
     fn paste(&self) {
         self.paste_from(&self.area.clipboard());
     }
+    /// Pastes happen one at a time, and what is typed while one is being fetched waits behind it,
+    /// so everything reaches the program in the order it was asked for.
     fn paste_from(&self, clipboard: &gdk::Clipboard) {
-        let weak = self.this.clone();
+        if self.pasting.get() {
+            self.held.borrow_mut().push_back(Held::Paste(clipboard.clone()));
+            return;
+        }
+        self.pasting.set(true);
+        let serial = self.paste_serial.get() + 1;
+        self.paste_serial.set(serial);
+        // Nothing waits on a paste for ever: one that does not arrive is one that failed.
+        let late = self.this.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+            if let Some(inner) = late.upgrade().filter(|inner| inner.pasting.get() && inner.paste_serial.get() == serial) {
+                inner.paste_failed();
+            }
+        });
         // A copied picture has no text to paste: hand it over as a file instead.
         let formats = clipboard.formats();
         // Another program's clipboard is described by media types; this program's own by value types.
@@ -1022,34 +1090,34 @@ impl Inner {
         let image = formats.contains_type(gdk::Texture::static_type()) || media.iter().any(|m| m.starts_with("image/"));
         // Text means words: a picture offered as "text/ico" is still a picture.
         let text = formats.contains_type(glib::Type::STRING) || media.iter().any(|m| m.starts_with("text/plain") || matches!(m.as_str(), "UTF8_STRING" | "STRING" | "TEXT" | "text/uri-list"));
-        self.pasting.set(true);
-        // Nothing waits on a paste for ever.
-        let late = self.this.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
-            if let Some(inner) = late.upgrade().filter(|inner| inner.pasting.get()) {
-                inner.pasted();
-            }
-        });
+        let weak = self.this.clone();
         if image && !text {
             clipboard.read_texture_async(gtk::gio::Cancellable::NONE, move |result| {
-                if let Some(inner) = weak.upgrade() {
-                    inner.pasted();
-                }
-                let (Some(inner), Ok(Some(texture))) = (weak.upgrade(), result) else { return };
+                // An answer that comes after the paste was given up on is not typed in by surprise.
+                let Some(inner) = weak.upgrade().filter(|inner| inner.pasting.get() && inner.paste_serial.get() == serial) else { return };
                 let directory = glib::user_cache_dir().join("rexling");
                 let path = directory.join(format!("pasted-{:x}.png", glib::monotonic_time()));
-                if std::fs::create_dir_all(&directory).is_ok() && texture.save_to_png(&path).is_ok() {
-                    inner.emit(Event::Upload(path));
+                match result {
+                    Ok(Some(texture)) if std::fs::create_dir_all(&directory).is_ok() && texture.save_to_png(&path).is_ok() => {
+                        inner.emit(Event::Upload(path));
+                        inner.pasted();
+                    }
+                    _ => inner.paste_failed(),
                 }
             });
             return;
         }
         clipboard.read_text_async(gtk::gio::Cancellable::NONE, move |result| {
-            let Some(inner) = weak.upgrade() else { return };
-            if let Ok(Some(text)) = result {
-                inner.emit(Event::Paste(text.to_string()));
+            let Some(inner) = weak.upgrade().filter(|inner| inner.pasting.get() && inner.paste_serial.get() == serial) else { return };
+            match result {
+                Ok(Some(text)) => {
+                    inner.emit(Event::Paste(text.to_string()));
+                    inner.pasted();
+                }
+                // Nothing on the clipboard is not a failure; a clipboard that cannot be read is.
+                Ok(None) => inner.pasted(),
+                Err(_) => inner.paste_failed(),
             }
-            inner.pasted();
         });
     }
 
