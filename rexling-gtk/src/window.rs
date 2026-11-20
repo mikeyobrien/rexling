@@ -958,25 +958,37 @@ impl Ui {
         add("split-below", |ui| ui.split_pane(true));
         add("close-pane", |ui| {
             let focused = ui.focused.borrow().clone();
-            // The keyboard goes to the nearest pane, so closing twice closes neighbours, not something across the tab.
             let state = ui.state.borrow().clone();
-            let placed = state.tab_of(&focused).map(|tab| tab.placements()).unwrap_or_default();
-            let centre = |r: [f64; 4]| (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
-            if let Some(mine) = placed.iter().find(|p| p.id == focused).map(|p| centre(p.rect)) {
-                let distance = |p: &crate::client::Placement| {
-                    let (x, y) = centre(p.rect);
-                    (x - mine.0).powi(2) + (y - mine.1).powi(2)
-                };
-                if let Some(nearest) = placed.iter().filter(|p| p.id != focused).min_by(|a, b| distance(a).total_cmp(&distance(b))) {
-                    ui.focused.replace(nearest.id.clone());
-                    ui.focus_pending.set(true);
+            let close = {
+                let focused = focused.clone();
+                move |ui: &Rc<Ui>| {
+                    // The keyboard goes to the nearest pane, so closing twice closes neighbours, not something across the tab.
+                    let state = ui.state.borrow().clone();
+                    let placed = state.tab_of(&focused).map(|tab| tab.placements()).unwrap_or_default();
+                    let centre = |r: [f64; 4]| (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+                    if let Some(mine) = placed.iter().find(|p| p.id == focused).map(|p| centre(p.rect)) {
+                        let distance = |p: &crate::client::Placement| {
+                            let (x, y) = centre(p.rect);
+                            (x - mine.0).powi(2) + (y - mine.1).powi(2)
+                        };
+                        if let Some(nearest) = placed.iter().filter(|p| p.id != focused).min_by(|a, b| distance(a).total_cmp(&distance(b))) {
+                            ui.focused.replace(nearest.id.clone());
+                            ui.focus_pending.set(true);
+                        }
+                    }
+                    // Its own connection says goodbye first, so the server does not record it as lost.
+                    if let Some(pane) = ui.panes.borrow().get(&focused) {
+                        pane.client.disconnect();
+                    }
+                    ui.chrome.close_pane(&focused);
                 }
+            };
+            // A shell closes without a word; anything else is named first, as it is when its tab is closed.
+            let running = state.tab_of(&focused).and_then(|tab| tab.blocks.iter().find(|b| b.id == focused)).map(|b| identity(&state, b)).filter(|name| !programs::shell(name));
+            match running {
+                Some(name) => dialogs::confirm_close(ui, &name, &format!("{name} will be stopped."), close),
+                None => close(ui),
             }
-            // Its own connection says goodbye first, so the server does not record it as lost.
-            if let Some(pane) = ui.panes.borrow().get(&focused) {
-                pane.client.disconnect();
-            }
-            ui.chrome.close_pane(&focused);
         });
         add("close-tab", |ui| {
             let tab = ui.target_tab();
