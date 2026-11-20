@@ -498,7 +498,12 @@ impl Inner {
         cr.scale(fit, fit);
         let (width, height) = (width / fit, height / fit);
         let columns = (frame.columns as f64).min(((width - PADDING) / metrics.width).ceil()) as u16;
-        let visible = rows.len().min(((height - PADDING) / metrics.height).ceil().max(1.0) as usize);
+        let mut visible = rows.len().min(((height - PADDING) / metrics.height).ceil().max(1.0) as usize);
+        // While the server is away a banner takes some of the room. The newest lines are the ones to keep in sight.
+        if self.offline.get() && needed.1 > height {
+            cr.translate(0.0, height - needed.1);
+            visible = rows.len();
+        }
         let mut style = u32::MAX;
         if !frame.images.is_empty() {
             self.draw_images(cr, frame, |layer| layer < 2);
@@ -944,7 +949,8 @@ impl Inner {
         // Another program's clipboard is described by media types; this program's own by value types.
         let media = formats.mime_types();
         let image = formats.contains_type(gdk::Texture::static_type()) || media.iter().any(|m| m.starts_with("image/"));
-        let text = formats.contains_type(glib::Type::STRING) || media.iter().any(|m| m.starts_with("text/"));
+        // Text means words: a picture offered as "text/ico" is still a picture.
+        let text = formats.contains_type(glib::Type::STRING) || media.iter().any(|m| m.starts_with("text/plain") || matches!(m.as_str(), "UTF8_STRING" | "STRING" | "TEXT" | "text/uri-list"));
         if image && !text {
             clipboard.read_texture_async(gtk::gio::Cancellable::NONE, move |result| {
                 let (Some(inner), Ok(Some(texture))) = (weak.upgrade(), result) else { return };

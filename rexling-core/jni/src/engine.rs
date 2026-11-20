@@ -1380,6 +1380,18 @@ impl Actor {
                     value["session"].as_str() == Some(self.selected_session.as_str()),
                     "The selected session changed; try again"
                 );
+                // The folder is asked for now: what the client last heard may be from before a `cd`.
+                let mut value = value.clone();
+                let from = value["anchor"].as_str().or(value["from"].as_str()).filter(|id| !id.is_empty()).map(str::to_owned);
+                let session = self.selected_session.clone();
+                if let (Some(from), Some(control)) = (from, self.control.as_mut())
+                    && let Ok(Ok(process)) = tokio::time::timeout(Duration::from_secs(2), control.terminal(&session, &from, "process", json!({}))).await
+                {
+                    let source = if process["foreground"].is_object() { &process["foreground"] } else { &process["child"] };
+                    if let Some(cwd) = source["cwd"].as_str().filter(|cwd| cwd.starts_with('/')) {
+                        value["cwd"] = json!(cwd);
+                    }
+                }
                 let layout = shell_block(&value);
                 let (method, args) = if value["type"] == "new_tab" {
                     (
@@ -1811,10 +1823,14 @@ fn program_task(endpoint: Endpoint, session: String, ids: Vec<String>, link: Pro
         tokio::time::timeout(Duration::from_secs(8), async {
             // One connection serves every refresh of a session. Opening one each time made the
             // server announce a client arriving and leaving every few seconds.
-            let kept = link.lock().ok().and_then(|mut slot| slot.take()).filter(|(attached, _)| *attached == session);
+            let kept = link.lock().ok().and_then(|mut slot| slot.take());
             let mut control = match kept {
-                Some((_, control)) => control,
-                None => {
+                Some((attached, control)) if attached == session => control,
+                other => {
+                    // The session has changed: the old connection is closed, not left for the server to find gone.
+                    if let Some((_, mut old)) = other {
+                        let _ = tokio::time::timeout(Duration::from_secs(2), old.close()).await;
+                    }
                     let mut control = Control::connect(endpoint, None, Trace::default()).await?;
                     control
                         .call("client.set_label", json!({"label":"rexling-programs"}))

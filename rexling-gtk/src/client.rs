@@ -553,10 +553,11 @@ impl Client {
         }
     }
     /// Opens a tab whose shell starts in `folder`, when one is given.
-    pub fn new_tab(&self, folder: &str) {
+    /// `from` is the pane whose folder that is, so the server can be asked where it is now.
+    pub fn new_tab(&self, folder: &str, from: &str) {
         let state = self.state();
         if self.settled(&state) && !state.selected_session.is_empty() {
-            self.command(json!({"type":"new_tab","session":state.selected_session,"cwd":folder}));
+            self.command(json!({"type":"new_tab","session":state.selected_session,"cwd":folder,"from":from}));
         }
     }
     /// Splits `anchor`. `below` stacks the new pane under it; otherwise it goes beside it. The new shell starts in the anchor's folder.

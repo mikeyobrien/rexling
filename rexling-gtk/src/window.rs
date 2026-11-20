@@ -936,7 +936,8 @@ impl Ui {
             ui.focus_pending.set(true);
             let folder = ui.state.borrow().directories.get(&*ui.focused.borrow()).cloned().unwrap_or_default();
             ui.tab_after.replace(ui.tab.borrow().clone());
-            ui.chrome.new_tab(&folder);
+            let from = ui.focused.borrow().clone();
+            ui.chrome.new_tab(&folder, &from);
         });
         add("split-right", |ui| ui.split_pane(false));
         add("split-below", |ui| ui.split_pane(true));
