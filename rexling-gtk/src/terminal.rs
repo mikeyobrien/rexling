@@ -107,6 +107,11 @@ struct Inner {
     offline: Cell<bool>,
     /// How much the grid is shrunk to fit: a pane this client does not size is shown whole, not clipped.
     view_scale: Cell<f64>,
+    /// How far the picture is moved up to keep the newest lines in sight while the server is away.
+    view_shift: Cell<f64>,
+    /// A paste is being fetched; what is typed meanwhile waits behind it.
+    pasting: Cell<bool>,
+    held: RefCell<Vec<Event>>,
     cursor_lit: Cell<bool>,
     blink: RefCell<Option<glib::SourceId>>,
     selection: RefCell<Option<Selection>>,
@@ -162,6 +167,9 @@ impl Terminal {
             marked: Cell::new(false),
             offline: Cell::new(false),
             view_scale: Cell::new(1.0),
+            view_shift: Cell::new(0.0),
+            pasting: Cell::new(false),
+            held: RefCell::default(),
             cursor_lit: Cell::new(true),
             blink: RefCell::default(),
             selection: RefCell::default(),
@@ -402,7 +410,20 @@ impl Terminal {
 
 impl Inner {
     fn emit(&self, event: Event) {
+        // Keys pressed while a paste is on its way arrive after it, in the order they were meant.
+        if self.pasting.get() && matches!(event, Event::Input(_)) {
+            self.held.borrow_mut().push(event);
+            return;
+        }
         (self.on_event.borrow())(event);
+    }
+    /// The paste has arrived, or will not: what was typed behind it goes now.
+    fn pasted(&self) {
+        self.pasting.set(false);
+        let held: Vec<Event> = self.held.borrow_mut().drain(..).collect();
+        for event in held {
+            (self.on_event.borrow())(event);
+        }
     }
 
     fn description(&self, attributes: u32) -> pango::FontDescription {
@@ -519,13 +540,17 @@ impl Inner {
         cr.scale(fit, fit);
         let (width, height) = (width / fit, height / fit);
         let columns = (frame.columns as f64).min(((width - PADDING) / metrics.width).ceil()) as u16;
+        self.view_shift.set(0.0);
         let mut visible = rows.len().min(((height - PADDING) / metrics.height).ceil().max(1.0) as usize);
         // While the server is away a banner takes some of the room. The newest lines are the ones to keep in sight.
         if self.offline.get() && needed.1 > height {
             // Down to the last row with anything on it, not to the bottom of an empty screen.
             let last = rows.iter().rposition(|range| frame.cells[range.clone()].iter().any(|cell| !cell.text.trim().is_empty())).unwrap_or(0);
             let bottom = PADDING * 2.0 + (last + 1) as f64 * metrics.height;
-            cr.translate(0.0, -(bottom - height).clamp(0.0, needed.1 - height));
+            let shift = (bottom - height).clamp(0.0, needed.1 - height);
+            // The pointer is read against the same moved picture, so what is dragged over is what is selected.
+            self.view_shift.set(shift);
+            cr.translate(0.0, -shift);
             visible = rows.len();
         }
         let mut style = u32::MAX;
@@ -827,7 +852,7 @@ impl Inner {
     fn cell_at(&self, x: f64, y: f64) -> (i32, i32) {
         let metrics = self.metrics.get();
         let scale = self.view_scale.get();
-        (((x / scale - PADDING) / metrics.width).floor() as i32, ((y / scale - PADDING) / metrics.height).floor() as i32)
+        (((x / scale - PADDING) / metrics.width).floor() as i32, ((y / scale + self.view_shift.get() - PADDING) / metrics.height).floor() as i32)
     }
     fn in_grid(frame: &Frame, cell: (i32, i32)) -> bool {
         (0..frame.columns as i32).contains(&cell.0) && (0..frame.rows as i32).contains(&cell.1)
@@ -941,18 +966,34 @@ impl Inner {
         }
         if let Some(selection) = self.selection.borrow_mut().as_mut() {
             let (column, row) = selection.anchor;
-            let cells = &selection.frame.cells[selection.rows[row as usize].clone()];
-            let blank = |x: i32| cells.iter().find(|c| c.x as i32 == x).is_none_or(|c| c.text.trim().is_empty());
-            if !blank(column) {
-                let (mut left, mut right) = (column, column);
-                while left > 0 && !blank(left - 1) {
-                    left -= 1;
+            let (frame, rows) = (selection.frame.clone(), selection.rows.clone());
+            let edge = frame.columns as i32 - 1;
+            let cells = |row: i32| rows.get(row as usize).map_or(&[][..], |range| &frame.cells[range.clone()]);
+            let blank = |x: i32, row: i32| cells(row).iter().find(|c| c.x as i32 <= x && x < c.x as i32 + (c.width as i32).max(1)).is_none_or(|c| c.text.trim().is_empty());
+            // A row that ran past the edge carries on in the next: the word does too.
+            let ran_on = |row: i32| row >= 0 && cells(row).iter().any(|c| c.attributes & palette::WRAPPED != 0);
+            if !blank(column, row) {
+                let (mut left, mut right) = ((column, row), (column, row));
+                loop {
+                    if left.0 > 0 && !blank(left.0 - 1, left.1) {
+                        left.0 -= 1;
+                    } else if left.0 == 0 && ran_on(left.1 - 1) && !blank(edge, left.1 - 1) {
+                        left = (edge, left.1 - 1);
+                    } else {
+                        break;
+                    }
                 }
-                while right < selection.frame.columns as i32 - 1 && !blank(right + 1) {
-                    right += 1;
+                loop {
+                    if right.0 < edge && !blank(right.0 + 1, right.1) {
+                        right.0 += 1;
+                    } else if right.0 == edge && ran_on(right.1) && right.1 + 1 < rows.len() as i32 && !blank(0, right.1 + 1) {
+                        right = (0, right.1 + 1);
+                    } else {
+                        break;
+                    }
                 }
-                selection.anchor = (left, row);
-                selection.extent = (right, row);
+                selection.anchor = left;
+                selection.extent = right;
             }
         }
         self.area.queue_draw();
@@ -981,8 +1022,19 @@ impl Inner {
         let image = formats.contains_type(gdk::Texture::static_type()) || media.iter().any(|m| m.starts_with("image/"));
         // Text means words: a picture offered as "text/ico" is still a picture.
         let text = formats.contains_type(glib::Type::STRING) || media.iter().any(|m| m.starts_with("text/plain") || matches!(m.as_str(), "UTF8_STRING" | "STRING" | "TEXT" | "text/uri-list"));
+        self.pasting.set(true);
+        // Nothing waits on a paste for ever.
+        let late = self.this.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+            if let Some(inner) = late.upgrade().filter(|inner| inner.pasting.get()) {
+                inner.pasted();
+            }
+        });
         if image && !text {
             clipboard.read_texture_async(gtk::gio::Cancellable::NONE, move |result| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.pasted();
+                }
                 let (Some(inner), Ok(Some(texture))) = (weak.upgrade(), result) else { return };
                 let directory = glib::user_cache_dir().join("rexling");
                 let path = directory.join(format!("pasted-{:x}.png", glib::monotonic_time()));
@@ -997,6 +1049,7 @@ impl Inner {
             if let Ok(Some(text)) = result {
                 inner.emit(Event::Paste(text.to_string()));
             }
+            inner.pasted();
         });
     }
 

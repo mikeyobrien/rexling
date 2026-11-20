@@ -143,6 +143,8 @@ pub struct Ui {
     closed: Cell<bool>,
     /// A pane to open as soon as its session is on screen.
     jump: RefCell<String>,
+    /// The notice that a drop was refused; it goes when the next drop is made.
+    refusal: RefCell<Option<adw::Toast>>,
     /// Files waiting their turn to be sent: the server takes one at a time.
     queued: RefCell<std::collections::VecDeque<(String, std::path::PathBuf)>>,
     sending: Cell<bool>,
@@ -510,6 +512,7 @@ pub fn build(app: &adw::Application) {
         closed: Cell::new(false),
         jump: RefCell::default(),
         queued: RefCell::default(),
+        refusal: RefCell::default(),
         sending: Cell::new(false),
         fresh: RefCell::default(),
         made: RefCell::default(),
@@ -2505,10 +2508,15 @@ impl Ui {
         drop.connect_drop(move |_, value, _, _| {
             let (Some(ui), Ok(files)) = (weak.upgrade(), value.get::<gdk::FileList>()) else { return false };
             let paths: Vec<std::path::PathBuf> = files.files().iter().filter_map(|file| file.path()).collect();
+            if let Some(old) = ui.refusal.take() {
+                old.dismiss();
+            }
             // All of them or none: half a list on a command line is worse than no list.
             if let Some(missing) = paths.iter().find(|path| !path.is_file()) {
                 let name = missing.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                ui.toasts.add_toast(adw::Toast::new(&format!("Nothing was sent: “{name}” can't be read")));
+                let toast = adw::Toast::new(&format!("Nothing was sent: “{name}” can't be read"));
+                ui.toasts.add_toast(toast.clone());
+                ui.refusal.replace(Some(toast));
                 return false;
             }
             // The pane that takes the files takes the keyboard too, so the next key goes where they went.
