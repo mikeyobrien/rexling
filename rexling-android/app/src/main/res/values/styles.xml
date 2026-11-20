@@ -1,9 +1,12 @@
 <resources>
     <!-- Only the window the framework draws before Compose takes over. Every colour inside
          the app comes from rexColorScheme, so this theme carries nothing but the canvas and
-         the transparent system bars enableEdgeToEdge asks for. values-night has the dark twin. -->
+         the transparent system bars enableEdgeToEdge asks for. values-night has the dark twin.
+         The canvas is a colour resource because the Android 12+ splash screen reads
+         windowBackground only as a resource reference; a literal leaves it plain white or black. -->
+    <color name="launch_canvas">#f3f4f9</color>
     <style name="Theme.Rex" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">#f3f4f9</item>
+        <item name="android:windowBackground">@color/launch_canvas</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
