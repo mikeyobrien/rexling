@@ -143,6 +143,9 @@ pub struct Ui {
     closed: Cell<bool>,
     /// A pane to open as soon as its session is on screen.
     jump: RefCell<String>,
+    /// Files waiting their turn to be sent: the server takes one at a time.
+    queued: RefCell<std::collections::VecDeque<(String, std::path::PathBuf)>>,
+    sending: Cell<bool>,
     /// This window is waiting for a session of its own: the sessions there were when it asked, once it has asked.
     fresh: RefCell<Option<Option<HashSet<String>>>>,
     /// The session this window made for itself and has not yet been used: it goes when the window does.
@@ -506,6 +509,8 @@ pub fn build(app: &adw::Application) {
         tab_after: RefCell::default(),
         closed: Cell::new(false),
         jump: RefCell::default(),
+        queued: RefCell::default(),
+        sending: Cell::new(false),
         fresh: RefCell::default(),
         made: RefCell::default(),
         waiting_list,
@@ -996,7 +1001,15 @@ impl Ui {
             let state = ui.state.borrow().clone();
             let id = state.selected_session.clone();
             if !id.is_empty() {
-                dialogs::rename(ui, "Rename Session", state.session_label(), move |ui, name| ui.chrome.rename_session(&id, name));
+                dialogs::rename(ui, "Rename Session", state.session_label(), move |ui, name| {
+                    // Two sessions with one name cannot be told apart in the switcher.
+                    let taken = ui.state.borrow().sessions.iter().any(|s| s.session_id != id && !name.is_empty() && s.label.eq_ignore_ascii_case(name));
+                    if taken {
+                        ui.toasts.add_toast(adw::Toast::new(&format!("Another session is already called “{name}”")));
+                    } else {
+                        ui.chrome.rename_session(&id, name);
+                    }
+                });
             }
         });
         add("move-tab-up", |ui| ui.move_tab(-1));
@@ -1531,6 +1544,11 @@ impl Ui {
 
     /// Sends a file to the focused pane; Rex types its path there once it has arrived.
     pub fn upload(self: &Rc<Self>, block: &str, path: &std::path::Path) {
+        // Several files dropped together go one after another, in the order they were given.
+        if self.sending.replace(true) {
+            self.queued.borrow_mut().push_back((block.to_owned(), path.to_owned()));
+            return;
+        }
         let state = self.state.borrow().clone();
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "image".into());
         let request = serde_json::json!({"endpoint": *self.endpoint.borrow(), "session": state.selected_session, "block": block,
@@ -1539,6 +1557,7 @@ impl Ui {
             Ok(handle) => handle,
             Err(error) => {
                 self.toasts.add_toast(adw::Toast::new(&format!("Could not send {name}: {error}")));
+                self.sent();
                 return;
             }
         };
@@ -1562,8 +1581,19 @@ impl Ui {
                 };
                 ui.toasts.add_toast(adw::Toast::new(&format!("Could not send {name}: {reason}")));
             }
+            if let Some(ui) = weak.upgrade() {
+                ui.sent();
+            }
             gtk::glib::ControlFlow::Break
         });
+    }
+    /// One file is done; the next one waiting goes.
+    fn sent(self: &Rc<Self>) {
+        self.sending.set(false);
+        let next = self.queued.borrow_mut().pop_front();
+        if let Some((block, path)) = next {
+            self.upload(&block, &path);
+        }
     }
     fn choose_image(self: &Rc<Self>) {
         let block = self.focused.borrow().clone();
@@ -2557,6 +2587,10 @@ impl Ui {
             let spare = recent.len().saturating_sub(shown.len());
             if spare > SPARE_PANES {
                 recent.drain(..spare - SPARE_PANES);
+            }
+            // A pane that goes says so, rather than leaving the server to find its connection gone.
+            for (_, pane) in panes.iter().filter(|(id, _)| !recent.contains(id)) {
+                pane.client.disconnect();
             }
             panes.retain(|id, _| recent.contains(id));
         }

@@ -53,7 +53,8 @@ impl Selection {
     }
     fn text(&self) -> String {
         let (first, last) = self.ordered();
-        let mut lines = Vec::new();
+        let mut text = String::new();
+        let edge = self.frame.columns as i32 - 1;
         for row in first.1..=last.1 {
             let Some(range) = self.rows.get(row as usize) else { continue };
             let start = if row == first.1 { first.0 } else { 0 };
@@ -71,9 +72,18 @@ impl Selection {
                 line.push_str(if cell.text.is_empty() { " " } else { &cell.text });
                 column = x + cell.width as i32;
             }
-            lines.push(if end >= self.frame.columns as i32 - 1 { line.trim_end().to_owned() } else { line });
+            // A row written right up to the edge ran on into the next one: the edge of the window is not a line break.
+            let ran_on = row < last.1 && self.frame.cells[range.clone()].iter().any(|cell| cell.width > 0 && cell.x as i32 + cell.width as i32 > edge && !cell.text.trim().is_empty());
+            if ran_on {
+                text.push_str(&line);
+            } else {
+                text.push_str(if end >= edge { line.trim_end() } else { &line });
+                if row < last.1 {
+                    text.push('\n');
+                }
+            }
         }
-        lines.join("\n")
+        text
     }
 }
 
@@ -501,7 +511,10 @@ impl Inner {
         let mut visible = rows.len().min(((height - PADDING) / metrics.height).ceil().max(1.0) as usize);
         // While the server is away a banner takes some of the room. The newest lines are the ones to keep in sight.
         if self.offline.get() && needed.1 > height {
-            cr.translate(0.0, height - needed.1);
+            // Down to the last row with anything on it, not to the bottom of an empty screen.
+            let last = rows.iter().rposition(|range| frame.cells[range.clone()].iter().any(|cell| !cell.text.trim().is_empty())).unwrap_or(0);
+            let bottom = PADDING * 2.0 + (last + 1) as f64 * metrics.height;
+            cr.translate(0.0, -(bottom - height).clamp(0.0, needed.1 - height));
             visible = rows.len();
         }
         let mut style = u32::MAX;
