@@ -343,7 +343,8 @@ terminal menu gives up only the pane on screen.
 Switching the visible host releases the old block claim, keeps its sockets and
 terminal state, and blocks stale hidden-view input/resize callbacks. Hidden
 hosts continue polling at a lower cadence. Foreground/background lifecycle
-applies to every connected actor. Releasing without a selected block is ignored.
+applies to every connected actor; the pause is preceded by a short hold (see
+Staying connected off screen). Releasing without a selected block is ignored.
 Disconnect/Forget only affect the selected local connection/profile; they never
 delete remote sessions. New sessions are created on the currently viewed host.
 
@@ -620,7 +621,7 @@ Android now claims the active pane once after navigation is acknowledged, its te
 
 Taking control still uses `session.own_block`, applies appearance/focus and resizes the shared PTY. Bound local take/resize commands carry session, block and navigation ID; stale commands, hidden connections and paused clients cannot affect the newly selected pane. Pending resize and held-key gestures cancel on navigation. An old owned frame does not consume a new activation. A claim is attempted only once per activation; another client's takeover does not start an ownership fight. Explicit Release preserves viewing mode, including resume, until another navigation.
 
-The existing old-pane disown on block/session changes is retained. Hiding a server's workspace explicitly disowns its selected pane; lifecycle pause makes a bounded two-second disown attempt before dropping connections. Background connections cannot claim ownership.
+The existing old-pane disown on block/session changes is retained. Hiding a server's workspace explicitly disowns its selected pane; lifecycle pause makes a bounded two-second disown attempt before dropping connections. Background connections cannot claim ownership. The pause no longer happens the moment the app leaves the screen; see Staying connected off screen.
 
 
 ## Full-app preset themes and ownership ordering (2026-11-02)
@@ -1329,3 +1330,42 @@ forwards the original click, with the existing target/ownership/grid guards.
 The input anchor never draws or blinks a cursor. Hidden positions are not used
 for other programs, including Neovim, or while viewing scrollback; existing
 viewport stabilization and keyboard/PTY sizing behavior are unchanged.
+
+## Staying connected off screen
+
+Leaving the app used to pause every connection at once, so each return from
+another app meant a new handshake, a new attach and a new claim. The app now
+holds for 45 seconds first (`BackgroundHold`). During a hold the native actors
+are not told anything: control and data sockets, terminal state and pane claims
+stay as they are. Only the Kotlin side goes quiet. It stops reading updates,
+shows no frames, claims no pane, writes nothing to the clipboard, and cancels
+held keys, latched modifiers and a pending resize. Returning inside the hold
+resumes reading, shows the terminal as it now stands and re-arms the claim, in
+case another client took the pane meanwhile. A connection that dropped during
+the hold reconnects on return instead of waiting out the actor's backoff: the
+app sends the existing `network` command, which a live connection ignores.
+
+The existing pause, with its disown attempt, follows when the 45 seconds are
+up. It happens at once, with no hold, when the screen is off or turns off
+during a hold (the phone was put down, and another client should get its pane
+size back) and when nothing is connected. Rotation and other configuration
+changes pass through a hold that ends within the same frame, so they no longer
+reconnect.
+
+Android freezes a backgrounded app about ten seconds after a second app is
+opened over it. A frozen app cannot serve its sockets or give up its claims
+when the hold ends. On Android 12 and later an expedited job
+(`BackgroundHoldJob`) therefore runs for the length of the hold; it does no
+work and only keeps the process out of the cached state. The 45 seconds stay
+inside the minute of running time Android promises such a job. If the process
+is frozen anyway and returns after the limit, the pause runs first and the app
+reconnects as it did before.
+
+Measured on an API 36 emulator against a private Rex server
+(`adb shell setprop log.tag.RexlingHold DEBUG` logs each hold): after 20
+seconds on the home screen the server still had the same control and data
+connections and the same pane owner, and typing worked at once. Away for 60
+seconds, the pane was disowned and both connections closed 45 seconds in. With
+two other apps opened over Rexling the process stayed at oom adj 227 and
+unfrozen for the whole hold; without the job the same sequence froze it after
+about 16 seconds.

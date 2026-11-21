@@ -218,13 +218,17 @@ class RexModel @JvmOverloads constructor(application: Application, preferenceNam
     private var windowFocused=false
     internal fun windowFocusChanged(focused: Boolean) {windowFocused=focused;updateActivity()}
     private var foreground=true
+    /** Off screen for longer than the hold allows, or the screen is dark: every connection is paused. */
+    private var paused=false
+    private val hold=BackgroundHold()
+    private var holdJob: Job?=null
     private var networkJob: Job?=null
     private val networkMonitor=NetworkMonitor(application) {change->viewModelScope.launch {
         val wasOffline=networkAvailable==false;networkAvailable=change.available
         if(!change.available || change.retry || wasOffline) {
             networkJob?.cancel();networkJob=viewModelScope.launch {
                 if(change.available) delay(300)
-                if(foreground) connections.filterKeys {it in desired}.values.forEach {it.networkChanged(change)}
+                if(!paused) connections.filterKeys {it in desired}.values.forEach {it.networkChanged(change)}
             }
         }
     }}
@@ -240,7 +244,7 @@ class RexModel @JvmOverloads constructor(application: Application, preferenceNam
             client.visible=profile.id==activeServerId
             if(activityVisible) client.activity(true)
             palette?.let(client::updateTerminalTheme)
-            if(!foreground) client.pause()
+            if(paused) client.pause() else if(!foreground) client.hold()
             observers[profile.id]=viewModelScope.launch {
                 client.chromeState.collect {state->
                     val next=ServerStatus(state.phase,state.error)
@@ -387,7 +391,36 @@ class RexModel @JvmOverloads constructor(application: Application, preferenceNam
     }
     fun updateTerminalTheme(value: TerminalPalette) {palette=value;connections.values.forEach {it.updateTerminalTheme(value)}}
     fun changeAppearance(value: Appearance) {appearance=value;preferences.edit {putString("appearance",value.name)}}
-    fun pause() {foreground=false;updateActivity();networkJob?.cancel();networkMonitor.stop();connections.values.forEach {it.pause()}}
-    fun resume() {foreground=true;networkMonitor.start();connections.values.forEach {it.resume()};tryOpenAlert();BackgroundAlerts.reconcile(getApplication())}
-    override fun onCleared() {images.close();preferences.unregisterOnSharedPreferenceChangeListener(alertsListener);networkJob?.cancel();networkMonitor.stop();observers.values.forEach {it.cancel()};connections.values.forEach {it.close()}}
+    /** The app left the screen. Live connections are held first, so coming straight back needs no reconnect. */
+    fun pause() {
+        foreground=false;updateActivity()
+        if(paused || hold.active) return
+        val power=getApplication<Application>().getSystemService(android.os.PowerManager::class.java)
+        val live=connections.values.any {it.state.value.phase in setOf("connecting","connected","reconnecting")}
+        if(!live || !hold.begin(now(),power.isInteractive)) {
+            pauseConnections(if(live) "screen off" else "nothing connected");return
+        }
+        connections.values.forEach {it.hold()}
+        BackgroundHoldJob.start(getApplication());holdLog("holding")
+        holdJob=viewModelScope.launch {
+            while(!hold.expired(now(),power.isInteractive)) delay(1000)
+            pauseConnections(if(power.isInteractive) "time up" else "screen off")
+        }
+    }
+    private fun now()=android.os.SystemClock.elapsedRealtime()
+    private fun endHold() {
+        if(!hold.active) return
+        hold.end();holdJob?.cancel();holdJob=null;BackgroundHoldJob.stop(getApplication())
+    }
+    private fun pauseConnections(why: String) {
+        endHold();paused=true;networkJob?.cancel();networkMonitor.stop();connections.values.forEach {it.pause()};holdLog("paused: $why")
+    }
+    fun resume() {
+        // A hold that ran out while Android had the process frozen never got to pause, so do it now.
+        if(hold.expired(now())) pauseConnections("returned late")
+        else if(hold.active) holdLog("returned in time")
+        endHold()
+        foreground=true;paused=false;networkMonitor.start();connections.values.forEach {it.resume(networkAvailable!=false)};tryOpenAlert();BackgroundAlerts.reconcile(getApplication())
+    }
+    override fun onCleared() {endHold();images.close();preferences.unregisterOnSharedPreferenceChangeListener(alertsListener);networkJob?.cancel();networkMonitor.stop();observers.values.forEach {it.cancel()};connections.values.forEach {it.close()}}
 }

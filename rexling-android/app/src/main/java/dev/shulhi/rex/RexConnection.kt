@@ -8,11 +8,13 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import androidx.core.content.edit
 
@@ -186,12 +188,16 @@ internal class RexConnection(application: Application, private val scope: Corout
     }
     fun retryNow() {if(foreground && savedEndpoint.isNotBlank()) {cancelKeyRepeats();resizeJob?.cancel();activation.resume();command("retry")}}
     fun networkChanged(change: NetworkChange) {
-        if(foreground && (!change.available || change.reroute || !state.value.connected)) {cancelKeyRepeats();resizeJob?.cancel();command("network","online" to change.available,"force" to change.reroute)}
+        if(!paused && (!change.available || change.reroute || !state.value.connected)) {cancelKeyRepeats();resizeJob?.cancel();command("network","online" to change.available,"force" to change.reroute)}
     }
     private var handle = 0L
     private var resizeJob: Job? = null
     private var lastSize = 0 to 0
+    /** The app is on screen. Off screen nothing is shown, claimed or typed, whether the connection is held or paused. */
     @Volatile private var foreground = true
+    /** The engine was told to drop its connections; a held connection is off screen but not paused. */
+    private var paused = false
+    private val wake=Channel<Unit>(Channel.CONFLATED)
     @Volatile private var closed = false
     @Volatile var visible = true
         set(value) {if(field!=value){field=value;if(!value) {pendingTabOrder=null;pendingPaneOrder=null;cancelDisplay();resetModifiers();cancelKeyRepeats();resizeJob?.cancel()} else {activation.navigate();queueDisplay(state.value)};command("visibility","visible" to value)}}
@@ -207,7 +213,8 @@ internal class RexConnection(application: Application, private val scope: Corout
                 var lastScreen: TerminalScreen?=null
                 var transfer=java.nio.ByteBuffer.allocateDirect(1 shl 20)
                 while (!closed) {
-                    if (!foreground) { delay(500); continue }
+                    // Off screen nothing reads updates; coming back must not wait out the sleep.
+                    if (!foreground) { withTimeoutOrNull(500) {wake.receive()}; continue }
                     val update=NativeBridge.awaitUpdate(handle,decoder.revision,250)
                     if(update<0) break
                     if(update>decoder.revision) {
@@ -510,6 +517,16 @@ internal class RexConnection(application: Application, private val scope: Corout
             command("wheel","session" to current.selectedSession,"block" to current.selectedBlock,"lines" to lines,"col" to col,"row" to row,"cw" to cw,"ch" to ch,"columns" to lastSize.first,"rows" to lastSize.second)
     }
     fun releaseControl() { activation.release();resizeJob?.cancel();cancelKeyRepeats();controlModifier = false; altModifier = false;shiftState=ShiftKeyState();keyboardRequest=""; if(state.value.selectedBlock.isNotBlank()) command("release") }
+    /**
+     * The app left the screen but may be straight back. Stop showing and reacting, and leave the connection,
+     * the terminal and the pane claim as they are, so returning needs no reconnect. [pause] follows if it stays away.
+     */
+    fun hold() {
+        presentation.flush()
+        displayFrames.clear();queuedScreen=null;queuedTarget="";keystrokes.reset()
+        cancelKeyRepeats();resizeJob?.cancel();resetModifiers();keyboardRequest=""
+        foreground=false
+    }
     fun pause() {
         presentation.flush()
         pendingTabOrder=null;pendingPaneOrder=null
@@ -517,9 +534,23 @@ internal class RexConnection(application: Application, private val scope: Corout
         navigationRequest = NavigationRequest()
         foreground = false; resizeJob?.cancel(); controlModifier = false; altModifier = false;shiftState=ShiftKeyState();keyboardRequest=""
         setState(state.value.copy(controlled = false, phase = if (state.value.connected) "paused" else state.value.phase))
+        paused=true
         command("pause")
     }
-    fun resume() { policyInput=null;if(!foreground) {activation.resume();restoreWorkspace=true};foreground = true; command("resume") }
+    fun resume(online: Boolean=true) {
+        policyInput=null
+        val held=!foreground && !paused
+        if(!foreground) activation.resume()
+        if(paused) restoreWorkspace=true
+        foreground=true;paused=false
+        if(held) {
+            // A held connection that dropped meanwhile reconnects now instead of on the engine's backoff; a
+            // live one ignores this. Then show what the terminal holds and claim the pane if it was lost.
+            command("network","online" to online)
+            queueDisplay(state.value);claimActivePane()
+        } else command("resume")
+        wake.trySend(Unit)
+    }
     fun toggleControl() { controlModifier = !controlModifier }
     fun toggleAlt() { altModifier = !altModifier }
     fun toggleShift() {shiftState=ShiftKeyState(latched=!shiftState.active)}
