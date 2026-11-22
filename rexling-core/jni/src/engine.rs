@@ -95,6 +95,7 @@ impl Drop for Session {
 
 type InputReply = Pin<Box<dyn Future<Output = Result<Value>>>>;
 struct InputAck {target:Target,paste:bool,reply:InputReply}
+struct CommandReply {target:Target,reply:InputReply}
 // Kotlin's marker for Shift+Enter (TerminalInput.SHIFT_ENTER).
 const SHIFT_ENTER:&str="\x1b[13;2u";
 fn input_event(paste:bool,text:&str)->Value {
@@ -203,6 +204,28 @@ struct RetainedFloating {
     data: Data,
     replica: Replica,
 }
+// Keep the Rex action catalog opaque except for fields the palette needs.
+fn configured_actions(reply: &Value) -> Result<Value> {
+    ensure!(reply.is_object() && (reply["actions"].is_null() || reply["actions"].is_array()),
+        "Invalid command catalog from Rex");
+    Ok(json!(reply["actions"].as_array().into_iter().flatten().filter(|action|
+        action["kind"] == "lua" && action["name"].as_str().is_some_and(|name| !name.is_empty()) &&
+        action["title"].as_str().is_some_and(|title| !title.is_empty())
+    ).collect::<Vec<_>>()))
+}
+
+fn action_takes_empty_args(action: &Value) -> bool {
+    !action["args"]["required"].as_array().is_some_and(|keys| !keys.is_empty())
+}
+
+fn focused_terminal<'a>(view: &'a Value, window: Option<&str>) -> Option<&'a str> {
+    let id=window.or_else(||view["active_window_id"].as_str())?;
+    let window=view["windows"].as_array()?.iter().find(|window|window["window_id"]==id)?;
+    let focus=window["focused_block_id"].as_str()?;
+    window["layers"].as_array()?.iter().flat_map(|layer|layer["blocks"].as_array().into_iter().flatten())
+        .any(|block|block["block_id"]==focus && block["creator_name"]=="com.superlogical.terminal").then_some(focus)
+}
+
 struct Actor {
     latest_navigation: Arc<AtomicU64>,
     shared: Arc<Mutex<Shared>>,
@@ -213,6 +236,9 @@ struct Actor {
     control: Option<Control>,
     commands: Commands,
     input_acks: VecDeque<InputAck>,
+    server_commands: Value,
+    command_run: Value,
+    command_reply: Option<CommandReply>,
     input_limit: usize,
     batch_text: bool,
     connect_task: Option<ConnectTask>,
@@ -295,6 +321,7 @@ impl Actor {
             visible: true,
             endpoint: None,
             server: String::new(),
+            server_commands: Value::Null, command_run: Value::Null, command_reply: None,
             control: None,commands:Commands::default(),input_acks:VecDeque::new(),input_limit:8,batch_text:true,connect_task:None,network_online:true,connection_epoch:0,other_owner:false,
             data: None,
             retained_floating: None,
@@ -358,7 +385,7 @@ impl Actor {
             shared.frame=self.screen.clone();
             shared.key=format!("{}:{}",self.selected_session,self.selected_block);
             shared.json=json!({"phase":self.phase,"endpoint":self.server,
-                "terminalProgress":crate::progress::selected(&self.progress_reports,&self.selected_session),"identity":self.identity,"error":self.error,"notice":self.notice,"clipboard":self.clipboard,"sessions":self.sessions,
+                "terminalProgress":crate::progress::selected(&self.progress_reports,&self.selected_session),"serverCommands":self.server_commands,"serverCommandRun":self.command_run,"identity":self.identity,"error":self.error,"notice":self.notice,"clipboard":self.clipboard,"sessions":self.sessions,
                 "windows":self.windows,"selectedSession":self.selected_session,"staleSession":self.stale_session,
                 "selectedBlock":self.selected_block,"navigationId":self.navigation_id,"tabMoveId":self.tab_move_id,"paneMoveId":self.pane_move_id,"connectionEpoch":self.connection_epoch,"otherOwner":self.other_owner,"controlled":self.controlled,"creating":self.creating,"sessionDetails":self.session_details,"programs":self.programs,"directories":self.directories,"titles":self.titles,"working":self.working,"activityError":self.activity_error,"activityPartial":self.activity_partial,"activityLoading":(self.activity_open || self.monitoring) && (self.activity_task.is_some() || self.activity_full),"attentionCount":self.attention_count}).to_string();
             shared
@@ -429,6 +456,36 @@ impl Actor {
                             }
                         } else if ack.target.connection==self.connection_epoch {self.recover(error);self.notice="Request outcome is uncertain; input was not resent".into();self.publish();}
                     }
+                },
+                result=async {match &mut self.command_reply {Some(call)=>(&mut call.reply).await,None=>pending().await}}=>{
+                    let mut target=self.command_reply.take().unwrap().target;
+                    self.command_run["running"]=json!(false);
+                    match result {
+                        Ok(reply)=>{
+                            let result=&reply["result"];
+                            let text=if result.is_null() {String::new()} else {
+                                result.as_str().map(str::to_owned).unwrap_or_else(||serde_json::to_string_pretty(result).unwrap_or_default())
+                            };
+                            self.command_run["message"]=json!(text.chars().take(4096).collect::<String>());
+                            for action in reply["client_actions"].as_array().into_iter().flatten() {
+                                if action["action"]!="session.select" {continue;}
+                                match self.follow_command_focus(&action["args"],&target).await {
+                                    Ok(true)=>target=self.input_target(),
+                                    Ok(false)=>break, // A newer selection takes priority over the action.
+                                    Err(error)=>{
+                                        self.command_run["warning"]=json!(format!("Command ran, but Rexling could not open its destination: {error}"));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(error)=>{
+                            self.command_run["error"]=json!(if error.downcast_ref::<rex_core::control::RpcError>().is_some() {
+                                error.to_string()
+                            } else { format!("Command outcome is unknown. It was not retried. ({error})") });
+                        }
+                    }
+                    self.publish();
                 },
                 result=async {match &mut self.connect_task {Some(task)=>task.await,None=>pending().await}}=>{
                     self.connect_task=None;
@@ -575,6 +632,7 @@ impl Actor {
     async fn disconnect(&mut self) {
         self.close_retained_floating().await;
         self.commands.clear();self.input_acks.clear();
+        self.server_commands=Value::Null;self.command_reply=None;self.command_run=Value::Null;
         self.connect_task=None;self.other_owner=false;
         self.held.clear(); // the server drops a client's claims with its connection
         self.preview_task = None;
@@ -600,6 +658,7 @@ impl Actor {
         self.retained_floating=None;
         self.progress_reports.clear();self.activity_dirty=true;
         self.commands.clear();self.input_acks.clear();
+        self.server_commands=Value::Null;self.command_reply=None;self.command_run=Value::Null;
         self.connect_task=None;self.other_owner=false;
         self.held.clear(); // the server drops a client's claims with its connection
         self.preview_task = None;
@@ -635,6 +694,61 @@ impl Actor {
         self.preview_task = None;self.program_task = None;self.summary_task = None;self.preview_updates.clear();
         self.programs = json!({});self.directories = json!({});self.titles = json!({});self.working = json!([]);
         self.title_owners = json!({});self.title_events.clear();self.process_events.clear();
+    }
+    async fn refresh_server_commands(&mut self) {
+        let Some(control)=self.control.as_mut() else {return;};
+        self.server_commands=match control.call("client.keymap",json!({"server_actions":"configured"})).await
+            .and_then(|reply|configured_actions(&reply)) {
+            Ok(actions)=>json!({"actions":actions}),
+            Err(error)=>json!({"error":error.to_string()}),
+        };
+        self.publish();
+    }
+    async fn run_server_command(&mut self, value: &Value) -> Result<()> {
+        ensure!(self.command_reply.is_none(),"A command is already running");
+        let target=self.input_target();
+        ensure!(self.visible && !self.paused && self.phase=="connected" && !self.creating &&
+            target.matches(value) && !target.block.is_empty() &&
+            self.latest_navigation.load(Ordering::Acquire)<=target.navigation,
+            "The selected pane changed");
+        let name=value["name"].as_str().context("Command name required")?;
+        let action=self.server_commands["actions"].as_array().into_iter().flatten()
+            .find(|action|action["name"]==name).context("This command is no longer available")?;
+        ensure!(action_takes_empty_args(action),"This command requires arguments");
+        let reply=self.control.as_mut().context("Not connected")?.start_call("client.action",json!({
+            "action":name,"origin":"palette","session_id":target.session,"block_id":target.block,
+        })).await.context("Could not send command; it was not retried")?;
+        self.command_reply=Some(CommandReply {target,reply:Box::pin(reply.receive())});
+        self.command_run=json!({"id":value["id"],"running":true});
+        Ok(())
+    }
+    fn command_focus_is_current(&self, target: &Target) -> bool {
+        self.visible && !self.paused && self.phase=="connected" && !self.creating &&
+            self.connection_epoch==target.connection && self.navigation_id==target.navigation &&
+            self.selected_session==target.session && (self.selected_block==target.block || self.selected_block.is_empty()) &&
+            self.latest_navigation.load(Ordering::Acquire)<=target.navigation
+    }
+    async fn follow_command_focus(&mut self, args: &Value, target: &Target) -> Result<bool> {
+        if !self.command_focus_is_current(target) {return Ok(false);}
+        let session=args["session_id"].as_str().filter(|id|!id.is_empty()).context("Missing session ID")?;
+        let window=match &args["window_id"] {
+            Value::Null=>None,
+            Value::String(id) if !id.is_empty()=>Some(id.as_str()),
+            _=>anyhow::bail!("Invalid destination tab"),
+        };
+        // Resolve the server's focused pane by ID, not the app's previously viewed
+        // pane in this tab, and not the arbitrary payload returned by Lua.
+        let view=self.control.as_mut().context("Not connected")?
+            .call("session.view",json!({"session_id":session})).await?;
+        if !self.command_focus_is_current(target) {return Ok(false);}
+        let block=focused_terminal(&view,window).context("No terminal at the requested destination")?.to_owned();
+        if session==self.selected_session {
+            self.set_view(&view);
+            if block!=self.selected_block {self.open_block(block).await?;}
+        } else {
+            self.command(json!({"type":"session","id":session,"block":block,"navigationId":target.navigation})).await?;
+        }
+        Ok(true)
     }
     async fn refresh_session_catalog(&mut self) -> Result<()> {
         self.sessions = self.control.as_mut().context("not connected")?.call("session.list", json!({})).await?["sessions"].clone();
@@ -839,6 +953,10 @@ impl Actor {
     }
     async fn event(&mut self, event: Value) -> Result<()> {
         let event = &event["payload"];
+        if event["type"]=="keymap_changed" && !self.server_commands.is_null() {
+            self.refresh_server_commands().await;
+            return Ok(());
+        }
         if event["type"] == "session_destroyed"
             && event["payload"]["session_id"].as_str() == Some(self.selected_session.as_str())
         {
@@ -1376,6 +1494,16 @@ impl Actor {
                     if let Some(block)=fallback {self.open_block(block).await?;}
                 }
                 self.creating=false;self.notice=if tab {"Tab closed"} else {"Pane closed"}.into();self.publish();
+            }
+            "load_server_commands" => self.refresh_server_commands().await,
+            "run_server_command" => {
+                if let Err(error)=self.run_server_command(&value).await {
+                    // Do not overwrite the result of a command already in flight.
+                    if self.command_reply.is_none() {
+                        self.command_run=json!({"id":value["id"],"error":error.to_string()});
+                    }
+                }
+                self.publish();
             }
             "new_tab" | "new_pane" => {
                 ensure!(
@@ -1995,6 +2123,49 @@ fn frame_value(frame: &Frame) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn command_catalog_only_lists_named_host_actions_and_detects_required_arguments() {
+        let actions=configured_actions(&json!({"actions":[
+            {"kind":"lua","name":"open_project","title":"Open project"},
+            {"kind":"lua","name":"find_project","title":"Find project","args":{"required":["project"]}},
+            {"kind":"block","name":"terminal.reset","title":"Reset terminal"},
+            {"kind":"lua","name":"missing_title"},
+        ]})).unwrap();
+        assert_eq!(actions.as_array().unwrap().len(),2);
+        assert!(action_takes_empty_args(&actions[0]));
+        assert!(!action_takes_empty_args(&actions[1]));
+        assert_eq!(configured_actions(&json!({})).unwrap(),json!([]));
+        assert!(configured_actions(&json!({"actions":"broken"})).is_err());
+    }
+
+    #[test]
+    fn queued_focus_resolves_the_requested_tabs_server_focused_terminal() {
+        let view=json!({"active_window_id":"first","windows":[
+            {"window_id":"first","focused_block_id":"shell","layers":[{"blocks":[{"block_id":"shell","creator_name":"com.superlogical.terminal"}]}]},
+            {"window_id":"second","focused_block_id":"wanted","layers":[{"blocks":[
+                {"block_id":"other","creator_name":"com.superlogical.terminal"},
+                {"block_id":"wanted","creator_name":"com.superlogical.terminal"}]}]},
+            {"window_id":"third","focused_block_id":"plugin","layers":[{"blocks":[{"block_id":"plugin","creator_name":"custom.plugin"}]}]},
+        ]});
+        assert_eq!(focused_terminal(&view,None),Some("shell"));
+        assert_eq!(focused_terminal(&view,Some("second")),Some("wanted"));
+        assert_eq!(focused_terminal(&view,Some("third")),None);
+        assert_eq!(focused_terminal(&view,Some("missing")),None);
+    }
+
+    #[test]
+    fn queued_focus_does_not_override_newer_navigation_or_connection() {
+        let mut actor=navigation_actor();
+        actor.phase="connected".into();actor.selected_session="session".into();actor.selected_block="pane".into();
+        let target=actor.input_target();
+        assert!(actor.command_focus_is_current(&target));
+        actor.latest_navigation.store(1,Ordering::Release);
+        assert!(!actor.command_focus_is_current(&target));
+        actor.latest_navigation.store(0,Ordering::Release);
+        actor.connection_epoch+=1;
+        assert!(!actor.command_focus_is_current(&target));
+    }
+
     fn navigation_actor()->Actor {
         let shared=Arc::new(Mutex::new(Shared {revision:0,json:String::new(),activity:Arc::default(),pending_previews:BTreeMap::new(),frame:None,key:String::new(),wire:crate::updates::WireBase::default()}));
         Actor::new(shared,Arc::new(crate::updates::Updates::default()))

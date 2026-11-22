@@ -60,6 +60,7 @@ data class AppState(
     /** A session the server reported gone; the app drops its saved place for it. */
     val staleSession: String = "",
     val screen: TerminalScreen? = null, val creating: Boolean = false, val navigationId: Long = 0,val tabMoveId: Long=0,val paneMoveId: Long=0,val connectionEpoch: Long=0,val otherOwner: Boolean=false,val attentionCount: Int=0,
+    internal val serverCommands: ServerCommandCatalog?=null,internal val serverCommandRun: ServerCommandRun?=null,
     internal val cachedPrograms: Set<String> = emptySet(),
 ) {
     val connected: Boolean get() = phase == "connected"
@@ -67,6 +68,8 @@ data class AppState(
         fun parse(text: String,previousActivity: List<ActivityRecord> = emptyList()): AppState {
             val root = JSONObject(text)
             return AppState(
+                serverCommands=root.optJSONObject("serverCommands")?.let(ServerCommandCatalog::parse),
+                serverCommandRun=root.optJSONObject("serverCommandRun")?.let(ServerCommandRun::parse),
                 workingBlocks = root.optJSONArray("working").objects {it as String}.toSet(),
                 activity=if(root.has("activity")) root.optJSONArray("activity").objects {ActivityRecord.parse(it as JSONObject)}.filterNotNull().take(1024) else previousActivity,
                 activityLoading=root.optBoolean("activityLoading"),activityError=root.optString("activityError"),activityPartial=root.optBoolean("activityPartial"),

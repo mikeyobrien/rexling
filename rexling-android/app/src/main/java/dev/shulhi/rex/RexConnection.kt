@@ -448,6 +448,15 @@ internal class RexConnection(application: Application, private val scope: Corout
         activation.navigate();resizeJob?.cancel();cancelKeyRepeats()
         return command("new_session","label" to label)
     }
+    internal fun loadServerCommands(target: TerminalCommandTarget): Boolean =
+        target.matches(state.value,navigationRequest.pending) && command("load_server_commands")
+
+    internal fun runServerCommand(target: TerminalCommandTarget,name: String,id: Long): Boolean {
+        val current=state.value
+        return target.matches(current,navigationRequest.pending) && current.serverCommandRun?.running!=true &&
+            command("run_server_command","name" to name,"id" to id,"session" to target.session,
+                "block" to target.pane,"connectionEpoch" to target.epoch,"navigationId" to target.navigationId)
+    }
     fun createTab() {
         val current = state.value
         if (current.connected && !current.creating && !navigationRequest.pending && current.selectedSession.isNotBlank()) {activation.navigate();resizeJob?.cancel();cancelKeyRepeats();command("new_tab", "session" to current.selectedSession)}

@@ -1,5 +1,7 @@
 package dev.shulhi.rex
 
+import org.json.JSONObject
+
 /** An open palette never follows focus to another terminal, even after a reconnect. */
 internal data class TerminalCommandTarget(val epoch: Long,val navigationId: Long,val session: String,val tab: String,val pane: String) {
     fun matches(state: AppState,pending: Boolean): Boolean = !pending && state.connected && !state.creating &&
@@ -28,5 +30,31 @@ internal enum class TerminalCommand(val label: String,val scope: String,val icon
                 "${command.label} ${command.scope}".contains(it,ignoreCase=true)
             }}
         }
+    }
+}
+
+data class ServerCommand(val name: String,val title: String,val category: String,val keywords: String,val requiresArguments: Boolean) {
+    fun matches(query: String): Boolean = query.trim().split(Regex("\\s+")).all {
+        "$title $category $keywords $name".contains(it,ignoreCase=true)
+    }
+
+    companion object {
+        fun parse(row: JSONObject): ServerCommand = ServerCommand(row.getString("name"),row.getString("title"),
+            row.optString("category"),row.optString("keywords"),
+            (row.optJSONObject("args")?.optJSONArray("required")?.length() ?: 0)>0)
+    }
+}
+
+data class ServerCommandCatalog(val actions: List<ServerCommand>,val error: String) {
+    companion object {
+        fun parse(row: JSONObject) = ServerCommandCatalog(
+            row.optJSONArray("actions")?.let {list->List(list.length()) {ServerCommand.parse(list.getJSONObject(it))}}.orEmpty(),
+            row.optString("error"))
+    }
+}
+
+data class ServerCommandRun(val id: Long,val running: Boolean,val message: String,val error: String,val warning: String) {
+    companion object {
+        fun parse(row: JSONObject) = ServerCommandRun(row.getLong("id"),row.optBoolean("running"),row.optString("message"),row.optString("error"),row.optString("warning"))
     }
 }

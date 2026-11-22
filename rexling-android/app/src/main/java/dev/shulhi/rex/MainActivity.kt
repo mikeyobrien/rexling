@@ -544,7 +544,9 @@ private data class CommandFlow(val target: TerminalCommandTarget,val restoreIme:
         when(flow.step) {
             CommandStep.PALETTE->TerminalCommandsSheet(
                 (state.programs[flow.target.pane] ?: ProgramIdentity.Loading).paneTitle(block?.label.orEmpty(),state.titles[flow.target.pane].orEmpty()),
-                canCopy=client.hasScreen,onClose={closeCommands()},hazeState=workspaceHaze,onChoose={command->
+                canCopy=client.hasScreen,catalog=state.serverCommands,serverRun=state.serverCommandRun,
+                loadServerCommands={client.loadServerCommands(flow.target)},
+                runServerCommand={name,id->client.runServerCommand(flow.target,name,id)},onClose={closeCommands()},hazeState=workspaceHaze,onChoose={command->
                     if(currentCommandTarget()!=flow.target) closeCommands(false)
                     else when(command) {
                         TerminalCommand.SPLIT->commandFlow=flow.copy(step=CommandStep.SPLIT)
